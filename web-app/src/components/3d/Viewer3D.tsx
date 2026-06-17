@@ -83,13 +83,9 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
   const fallbackUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='; // 1x1 white pixel
   
   // We use the hook, it guarantees correct loading and caching
-  let texture;
-  try {
-    texture = useTexture(photoUrl || fallbackUrl);
+  const texture = useTexture(photoUrl || fallbackUrl);
+  if (texture) {
     texture.colorSpace = THREE.SRGBColorSpace;
-  } catch (e) {
-    console.warn("Texture failed to load", e);
-    texture = null;
   }
 
   const { clone: clonedTexture, sideClone } = useMemo(() => {
@@ -374,15 +370,20 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
 
   return (
     <>
-      {is3dAssemblyMode && isSelected ? (
+      {group && (
         <TransformControls 
+          object={group}
           mode={transformMode} 
           onMouseUp={handleDragEnd} 
           size={0.6}
-        >
-          {content}
-        </TransformControls>
-      ) : content}
+          enabled={is3dAssemblyMode && isSelected}
+          visible={is3dAssemblyMode && isSelected}
+          showX={is3dAssemblyMode && isSelected}
+          showY={is3dAssemblyMode && isSelected}
+          showZ={is3dAssemblyMode && isSelected}
+        />
+      )}
+      {content}
     </>
   );
 }

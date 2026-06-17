@@ -28,7 +28,20 @@ export function DetailEditor3D() {
   const initialY = thickness / 2;
   const initialZ = ((layout?.y ?? placement.y) + part.height / 2) * s - 0.8;
 
-  const transform = placement.transform3d || { x: initialX, y: initialY, z: initialZ, rx: 0, ry: 0, rz: 0 };
+  const transform = {
+    x: placement.transform3d?.x ?? initialX,
+    y: placement.transform3d?.y ?? initialY,
+    z: placement.transform3d?.z ?? initialZ,
+    rx: placement.transform3d?.rx ?? 0,
+    ry: placement.transform3d?.ry ?? 0,
+    rz: placement.transform3d?.rz ?? 0,
+  };
+
+  const toMm = (m: number) => Math.round((m || 0) * 1000);
+  const fromMm = (mm: number) => mm / 1000;
+  
+  const toDeg = (rad: number) => Math.round((rad || 0) * (180 / Math.PI));
+  const fromDeg = (deg: number) => deg * (Math.PI / 180);
 
   const handleChange = (axis: 'x'|'y'|'z'|'rx'|'ry'|'rz', value: number) => {
     updatePlacement3dTransform(selectedId, { ...transform, [axis]: value });
@@ -55,37 +68,37 @@ export function DetailEditor3D() {
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
-          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Позиція (м)</label>
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Позиція (мм)</label>
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <span className="text-xs text-red-500 font-bold w-3">X</span>
-              <input type="number" step="0.01" value={transform.x.toFixed(3)} onChange={e => handleChange('x', parseFloat(e.target.value) || 0)} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="number" step="1" value={toMm(transform.x)} onChange={e => handleChange('x', fromMm(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-green-500 font-bold w-3">Y</span>
-              <input type="number" step="0.01" value={transform.y.toFixed(3)} onChange={e => handleChange('y', parseFloat(e.target.value) || 0)} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="number" step="1" value={toMm(transform.y)} onChange={e => handleChange('y', fromMm(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-blue-500 font-bold w-3">Z</span>
-              <input type="number" step="0.01" value={transform.z.toFixed(3)} onChange={e => handleChange('z', parseFloat(e.target.value) || 0)} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="number" step="1" value={toMm(transform.z)} onChange={e => handleChange('z', fromMm(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
           </div>
         </div>
         
         <div className="space-y-2">
-          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Обертання (рад)</label>
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Обертання (град)</label>
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <span className="text-xs text-red-500 font-bold w-3">X</span>
-              <input type="number" step="0.05" value={transform.rx.toFixed(3)} onChange={e => handleChange('rx', parseFloat(e.target.value) || 0)} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="number" step="1" value={toDeg(transform.rx)} onChange={e => handleChange('rx', fromDeg(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-green-500 font-bold w-3">Y</span>
-              <input type="number" step="0.05" value={transform.ry.toFixed(3)} onChange={e => handleChange('ry', parseFloat(e.target.value) || 0)} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="number" step="1" value={toDeg(transform.ry)} onChange={e => handleChange('ry', fromDeg(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-blue-500 font-bold w-3">Z</span>
-              <input type="number" step="0.05" value={transform.rz.toFixed(3)} onChange={e => handleChange('rz', parseFloat(e.target.value) || 0)} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="number" step="1" value={toDeg(transform.rz)} onChange={e => handleChange('rz', fromDeg(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
           </div>
         </div>
