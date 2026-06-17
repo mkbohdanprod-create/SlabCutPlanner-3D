@@ -3,6 +3,7 @@ import type { DetailPart, Project } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { defaultPdfExportOptions, exportProjectPdf } from '../../utils/export';
 import type { PdfExportOptions, PdfOrientation, PdfPageFormat } from '../../utils/export';
+import { Viewer3D } from '../3d/Viewer3D';
 
 type PdfExportDialogProps = {
   open: boolean;
@@ -34,6 +35,7 @@ function checkboxLabel(label: string, checked: boolean, onChange: () => void) {
 export function PdfExportDialog({ open, project, parts, onClose }: PdfExportDialogProps) {
   const [options, setOptions] = useState<PdfExportOptions>(defaultPdfExportOptions);
   const [busy, setBusy] = useState(false);
+  const [capturing3d, setCapturing3d] = useState(false);
   const language = project.uiLanguage ?? 'uk';
   const ui = (value: string) => translateStaticUiText(language, value);
 
@@ -62,9 +64,18 @@ export function PdfExportDialog({ open, project, parts, onClose }: PdfExportDial
   };
 
   const onExport = async () => {
+    if (options.include3d) {
+      setCapturing3d(true);
+      return;
+    }
+    doExport([]);
+  };
+
+  const doExport = async (snapshots3D: string[]) => {
     setBusy(true);
+    setCapturing3d(false);
     try {
-      await exportProjectPdf(project, parts, options);
+      await exportProjectPdf(project, parts, options, snapshots3D);
       onClose();
     } finally {
       setBusy(false);
@@ -73,7 +84,12 @@ export function PdfExportDialog({ open, project, parts, onClose }: PdfExportDial
 
   return (
     <div className="modal-backdrop">
-      <div className="detail-modal pdf-modal">
+      {capturing3d && (
+        <div className="fixed top-0 left-0 w-[1200px] h-[800px] z-[-10] pointer-events-none" style={{ opacity: 0.01 }}>
+          <Viewer3D onCaptureReady={(captures: any) => doExport(captures)} isCaptureMode={true} />
+        </div>
+      )}
+      <div className="detail-modal pdf-modal z-10">
         <div className="detail-modal-header">
           <div>
             <h2>{ui('Налаштування PDF')}</h2>
@@ -143,9 +159,9 @@ export function PdfExportDialog({ open, project, parts, onClose }: PdfExportDial
         </div>
 
         <div className="pdf-modal-footer">
-          <button onClick={onClose} disabled={busy}>{ui('Закрити')}</button>
-          <button className="primary-action" onClick={onExport} disabled={busy}>
-            {busy ? ui('Формується PDF…') : ui('Сформувати PDF')}
+          <button onClick={onClose} disabled={busy || capturing3d}>{ui('Закрити')}</button>
+          <button className="primary-action" onClick={onExport} disabled={busy || capturing3d}>
+            {capturing3d ? ui('Захоплення 3D...') : busy ? ui('Формується PDF…') : ui('Сформувати PDF')}
           </button>
         </div>
       </div>

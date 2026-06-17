@@ -337,57 +337,110 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
     if (is3dAssemblyMode) onSelect(mainPlacement.id);
   };
 
+  const content = (
+    <group position={position} rotation={rotation} ref={setGroup}>
+      <Suspense fallback={null}>
+        <TexturedPart 
+          placement={mainPlacement} 
+          part={mainPart} 
+          slab={mainSlab} 
+          parts={parts} 
+          isSelected={isSelected}
+          onSelect={select}
+          originOffset={originOffset}
+          localTransform={isSink ? getSinkPartTransform(mainPart, detail, thickness) : null}
+        />
+      </Suspense>
+      {foldPlacements.map((fp: Placement) => {
+         const fPart = parts.find((p: DetailPart) => p.id === fp.partId);
+         const fSlab = slabs.find((s: SlabInstance) => s.id === fp.slabId);
+         return fPart && fSlab && (
+           <Suspense key={fp.id} fallback={null}>
+             <TexturedPart 
+               placement={fp} 
+               part={fPart} 
+               slab={fSlab} 
+               parts={parts} 
+               isSelected={isSelected}
+               onSelect={select}
+               originOffset={originOffset}
+               localTransform={isSink ? getSinkPartTransform(fPart, detail, thickness) : null}
+             />
+           </Suspense>
+         );
+      })}
+    </group>
+  );
+
   return (
     <>
-      <group position={position} rotation={rotation} ref={setGroup}>
-        <Suspense fallback={null}>
-          <TexturedPart 
-            placement={mainPlacement} 
-            part={mainPart} 
-            slab={mainSlab} 
-            parts={parts} 
-            isSelected={isSelected}
-            onSelect={select}
-            originOffset={originOffset}
-            localTransform={isSink ? getSinkPartTransform(mainPart, detail, thickness) : null}
-          />
-        </Suspense>
-        {foldPlacements.map((fp: Placement) => {
-           const fPart = parts.find((p: DetailPart) => p.id === fp.partId);
-           const fSlab = slabs.find((s: SlabInstance) => s.id === fp.slabId);
-           return fPart && fSlab && (
-             <Suspense key={fp.id} fallback={null}>
-               <TexturedPart 
-                 placement={fp} 
-                 part={fPart} 
-                 slab={fSlab} 
-                 parts={parts} 
-                 isSelected={isSelected}
-                 onSelect={select}
-                 originOffset={originOffset}
-                 localTransform={isSink ? getSinkPartTransform(fPart, detail, thickness) : null}
-               />
-             </Suspense>
-           );
-        })}
-      </group>
-      {isSelected && is3dAssemblyMode && group && (
+      {is3dAssemblyMode && isSelected ? (
         <TransformControls 
-          object={group} 
           mode={transformMode} 
           onMouseUp={handleDragEnd} 
           size={0.6}
-        />
-      )}
+        >
+          {content}
+        </TransformControls>
+      ) : content}
     </>
   );
 }
 
-export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900 rounded-lg overflow-hidden relative" }: { className?: string } = {}) {
+function CaptureController({ onCaptureReady, contentRef }: { onCaptureReady?: (snaps: string[]) => void, contentRef: any }) {
+  const { gl, camera, scene } = useThree();
+  useEffect(() => {
+    if (!onCaptureReady || !contentRef.current) return;
+    
+    let mounted = true;
+    const timeout = setTimeout(() => {
+      if (!mounted) return;
+      try {
+        const captures: string[] = [];
+        const originalPos = camera.position.clone();
+        const originalQuat = camera.quaternion.clone();
+        const cam = camera as THREE.PerspectiveCamera;
+
+        let distance = 8;
+        if (contentRef.current) {
+          const box = new THREE.Box3().setFromObject(contentRef.current);
+          const size = box.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z, 0.5);
+          distance = (maxDim / 2) / Math.tan(25 * Math.PI / 180) * 1.1; // Zoomed in!
+        }
+
+        const takeSnapshot = (pos: [number, number, number]) => {
+          cam.position.set(...pos);
+          cam.lookAt(0, 0, 0);
+          gl.render(scene, cam);
+          captures.push(gl.domElement.toDataURL('image/jpeg', 1.0));
+        };
+
+        const distIso = distance * 0.65;
+        takeSnapshot([distIso, distIso, distIso]); // 1 single visual!
+
+        cam.position.copy(originalPos);
+        cam.quaternion.copy(originalQuat);
+        gl.render(scene, cam);
+
+        onCaptureReady(captures);
+      } catch (e) {
+        console.error('Capture failed:', e);
+        onCaptureReady([]);
+      }
+    }, 1000);
+    return () => { mounted = false; clearTimeout(timeout); };
+  }, [gl, camera, scene, contentRef, onCaptureReady]); 
+  return null;
+}
+
+export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900 rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode }: { className?: string, onCaptureReady?: (snaps: string[]) => void, isCaptureMode?: boolean } = {}) {
   const project = useProjectStore((state) => state.project);
   const parts = useProjectStore((state) => state.parts);
   const is3dGroupingEnabled = useUIStore(s => s.is3dGroupingEnabled);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedId = useUIStore(s => s.selectedId3d);
+  const setSelectedId = useUIStore(s => s.setSelectedId3d);
+  const contentRef = React.useRef(null);
 
   const groups = useMemo(() => {
      const handledPlacementIds = new Set<string>();
@@ -469,7 +522,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
           />
 
           <Center>
-            <group>
+            <group ref={contentRef}>
               {groups.map((group) => {
                 if (!group.mainPart) return null;
                 return (
@@ -505,6 +558,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
             position={[0, -0.5, 0]} 
           />
           <OrbitControls makeDefault minPolarAngle={0} maxPolarAngle={Math.PI / 2.1} />
+          {isCaptureMode && <CaptureController onCaptureReady={onCaptureReady} contentRef={contentRef} />}
       </Canvas>
       <div className="absolute top-4 left-4 text-white text-sm bg-black/50 px-3 py-1 rounded">
         3D Перегляд (Drag to rotate, Scroll to zoom)

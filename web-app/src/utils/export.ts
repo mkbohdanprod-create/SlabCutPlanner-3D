@@ -1,4 +1,4 @@
-﻿import { jsPDF } from 'jspdf';
+import { jsPDF } from 'jspdf';
 import type {
   Detail,
   DetailPart,
@@ -1031,12 +1031,33 @@ function renderTextureZonePages(project: Project, parts: DetailPart[], size: Pag
     : [renderTextureZonePage(project, parts, size)];
 }
 
-function render3dPlaceholderPage(project: Project, size: PageSize) {
-  return pageSvg(size, [
-    sectionTitle(projectText(project, '3D-збірка')),
-    `<rect x="${PAGE_MARGIN}" y="146" width="${size.widthPx - PAGE_MARGIN * 2}" height="140" rx="16" fill="#f3f8fb" stroke="#c6d6e1"/>`,
-    text(PAGE_MARGIN + 30, 214, projectText(project, '3D-збірку не налаштовано для цього проєкту.'), 24, '#1f2d3a', 600),
-  ].join(''));
+function render3dPhotosPages(project: Project, size: PageSize, snapshots: string[]) {
+  if (!snapshots || snapshots.length === 0) {
+    return [pageSvg(size, [
+      sectionTitle(projectText(project, '3D-збірка')),
+      `<rect x="${PAGE_MARGIN}" y="146" width="${size.widthPx - PAGE_MARGIN * 2}" height="140" rx="16" fill="#f3f8fb" stroke="#c6d6e1"/>`,
+      text(PAGE_MARGIN + 30, 214, projectText(project, 'Помилка захоплення 3D. Перевірте збірку або перезавантажте сторінку.'), 24, '#1f2d3a', 600),
+    ].join(''))];
+  }
+
+  const startY = 160;
+  const contentHeight = size.heightPx - startY - PAGE_MARGIN;
+  const contentWidth = size.widthPx - PAGE_MARGIN * 2;
+
+  return snapshots.map((snap, index) => {
+    const titleSvg = sectionTitle(projectText(project, '3D-збірка'));
+    const imageSvg = `<image href="${snap}" x="${PAGE_MARGIN}" y="${startY}" width="${contentWidth}" height="${contentHeight}" preserveAspectRatio="xMidYMid meet" clip-path="url(#roundedClip)"/>`;
+    
+    return pageSvg(size, [
+      titleSvg,
+      `<defs>
+        <clipPath id="roundedClip">
+          <rect x="0" y="0" width="100%" height="100%" rx="16" />
+        </clipPath>
+      </defs>`,
+      imageSvg
+    ].join(''));
+  });
 }
 
 function renderSlabSvg(project: Project, parts: DetailPart[], slab: SlabInstance, mode: 'technical' | 'photo'): string {
@@ -1187,7 +1208,7 @@ export async function exportProjectPng(project: Project, parts: DetailPart[]) {
   downloadBytes(`${projectBaseName(project)}_PNG.zip`, zipStore(entries), 'application/zip');
 }
 
-export async function exportProjectPdf(project: Project, parts: DetailPart[], options: PdfExportOptions = defaultPdfExportOptions) {
+export async function exportProjectPdf(project: Project, parts: DetailPart[], options: PdfExportOptions = defaultPdfExportOptions, snapshots3D?: string[]) {
   const size = pageSize(options);
   const pages: string[] = [];
 
