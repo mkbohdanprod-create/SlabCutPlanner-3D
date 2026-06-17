@@ -14,6 +14,7 @@ import {
   segmentAngle, angleDelta, polygonSegments, alignPlacementSegmentToTarget,
   findAngledSideSnap, polygonCentroid, rotateCoordinateAround, rigidRotatePlacementMove,
   type LocalRect, type EdgeSegment, type AngleSnapCandidate,
+  type CanvasDrag, type SelectionBox, type CanvasContextMenu, type AngleEditorState, type SlabEditorDraft,
 } from './canvasUtils';
 import { SlabLayer } from "./board/SlabLayer";
 import { PartShape } from "./board/PartShape";

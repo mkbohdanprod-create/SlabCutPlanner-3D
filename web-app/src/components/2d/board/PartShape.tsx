@@ -2,6 +2,7 @@ import React from 'react';
 import type { DetailPart, Placement } from '../../../domain/types';
 import { placementPolygon, pointString } from '../../../lib/project';
 import { dxfCanvasSize, dxfSvgPath } from '../../../parsers/dxf';
+import { pointsForPlacement, svgPath } from '../canvasUtils';
 
 export function PartShape({ part, placement, scale, viewMode, showAllowance }: { part: DetailPart; placement: Placement; scale: number; viewMode: 'technical' | 'photo' | 'texture'; showAllowance: boolean }) {
   const conflict = placement.conflict || placement.outOfBounds;

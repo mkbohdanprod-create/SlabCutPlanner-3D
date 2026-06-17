@@ -1,5 +1,6 @@
 import React from 'react';
-import type { SelectionBox } from '../../../domain/types';
+import type { SelectionBox } from '../canvasUtils';
+import { normalizeRect } from '../canvasUtils';
 
 export function SelectionRect({ box, scale }: { box: SelectionBox; scale: number }) {
   const rect = normalizeRect(box.startX, box.startY, box.currentX, box.currentY);

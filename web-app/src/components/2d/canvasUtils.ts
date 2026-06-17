@@ -299,3 +299,43 @@ export function rigidRotatePlacementMove(part: DetailPart, placement: Placement,
   const count = Math.max(afterLocal.length, 1);
   return { placementId: placement.id, x: anchor.x / count, y: anchor.y / count, slabId: placement.slabId, rotation: nextRotation };
 }
+
+export type CanvasDrag = 
+  | { type: 'placement'; id: string; clientX: number; clientY: number; offsetX: number; offsetY: number; rotation: number; groupIds?: string[]; groupStart?: Record<string, import('../../domain/types').Placement>; ghostClientX?: number; ghostClientY?: number; ghostX?: number; ghostY?: number; ghostSlabId?: string; angleSnap?: AngleSnapCandidate; }
+  | { type: 'pan'; clientX: number; clientY: number; startScrollX: number; startScrollY: number; }
+  | { type: 'selection'; clientX: number; clientY: number; originX: number; originY: number; };
+
+export interface SelectionBox {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+}
+
+export interface CanvasContextMenu {
+  placementId?: string;
+  partId?: string;
+  slabId: string;
+  clientX: number;
+  clientY: number;
+  x: number;
+  y: number;
+}
+
+export interface AngleEditorState {
+  placementId: string;
+  slabId: string;
+  initialRotation: number;
+}
+
+export interface SlabEditorDraft {
+  width: number;
+  height: number;
+  thickness: number;
+  material: import('../../domain/types').MaterialType;
+  decor: string;
+  comment: string;
+  minMargin: number;
+  serialNumber: string;
+}
+
