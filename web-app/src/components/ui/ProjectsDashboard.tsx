@@ -12,7 +12,12 @@ type ProjectMetadata = {
 
 export function ProjectsDashboard({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { user } = useAuth();
-  const { importProject, project, setCurrentDbProjectId } = useProjectStore();
+  const importProject = useProjectStore((s) => s.importProject);
+  const setCurrentDbProjectId = useProjectStore((s) => s.setCurrentDbProjectId);
+  const clearCalculation = useProjectStore((s) => s.clearCalculation);
+  // We explicitly do NOT subscribe to `project` or `currentDbProjectId` here, 
+  // because we only need to read them on click events. Reading them via getState() 
+  // inside handlers prevents the entire Dashboard from re-rendering every time the user moves a part in 3D.
   const [projects, setProjects] = useState<ProjectMetadata[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -50,9 +55,8 @@ export function ProjectsDashboard({ isOpen, onClose }: { isOpen: boolean; onClos
       const newProjectName = `Нове замовлення ${new Date().toLocaleDateString('uk-UA')}`;
       
       // Get an empty project structure
-      useProjectStore.getState().clearCalculation();
-      const emptyProject = useProjectStore.getState().project;
-      emptyProject.orderNumber = newProjectName;
+      clearCalculation();
+      const emptyProject = { ...useProjectStore.getState().project, orderNumber: newProjectName };
 
       const { data, error } = await supabase
         .from('projects')

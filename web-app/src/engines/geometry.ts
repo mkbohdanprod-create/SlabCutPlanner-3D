@@ -4,7 +4,7 @@ import { mm2ToM2 } from '../utils/math';
 
 import { DEFAULT_ALLOWANCES } from '../domain/defaults';
 
-let activeAllowances = DEFAULT_ALLOWANCES;
+function createGeometryEngine(activeAllowances: CutAllowances) {
 const SHAPE_LABELS = new Set([
   'Прямокутна',
   'Коло',
@@ -823,8 +823,7 @@ function pushSlotSinkParts(parts: DetailPart[], detail: Detail, parentLabel: str
   );
 }
 
-export function explodeDetails(details: Detail[], allowances: CutAllowances = DEFAULT_ALLOWANCES): DetailPart[] {
-  activeAllowances = { ...DEFAULT_ALLOWANCES, ...allowances };
+function explodeDetails(details: Detail[]): DetailPart[] {
   const counters = buildDetailCounters(details);
   const detailsById = new Map(details.map((detail) => [detail.id, detail]));
   const parts: DetailPart[] = [];
@@ -1169,4 +1168,11 @@ export function explodeDetails(details: Detail[], allowances: CutAllowances = DE
   });
 
   return parts;
+}
+
+  return { explodeDetails };
+}
+
+export function explodeDetails(details: Detail[], allowances: CutAllowances = DEFAULT_ALLOWANCES): DetailPart[] {
+  return createGeometryEngine({ ...DEFAULT_ALLOWANCES, ...allowances }).explodeDetails(details);
 }
