@@ -1,4 +1,4 @@
-import React, { Suspense, useMemo, useState, useEffect } from 'react';
+import React, { Suspense, useMemo, useState, useEffect, useLayoutEffect } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, Grid, Center, ContactShadows, TransformControls , useTexture } from '@react-three/drei';
 import type { Placement, DetailPart, SlabInstance, Detail } from '../../domain/types';
@@ -14,8 +14,8 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
 
   const textureLayouts = useProjectStore.getState().project.textureLayouts;
   const layout = textureLayouts.find((l) => l.partId === part.id);
-  const sourceX = layout?.sourceX ?? placement.x;
-  const sourceY = layout?.sourceY ?? placement.y;
+  const sourceX = layout?.sourceX ?? layout?.x ?? 0;
+  const sourceY = layout?.sourceY ?? layout?.y ?? 0;
 
   let posX = ((layout?.x ?? placement.x) + part.width / 2) * s;
   let posZ = ((layout?.y ?? placement.y) + part.height / 2) * s;
@@ -80,42 +80,58 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
   }
 
   const photoUrl = slab?.photo;
-  const fallbackUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='; // 1x1 white pixel
-  
-  // We use the hook, it guarantees correct loading and caching
+  const fallbackUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
   const texture = useTexture(photoUrl || fallbackUrl);
-  if (texture) {
-    texture.colorSpace = THREE.SRGBColorSpace;
-  }
-
-  const { clone: clonedTexture, sideClone } = useMemo(() => {
-    if (!texture || !photoUrl || !slab) return { clone: null, sideClone: null };
+  
+  const { clone: clonedTexture } = useMemo(() => {
+    if (!texture || !photoUrl || !slab) return { clone: null };
     
     const clone = texture.clone();
     clone.wrapS = THREE.RepeatWrapping;
     clone.wrapT = THREE.RepeatWrapping;
 
     const transform = slab.textureTransform || { scale: 1, offsetX: 0, offsetY: 0, rotation: 0 };
-    const imageWidth = slab.width * transform.scale;
-    const imageHeight = slab.height * transform.scale;
-    
-    const uOffset = (sourceX - transform.offsetX) / imageWidth;
-    const vOffset = 1 - (sourceY - transform.offsetY + part.height) / imageHeight;
-    const uRepeat = part.width / imageWidth;
-    const vRepeat = part.height / imageHeight;
-
-    clone.repeat.set(uRepeat, vRepeat);
-    clone.offset.set(uOffset, vOffset);
-    
+    const imageWidth = (slab.width || 1) * transform.scale;
+    const imageHeight = (slab.height || 1) * transform.scale;
     const sourceRot = layout?.sourceRotation ?? 0;
+    
+    const isRotated = sourceRot === 90 || sourceRot === 270;
+    const rotatedWidth = isRotated ? part.height : part.width;
+    const rotatedHeight = isRotated ? part.width : part.height;
+    
+    const cx_slab = sourceX + rotatedWidth / 2;
+    const cy_slab = sourceY + rotatedHeight / 2;
+
+    let slabPointX = cx_slab;
+    let slabPointY = cy_slab;
+    if (transform.rotation) {
+      const angle = -transform.rotation * (Math.PI / 180);
+      const scx = (slab.width || 0) / 2;
+      const scy = (slab.height || 0) / 2;
+      const dx = cx_slab - scx;
+      const dy = cy_slab - scy;
+      slabPointX = scx + dx * Math.cos(angle) - dy * Math.sin(angle);
+      slabPointY = scy + dx * Math.sin(angle) + dy * Math.cos(angle);
+    }
+    
+    const tu = (slabPointX - transform.offsetX) / imageWidth;
+    const tv = 1 - (slabPointY - transform.offsetY) / imageHeight;
+    
+    clone.offset.set(tu - 0.5, tv - 0.5);
+    clone.center.set(0.5, 0.5);
+    
     const totalRot = transform.rotation - sourceRot;
     if (totalRot !== 0) {
-      clone.center.set(0.5, 0.5);
       clone.rotation = -totalRot * (Math.PI / 180);
     }
+    
+    const sx = part.width / (isRotated ? imageHeight : imageWidth);
+    const sy = part.height / (isRotated ? imageWidth : imageHeight);
+    
+    clone.repeat.set(sx, sy);
     clone.needsUpdate = true;
 
-    return { clone, sideClone: null };
+    return { clone };
   }, [texture, photoUrl, slab, part, sourceX, sourceY, layout]);
 
   const { geometry, baseQuaternion } = useMemo(() => {
@@ -136,7 +152,6 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
 
     if (part.holes) {
       part.holes.forEach((hole: any) => {
-        // hole is an array of Points (from DXF parser)
         if (!hole || !Array.isArray(hole)) return;
         const holePath = new THREE.Path();
         hole.forEach((p: any, i: number) => {
@@ -174,7 +189,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
     }
     
     return { geometry: geom, baseQuaternion: baseQuat };
-  }, [part.points, part.holes, part.width, part.height, thickness, s, layout?.rotated]);
+  }, [part, thickness, s, layout, sourceX, sourceY, slab]);
 
   const localPosOffset = localTransform?.pos;
   const localQuaternion = localTransform?.quat;
