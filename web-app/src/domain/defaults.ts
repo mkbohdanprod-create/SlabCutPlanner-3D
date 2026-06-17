@@ -17,6 +17,20 @@ export function uid(prefix = 'id'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+export const DEFAULT_ALLOWANCES = {
+  detailLength: 0,
+  detailWidth: 0,
+  detailSmallCutout: 0,
+  detailLargeCutout: 0,
+  elementLength: 0,
+  elementWidth: 0,
+  elementSmallCutout: 0,
+  elementLargeCutout: 0,
+  interPartSpacing: 0,
+  show: false,
+  applyToImports: false,
+};
+
 export function createEmptyProject(): Project {
   return {
     id: uid('project'),
@@ -37,18 +51,6 @@ export function createEmptyProject(): Project {
     referenceData,
     versions: [{ id: uid('version'), timestamp: new Date().toISOString(), note: 'Створено проєкт' }],
     updatedAt: new Date().toISOString(),
-    allowances: {
-      detailLength: 0,
-      detailWidth: 0,
-      detailSmallCutout: 0,
-      detailLargeCutout: 0,
-      elementLength: 0,
-      elementWidth: 0,
-      elementSmallCutout: 0,
-      elementLargeCutout: 0,
-      interPartSpacing: 0,
-      show: false,
-      applyToImports: false,
-    },
+    allowances: { ...DEFAULT_ALLOWANCES },
   };
 }

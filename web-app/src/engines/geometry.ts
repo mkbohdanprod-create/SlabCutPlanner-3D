@@ -2,19 +2,7 @@ import type { CutAllowances, Detail, DetailPart, EdgeFeature, Point } from '../d
 import { getDimsLabel, buildDetailCounters } from '../lib/project';
 import { mm2ToM2 } from '../utils/math';
 
-const DEFAULT_ALLOWANCES: CutAllowances = {
-  detailLength: 0,
-  detailWidth: 0,
-  detailSmallCutout: 0,
-  detailLargeCutout: 0,
-  elementLength: 0,
-  elementWidth: 0,
-  elementSmallCutout: 0,
-  elementLargeCutout: 0,
-  interPartSpacing: 0,
-  show: false,
-  applyToImports: false,
-};
+import { DEFAULT_ALLOWANCES } from '../domain/defaults';
 
 let activeAllowances = DEFAULT_ALLOWANCES;
 const SHAPE_LABELS = new Set([

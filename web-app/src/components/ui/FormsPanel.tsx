@@ -1652,9 +1652,6 @@ export function FormsPanel() {
           <button type="button" className="primary-action detail-open-button" onClick={() => { clearEditDetail(); setDetail(createDraft()); setDetailOpen(true); }}>Додати деталь</button>
           <button type="button" onClick={() => dxfInputRef.current?.click()}>Імпортувати DXF</button>
           <button type="button" onClick={() => approvalInputRef.current?.click()}>Імпортувати бланк погодження</button>
-          {(import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV ? (
-            <button type="button" onClick={() => openApprovalFixture()}>Debug fixture 81-1305719</button>
-          ) : null}
           <button type="button" onClick={() => setAllowancesOpen(true)}>Припуски</button>
           <input ref={dxfInputRef} type="file" accept=".dxf,.dwg" hidden onChange={onDxfFile} />
           <input ref={approvalInputRef} type="file" accept=".pdf,.xlsx,.xls,.docx" hidden onChange={onApprovalFile} />

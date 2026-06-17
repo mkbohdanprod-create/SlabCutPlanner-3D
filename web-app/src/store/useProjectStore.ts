@@ -174,19 +174,7 @@ function calcStatus(project: Project, placements: Placement[]) {
   return 'failed';
 }
 
-const DEFAULT_ALLOWANCES: CutAllowances = {
-  detailLength: 0,
-  detailWidth: 0,
-  detailSmallCutout: 0,
-  detailLargeCutout: 0,
-  elementLength: 0,
-  elementWidth: 0,
-  elementSmallCutout: 0,
-  elementLargeCutout: 0,
-  interPartSpacing: 0,
-  show: false,
-  applyToImports: false,
-};
+import { DEFAULT_ALLOWANCES } from '../domain/defaults';
 
 function normalizeProject(project: Project): Project {
   return { ...project, uiLanguage: project.uiLanguage ?? 'uk', textureFrames: project.textureFrames ?? [], manualDimensions: project.manualDimensions ?? [], allowances: { ...DEFAULT_ALLOWANCES, ...(project.allowances ?? {}) } };

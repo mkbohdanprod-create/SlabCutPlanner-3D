@@ -80,7 +80,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
   const s = 0.001;
   const thickness = slab?.thickness ? slab.thickness * s : 0.02;
 
-  const textureLayouts = useProjectStore.getState().project.textureLayouts;
+  const textureLayouts = useProjectStore((state) => state.project.textureLayouts);
   const layout = textureLayouts.find((l) => l.partId === part.id);
   const sourceX = layout?.sourceX ?? layout?.x ?? 0;
   const sourceY = layout?.sourceY ?? layout?.y ?? 0;
