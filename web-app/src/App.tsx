@@ -15,6 +15,8 @@ import { useAuth } from './components/auth/AuthContext';
 import { LoginModal } from './components/auth/LoginModal';
 import { ProjectsDashboard } from './components/ui/ProjectsDashboard';
 
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
+
 function App() {
   const { mainView, setMainView } = useUIStore();
   const { initialize, undoLastMovement, redoMovement, currentDbProjectId } = useProjectStore();
@@ -135,12 +137,20 @@ function App() {
         <section className="flex-1 min-h-0 min-w-0 bg-white rounded-xl shadow-sm border border-slate-200 overflow-y-auto custom-scrollbar flex flex-col p-4 gap-4 relative workspace">
           {mainView === '2d' ? (
             <div className="flex flex-col gap-4 min-h-min">
-              <div className="shrink-0"><UnplacedPartsPanel /></div>
-              <div className="shrink-0"><SlabBoard /></div>
-              <div className="shrink-0"><TextureLayoutPanel /></div>
+              <ErrorBoundary componentName="UnplacedPartsPanel">
+                <div className="shrink-0"><UnplacedPartsPanel /></div>
+              </ErrorBoundary>
+              <ErrorBoundary componentName="SlabBoard">
+                <div className="shrink-0"><SlabBoard /></div>
+              </ErrorBoundary>
+              <ErrorBoundary componentName="TextureLayoutPanel">
+                <div className="shrink-0"><TextureLayoutPanel /></div>
+              </ErrorBoundary>
             </div>
           ) : (
-            <Viewer3D />
+            <ErrorBoundary componentName="Viewer3D">
+              <Viewer3D />
+            </ErrorBoundary>
           )}
         </section>
       </main>
