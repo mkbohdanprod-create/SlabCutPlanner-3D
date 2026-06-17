@@ -15,7 +15,8 @@ import {
   findAngledSideSnap, polygonCentroid, rotateCoordinateAround, rigidRotatePlacementMove,
   type LocalRect, type EdgeSegment, type AngleSnapCandidate,
 } from './canvasUtils';
-
+import { SlabLayer } from "./board/SlabLayer";
+import { PartShape } from "./board/PartShape";
 
 export function SlabBoard() {
   const {
@@ -1389,32 +1390,6 @@ function PlacementStateBadges({ placement, x, y }: { placement: Placement; x: nu
   );
 }
 
-function PartShape({ part, placement, scale, viewMode, showAllowance }: { part: DetailPart; placement: Placement; scale: number; viewMode: 'technical' | 'photo' | 'texture'; showAllowance: boolean }) {
-  const conflict = placement.conflict || placement.outOfBounds;
-  const stroke = conflict ? '#d62828' : '#2d4f6c';
-  const strokeWidth = conflict ? 3 : 1.5;
-  const fill = viewMode === 'photo' ? 'rgba(255,255,255,0.14)' : 'rgba(114,147,171,0.35)';
-  const actual = pointsForPlacement(part, placement);
-  const actualHoles = (part.holes ?? []).map((hole) => pointsForPlacement(part, placement, hole));
-  const nominal = showAllowance && part.nominalPoints?.length ? pointsForPlacement(part, placement, part.nominalPoints) : undefined;
-  const nominalHoles = nominal ? (part.nominalHoles ?? []).map((hole) => pointsForPlacement(part, placement, hole)) : [];
-
-  if (nominal) {
-    return (
-      <>
-        <path d={svgPath(nominal, scale, nominalHoles)} fill={fill} fillRule="evenodd" stroke={stroke} strokeWidth={strokeWidth} />
-        <path className="allowance-outline" d={svgPath(actual, scale, actualHoles)} fill="none" fillRule="evenodd" stroke={stroke} />
-      </>
-    );
-  }
-
-  if (actualHoles.length) {
-    return <path d={svgPath(actual, scale, actualHoles)} fill={fill} fillRule="evenodd" stroke={stroke} strokeWidth={strokeWidth} />;
-  }
-
-  return <polygon points={pointString(actual, scale)} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
-}
-
 function EdgeProfileMarks({ part, placement, profiles, scale }: { part: DetailPart; placement: Placement; profiles?: EdgeProfileSelection; scale: number }) {
   const markers = edgeMarkersForPart(part, profiles, placement.rotation);
   if (!markers.length) return null;
@@ -1622,9 +1597,4 @@ function SlabDimensionHints({ slab, placements, parts, scale }: { slab: SlabInst
       )}
     </g>
   );
-}
-
-function SlabLayer({ slab, scale, viewMode }: { slab: SlabInstance; scale: number; viewMode: 'technical' | 'photo' | 'texture' }) {
-  return <g><rect width={slab.width * scale} height={slab.height * scale} fill="#f3f7fa" stroke="#7f98ad" strokeWidth={2} rx={4} />{viewMode !== 'technical' && slab.photo && <image href={slab.photo} x={slab.textureTransform.offsetX * scale} y={slab.textureTransform.offsetY * scale} width={slab.width * scale * slab.textureTransform.scale} height={slab.height * scale * slab.textureTransform.scale} opacity={slab.textureTransform.opacity} preserveAspectRatio="none" transform={slab.textureTransform.rotation ? `rotate(${slab.textureTransform.rotation}, ${slab.width * scale / 2}, ${slab.height * scale / 2})` : undefined} />}
-  <rect x={slab.minMargin * scale} y={slab.minMargin * scale} width={(slab.width - slab.minMargin * 2) * scale} height={(slab.height - slab.minMargin * 2) * scale} fill="none" stroke="#94aab9" strokeDasharray="8 6" /></g>;
 }
