@@ -1,6 +1,6 @@
 import React from 'react';
 import type { DetailPart, CanvasDrag } from '../../../domain/types';
-import { placementPolygon, pointString, partColor } from '../../../engines/geometry';
+import { placementPolygon, pointString } from '../../../lib/project';
 
 export function GroupDragPreview({ drag, parts, scale }: { drag: Extract<CanvasDrag, { type: 'placement' }>; parts: DetailPart[]; scale: number }) {
   const origin = drag.groupStart?.[drag.id];

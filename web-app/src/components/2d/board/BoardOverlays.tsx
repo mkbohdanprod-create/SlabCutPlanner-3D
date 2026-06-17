@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, MouseEvent as ReactMouseEvent } from 'react';
 import type { SlabInstance, Placement, DetailPart, ManualDimension, CanvasDrag, UiLanguage } from '../../../domain/types';
-import { dimensionSegmentsForSlab, clampNumber, polygonCentroid, placementPolygon, pointString, defectPoints, pointsForPlacement } from '../../../engines/geometry';
+import { placementPolygon, pointString, polygonBounds } from '../../../lib/project';
+import { clampNumber, polygonCentroid, defectPoints, pointsForPlacement } from '../canvasUtils';
 import { t } from '../../../i18n';
 import { SlabLayer } from './SlabLayer';
 import { PartShape } from './PartShape';
