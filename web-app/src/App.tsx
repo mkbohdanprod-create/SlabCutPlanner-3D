@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useUIStore } from './store/useStore';
 import { useProjectStore } from './store/useProjectStore';
 import { SlabBoard } from './components/2d/SlabBoard';
@@ -9,12 +9,16 @@ import { UnplacedPartsPanel } from './components/ui/UnplacedPartsPanel';
 import { TextureLayoutPanel } from './components/ui/TextureLayoutPanel';
 import { HeaderToolbar } from './components/ui/HeaderToolbar';
 import { AppStatusBar } from './components/ui/AppStatusBar';
-import { Settings, Layers, Box, Package, Download } from 'lucide-react';
+import { Settings, Layers, Box, Package, Download, UserCircle, LogOut } from 'lucide-react';
 import { LanguageDomTranslator } from './components/ui/LanguageDomTranslator';
+import { useAuth } from './components/auth/AuthContext';
+import { LoginModal } from './components/auth/LoginModal';
 
 function App() {
   const { mainView, setMainView } = useUIStore();
   const { initialize, undoLastMovement, redoMovement } = useProjectStore();
+  const { user, signOut } = useAuth();
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
   useEffect(() => {
     initialize();
@@ -71,9 +75,36 @@ function App() {
             </button>
           </div>
 
-          {/* Right Controls: HeaderToolbar contains project inputs, language, pack buttons */}
-          <HeaderToolbar />
+          {/* Right Controls */}
+          <div className="flex items-center gap-4">
+            <HeaderToolbar />
+            <div className="h-8 w-px bg-slate-200 mx-2"></div>
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-end">
+                  <span className="text-xs font-medium text-slate-700">{user.email}</span>
+                  <button 
+                    onClick={signOut}
+                    className="text-[10px] text-red-500 hover:text-red-700 font-medium flex items-center gap-1"
+                  >
+                    <LogOut className="w-3 h-3" /> Вийти
+                  </button>
+                </div>
+                <UserCircle className="w-8 h-8 text-blue-600" />
+              </div>
+            ) : (
+              <button
+                onClick={() => setIsLoginModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-colors border border-slate-300"
+              >
+                <UserCircle className="w-5 h-5" />
+                Увійти
+              </button>
+            )}
+          </div>
       </header>
+      
+      <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
 
       {/* Main Content Workspace */}
       <main className="flex-1 min-h-0 overflow-hidden flex p-4 gap-4">
