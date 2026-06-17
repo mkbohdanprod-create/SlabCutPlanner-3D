@@ -120,7 +120,14 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
 
   const { geometry, baseQuaternion } = useMemo(() => {
     const shape = new THREE.Shape();
-    part.points.forEach((p: any, i: number) => {
+    const points = part.points || [
+      { x: 0, y: 0 },
+      { x: part.width, y: 0 },
+      { x: part.width, y: part.height },
+      { x: 0, y: part.height }
+    ];
+    
+    points.forEach((p: any, i: number) => {
       const nx = p.x / part.width;
       const ny = p.y / part.height;
       if (i === 0) shape.moveTo(nx, ny);
@@ -129,6 +136,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
 
     if (part.holes) {
       part.holes.forEach((hole: any) => {
+        if (!hole.points) return;
         const holePath = new THREE.Path();
         hole.points.forEach((p: any, i: number) => {
           const nx = p.x / part.width;
