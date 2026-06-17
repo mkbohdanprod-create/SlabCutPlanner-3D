@@ -6,6 +6,74 @@ import * as THREE from 'three';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUIStore } from '../../store/useStore';
 
+function calculateCustomTextureMatrix(
+  part: DetailPart,
+  sourceRot: number,
+  sourceX: number,
+  sourceY: number,
+  transform: { scale?: number, offsetX?: number, offsetY?: number, rotation?: number },
+  slabWidth: number,
+  slabHeight: number
+) {
+  const imageWidth = (slabWidth || 1) * (transform.scale ?? 1);
+  const imageHeight = (slabHeight || 1) * (transform.scale ?? 1);
+  const tOffsetX = transform.offsetX ?? 0;
+  const tOffsetY = transform.offsetY ?? 0;
+  const tRotation = transform.rotation ?? 0;
+
+  const rotatePoint = (p: { x: number; y: number }, angleDeg: number) => {
+    const cx = part.width / 2;
+    const cy = part.height / 2;
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    const a = angleDeg * (Math.PI / 180);
+    return {
+      x: cx + dx * Math.cos(a) - dy * Math.sin(a),
+      y: cy + dx * Math.sin(a) + dy * Math.cos(a)
+    };
+  };
+
+  const rotatedReference = part.points.map((item) => rotatePoint(item, sourceRot));
+  const minX = Math.min(...rotatedReference.map((item) => item.x));
+  const minY = Math.min(...rotatedReference.map((item) => item.y));
+
+  const calcUV = (U: number, V: number) => {
+    const x = U * part.width;
+    const y = V * part.height;
+    
+    const rp = rotatePoint({ x, y }, sourceRot);
+
+    const slabX = sourceX + (rp.x - minX);
+    const slabY = sourceY + (rp.y - minY);
+
+    let rotX = slabX;
+    let rotY = slabY;
+    if (tRotation) {
+      const scx = (slabWidth || 0) / 2;
+      const scy = (slabHeight || 0) / 2;
+      const ta = -tRotation * (Math.PI / 180);
+      const sdx = slabX - scx;
+      const sdy = slabY - scy;
+      rotX = scx + sdx * Math.cos(ta) - sdy * Math.sin(ta);
+      rotY = scy + sdx * Math.sin(ta) + sdy * Math.cos(ta);
+    }
+
+    const u = (rotX - tOffsetX) / imageWidth;
+    const v = 1 - (rotY - tOffsetY) / imageHeight;
+    return { u, v };
+  };
+
+  const p00 = calcUV(0, 0);
+  const p10 = calcUV(1, 0);
+  const p01 = calcUV(0, 1);
+
+  return [
+    p10.u - p00.u, p01.u - p00.u, p00.u,
+    p10.v - p00.v, p01.v - p00.v, p00.v,
+    0, 0, 1
+  ];
+}
+
 function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, originOffset = [0, 0, 0], localTransform }: { placement: Placement; part: DetailPart; slab: SlabInstance; parts: DetailPart[]; isSelected?: boolean; onSelect?: () => void; originOffset?: [number, number, number]; localTransform?: { pos: [number, number, number], quat: THREE.Quaternion, hidden?: boolean } | null }) {
   if (localTransform?.hidden) return null;
 
@@ -90,52 +158,30 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
     clone.wrapS = THREE.RepeatWrapping;
     clone.wrapT = THREE.RepeatWrapping;
 
-    const transform = slab.textureTransform || { scale: 1, offsetX: 0, offsetY: 0, rotation: 0 };
-    const imageWidth = (slab.width || 1) * transform.scale;
-    const imageHeight = (slab.height || 1) * transform.scale;
     const sourceRot = layout?.sourceRotation ?? layout?.rotation ?? 0;
+    const transform = slab.textureTransform || { scale: 1, offsetX: 0, offsetY: 0, rotation: 0 };
     
-    const isRotated = sourceRot === 90 || sourceRot === 270;
-    const rotatedWidth = isRotated ? part.height : part.width;
-    const rotatedHeight = isRotated ? part.width : part.height;
+    const matrixArray = calculateCustomTextureMatrix(
+      part, sourceRot, sourceX, sourceY, transform, slab.width || 1, slab.height || 1
+    );
     
-    const cx_slab = sourceX + rotatedWidth / 2;
-    const cy_slab = sourceY + rotatedHeight / 2;
-
-    let slabPointX = cx_slab;
-    let slabPointY = cy_slab;
-    if (transform.rotation) {
-      const angle = -transform.rotation * (Math.PI / 180);
-      const scx = (slab.width || 0) / 2;
-      const scy = (slab.height || 0) / 2;
-      const dx = cx_slab - scx;
-      const dy = cy_slab - scy;
-      slabPointX = scx + dx * Math.cos(angle) - dy * Math.sin(angle);
-      slabPointY = scy + dx * Math.sin(angle) + dy * Math.cos(angle);
-    }
-    
-    const tu = (slabPointX - transform.offsetX) / imageWidth;
-    const tv = 1 - (slabPointY - transform.offsetY) / imageHeight;
-    
-    clone.offset.set(tu - 0.5, tv - 0.5);
-    clone.center.set(0.5, 0.5);
-    
-    const totalRot = transform.rotation - sourceRot;
-    if (totalRot !== 0) {
-      clone.rotation = -totalRot * (Math.PI / 180);
-    }
-    
-    const sx = rotatedWidth / imageWidth;
-    const sy = rotatedHeight / imageHeight;
-    
-    clone.repeat.set(sx, sy);
+    clone.matrixAutoUpdate = false;
+    clone.matrix.set(...matrixArray);
     clone.needsUpdate = true;
     
     const sideClone = texture.clone();
     sideClone.wrapS = THREE.RepeatWrapping;
     sideClone.wrapT = THREE.RepeatWrapping;
+    
+    const isRotated = sourceRot === 90 || sourceRot === 270;
+    const rotatedWidth = isRotated ? part.height : part.width;
+    const imageWidth = (slab.width || 1) * (transform.scale ?? 1);
+    const imageHeight = (slab.height || 1) * (transform.scale ?? 1);
+    const sx = rotatedWidth / imageWidth;
     const sideSy = (slab.thickness || 20) / imageHeight;
+    
     sideClone.repeat.set(sx, sideSy);
+    const totalRot = transform.rotation - sourceRot;
     if (totalRot !== 0) {
       sideClone.center.set(0.5, 0.5);
       sideClone.rotation = -totalRot * (Math.PI / 180);
@@ -186,9 +232,6 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
 
     const uvs = geom.attributes.uv;
     if (uvs) {
-      for (let i = 0; i < uvs.count; i++) {
-        uvs.setY(i, 1 - uvs.getY(i));
-      }
       uvs.needsUpdate = true;
     }
     
