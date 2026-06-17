@@ -2,12 +2,12 @@ import React from 'react';
 import type { ApprovalImportItem, ApprovalImportPreview } from '../../../utils/approvalImport';
 import type { DxfPoint } from '../../../parsers/dxf';
 
-function approvalItemPoints(item: ApprovalImportItem): DxfPoint[] {
+export function approvalItemPoints(item: ApprovalImportItem): DxfPoint[] {
   if (item.customPoints?.length) return item.customPoints;
   return [];
 }
 
-function approvalItemHasExtractedGeometry(item: ApprovalImportItem) {
+export function approvalItemHasExtractedGeometry(item: ApprovalImportItem) {
   return item.importStatus !== 'Error'
     && item.geometrySource !== 'none'
     && item.shapeMode === 'customContour'
@@ -17,7 +17,7 @@ function approvalItemHasExtractedGeometry(item: ApprovalImportItem) {
     && Boolean(item.debug.sourceImageRegion);
 }
 
-function approvalPreviewDebugDumpFromState(preview: ApprovalImportPreview): ApprovalImportPreview['debugDump'] {
+export function approvalPreviewDebugDumpFromState(preview: ApprovalImportPreview): ApprovalImportPreview['debugDump'] {
   return {
     pipelineVersion: preview.pipelineVersion,
     approvalImportBuildId: preview.approvalImportBuildId,
@@ -81,7 +81,7 @@ function approvalPreviewDebugDumpFromState(preview: ApprovalImportPreview): Appr
   };
 }
 
-function approvalPreviewDebugSummary(preview: ApprovalImportPreview) {
+export function approvalPreviewDebugSummary(preview: ApprovalImportPreview) {
   const lines = [
     `BuildId: ${preview.approvalImportBuildId}`,
     `Pipeline: ${preview.pipelineVersion}`,
@@ -105,7 +105,7 @@ function approvalPreviewDebugSummary(preview: ApprovalImportPreview) {
   return lines.join('\n');
 }
 
-function ApprovalItemCrop({ item }: { item: ApprovalImportItem }) {
+export function ApprovalItemCrop({ item }: { item: ApprovalImportItem }) {
   if (!item.sourcePreview) return <span className="approval-error-text">Drawing crop was not found.</span>;
   const hasContour = Boolean(item.customPoints?.length);
   const viewWidth = hasContour

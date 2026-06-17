@@ -3,6 +3,8 @@ import type { DetailDraft } from '../../../domain/types';
 import type { UiLanguage } from '../../../store/useDictionaryStore';
 import { SvgInput, SvgSide, SvgQuantity, SvgCheck, TemplateInput, TemplateSide, TemplateCheck, ArrowDefs } from './SvgComponents';
 import type { ShapeKind } from '../utils/draftHelpers';
+import { translateStaticUiText } from '../../../i18n';
+const lDetailTemplateSrc = new URL('../../../assets/l-detail-template.svg', import.meta.url).href;
 
 export function LDesigner({ detail, updateDetail, activeSides, onSideClick, language }: { detail: DetailDraft; updateDetail: (patch: Partial<DetailDraft>) => void; activeSides: Set<string>; onSideClick: (side: string) => void; language: UiLanguage }) {
   const ui = (value: string) => translateStaticUiText(language, value);

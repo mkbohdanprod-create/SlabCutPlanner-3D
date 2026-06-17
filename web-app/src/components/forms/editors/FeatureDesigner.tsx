@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react';
 import { Target, Maximize, Scissors, AlertCircle, Move } from 'lucide-react';
 import type { DetailDraft, EdgeFeature, EdgeProfileType, EdgeProfileSelection, UiLanguage } from '../../../domain/types';
+import { Field } from '../utils/sharedInputs';
 import { allSides, curveSides } from '../utils/draftHelpers';
 import { EDGE_PROFILE_OPTIONS, DEFAULT_EDGE_PROFILE } from '../../../utils/edgeProfiles';
 

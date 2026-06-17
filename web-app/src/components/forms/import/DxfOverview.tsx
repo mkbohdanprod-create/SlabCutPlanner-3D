@@ -5,14 +5,13 @@ import { dxfBounds, dxfSvgPath, dxfCanvasSize, dxfViewportForContours, dxfSelect
 import type { DetailType } from '../../../domain/types';
 import { TYPE_SINK } from '../utils/draftHelpers';
 import { translateStaticUiText } from '../../../i18n';
-// ... DXF_ROLE_LABELS? Let's check if DXF_ROLE_LABELS is needed.
-const DXF_ROLE_LABELS: Record<DxfImportRole, string> = {
+export const DXF_ROLE_LABELS: Record<DxfImportRole, string> = {
   detail: 'Деталь',
   thickening: 'Потовщення',
   fold: 'Підворот',
 };
 
-function DxfPreviewShape({ contour }: { contour: DxfPreviewContour }) {
+export function DxfPreviewShape({ contour }: { contour: DxfPreviewContour }) {
   if (!contour || !contour.points || contour.points.length === 0) {
     return <div className="w-12 h-12 bg-slate-50 border border-slate-200 rounded shrink-0" />;
   }
