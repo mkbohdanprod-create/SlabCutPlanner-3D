@@ -15,6 +15,8 @@ interface UIState {
   set3dGroupingEnabled: (enabled: boolean) => void;
   transformMode: 'translate' | 'rotate';
   setTransformMode: (mode: 'translate' | 'rotate') => void;
+  selectedId3d: string | null;
+  setSelectedId3d: (id: string | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -30,4 +32,6 @@ export const useUIStore = create<UIState>((set) => ({
   set3dGroupingEnabled: (is3dGroupingEnabled) => set({ is3dGroupingEnabled }),
   transformMode: 'translate',
   setTransformMode: (transformMode) => set({ transformMode }),
+  selectedId3d: null,
+  setSelectedId3d: (selectedId3d) => set({ selectedId3d }),
 }));

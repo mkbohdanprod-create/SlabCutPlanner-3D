@@ -1,6 +1,7 @@
 import { Box, RotateCcw, MousePointer2, Move, RefreshCw } from 'lucide-react';
 import { useUIStore } from '../../store/useStore';
 import { useProjectStore } from '../../store/useProjectStore';
+import { DetailEditor3D } from '../3d/DetailEditor3D';
 
 export function Sidebar3D() {
   const { is3dAssemblyMode, set3dAssemblyMode, is3dGroupingEnabled, set3dGroupingEnabled, transformMode, setTransformMode } = useUIStore();
@@ -76,7 +77,7 @@ export function Sidebar3D() {
           </div>
         )}
 
-        <div className="pt-4 border-t border-slate-100">
+        <div className="pt-4 border-t border-slate-100 mb-4">
           <button 
             onClick={() => {
               if (window.confirm('Ви впевнені, що хочете скинути всі 3D координати і повернути деталі на площину?')) {
@@ -89,6 +90,11 @@ export function Sidebar3D() {
             Скинути збірку
           </button>
         </div>
+      </div>
+      
+      {/* Detail Editing Block */}
+      <div className="mt-auto shrink-0">
+        <DetailEditor3D />
       </div>
     </aside>
   );
