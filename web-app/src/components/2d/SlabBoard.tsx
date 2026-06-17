@@ -17,6 +17,8 @@ import {
 } from './canvasUtils';
 import { SlabLayer } from "./board/SlabLayer";
 import { PartShape } from "./board/PartShape";
+import { PlacementStateBadges } from "./board/PlacementStateBadges";
+import { EdgeProfileMarks } from "./board/EdgeProfileMarks";
 
 export function SlabBoard() {
   const {
@@ -1369,47 +1371,6 @@ function SelectionRect({ box, scale }: { box: SelectionBox; scale: number }) {
       width={(rect.maxX - rect.minX) * scale}
       height={(rect.maxY - rect.minY) * scale}
     />
-  );
-}
-
-function PlacementStateBadges({ placement, x, y }: { placement: Placement; x: number; y: number }) {
-  const badges = [
-    placement.pinnedToSlab ? { key: 'pin', label: 'P' } : undefined,
-    placement.manualLocked ? { key: 'lock', label: 'L' } : undefined,
-  ].filter(Boolean) as Array<{ key: string; label: string }>;
-  if (!badges.length) return null;
-  return (
-    <g className="placement-state-badges">
-      {badges.map((badge, index) => (
-        <g key={badge.key} transform={`translate(${x},${y + index * 16})`}>
-          <rect x={0} y={0} width={14} height={14} rx={4} />
-          <text x={7} y={10} textAnchor="middle">{badge.label}</text>
-        </g>
-      ))}
-    </g>
-  );
-}
-
-function EdgeProfileMarks({ part, placement, profiles, scale }: { part: DetailPart; placement: Placement; profiles?: EdgeProfileSelection; scale: number }) {
-  const markers = edgeMarkersForPart(part, profiles, placement.rotation);
-  if (!markers.length) return null;
-  return (
-    <g className="edge-profile-marks" pointerEvents="none">
-      {markers.map((marker) => {
-        const x1 = (placement.x + marker.start.x) * scale;
-        const y1 = (placement.y + marker.start.y) * scale;
-        const x2 = (placement.x + marker.end.x) * scale;
-        const y2 = (placement.y + marker.end.y) * scale;
-        const labelX = (placement.x + marker.labelPoint.x) * scale;
-        const labelY = (placement.y + marker.labelPoint.y) * scale;
-        return (
-          <g key={`${part.id}-${marker.side}-${marker.profile}`}>
-            <line x1={x1} y1={y1} x2={x2} y2={y2} />
-            <text x={labelX} y={labelY - 3} textAnchor="middle">{edgeProfileShortLabel(marker.profile)}</text>
-          </g>
-        );
-      })}
-    </g>
   );
 }
 
