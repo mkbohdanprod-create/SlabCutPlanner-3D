@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { useUIStore } from './store/useStore';
 import { useProjectStore } from './store/useProjectStore';
 import { SlabBoard } from './components/2d/SlabBoard';
-import { Viewer3D } from './components/3d/Viewer3D';
+const Viewer3D = lazy(() => import('./components/3d/Viewer3D').then(m => ({ default: m.Viewer3D })));
 import { Sidebar } from './components/ui/Sidebar';
 import { Sidebar3D } from './components/ui/Sidebar3D';
 import { UnplacedPartsPanel } from './components/ui/UnplacedPartsPanel';
@@ -149,7 +149,9 @@ function App() {
             </div>
           ) : (
             <ErrorBoundary componentName="Viewer3D">
-              <Viewer3D />
+              <Suspense fallback={<div className="flex-1 flex items-center justify-center bg-slate-100 text-slate-500 w-full h-full">Завантаження 3D-движка...</div>}>
+                <Viewer3D />
+              </Suspense>
             </ErrorBoundary>
           )}
         </section>
