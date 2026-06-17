@@ -5,6 +5,7 @@ import { explodeDetails } from '../engines/geometry';
 import { autoPack, buildTextureLayout, detectConflicts } from '../engines/packing';
 import { t } from '../i18n';
 import { rotatedSize } from '../lib/project';
+import { supabase } from '../lib/supabase';
 
 const STORAGE_KEY = 'slab_cut_planner_current_project';
 
@@ -134,10 +135,33 @@ interface ProjectState {
   exportProject: () => string;
   updatePlacement3dTransform: (placementId: string, transform: { x: number; y: number; z: number; rx: number; ry: number; rz: number; } | undefined) => void;
   reset3dAssembly: () => void;
+  currentDbProjectId: string | null;
+  setCurrentDbProjectId: (id: string | null) => void;
 }
+
+let saveTimeout: any = null;
 
 function persist(project: Project) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+
+  try {
+    const state = useProjectStore.getState();
+    if (state && state.currentDbProjectId) {
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return;
+        
+        await supabase.from('projects').update({
+          data: project,
+          name: project.orderNumber || 'Проект без назви',
+          updated_at: new Date().toISOString()
+        }).eq('id', state.currentDbProjectId);
+      }, 1000);
+    }
+  } catch (e) {
+    // Store might not be initialized yet
+  }
 }
 
 function calcStatus(project: Project, placements: Placement[]) {
@@ -329,6 +353,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   unplacedDropVisible: false,
   movementHistory: [],
   movementFuture: [],
+  currentDbProjectId: null,
+  setCurrentDbProjectId: (id) => set({ currentDbProjectId: id }),
   initialize: () => {
     const raw = localStorage.getItem(STORAGE_KEY);
     const next = loadWithoutPacking(raw ? (JSON.parse(raw) as Project) : createEmptyProject());

@@ -9,16 +9,18 @@ import { UnplacedPartsPanel } from './components/ui/UnplacedPartsPanel';
 import { TextureLayoutPanel } from './components/ui/TextureLayoutPanel';
 import { HeaderToolbar } from './components/ui/HeaderToolbar';
 import { AppStatusBar } from './components/ui/AppStatusBar';
-import { Settings, Layers, Box, Package, Download, UserCircle, LogOut } from 'lucide-react';
+import { Settings, Layers, Box, Package, Download, UserCircle, LogOut, FolderOpen } from 'lucide-react';
 import { LanguageDomTranslator } from './components/ui/LanguageDomTranslator';
 import { useAuth } from './components/auth/AuthContext';
 import { LoginModal } from './components/auth/LoginModal';
+import { ProjectsDashboard } from './components/ui/ProjectsDashboard';
 
 function App() {
   const { mainView, setMainView } = useUIStore();
-  const { initialize, undoLastMovement, redoMovement } = useProjectStore();
+  const { initialize, undoLastMovement, redoMovement, currentDbProjectId } = useProjectStore();
   const { user, signOut } = useAuth();
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isProjectsOpen, setIsProjectsOpen] = useState(false);
 
   useEffect(() => {
     initialize();
@@ -79,8 +81,25 @@ function App() {
           <div className="flex items-center gap-4">
             <HeaderToolbar />
             <div className="h-8 w-px bg-slate-200 mx-2"></div>
+            
+            {user && (
+              <button
+                onClick={() => setIsProjectsOpen(true)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border ${
+                  currentDbProjectId 
+                    ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100' 
+                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <FolderOpen className="w-4 h-4" />
+                <span className="max-w-[120px] truncate">
+                  {currentDbProjectId ? 'Хмарний проект' : 'Локальний проект'}
+                </span>
+              </button>
+            )}
+
             {user ? (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 ml-2">
                 <div className="flex flex-col items-end">
                   <span className="text-xs font-medium text-slate-700">{user.email}</span>
                   <button 
@@ -105,6 +124,7 @@ function App() {
       </header>
       
       <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
+      <ProjectsDashboard isOpen={isProjectsOpen} onClose={() => setIsProjectsOpen(false)} />
 
       {/* Main Content Workspace */}
       <main className="flex-1 min-h-0 overflow-hidden flex p-4 gap-4">
