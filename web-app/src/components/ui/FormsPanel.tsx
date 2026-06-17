@@ -189,6 +189,26 @@ const DXF_ROLE_LABELS: Record<DxfImportRole, string> = {
   fold: 'Підворот',
 };
 
+function DxfPreviewShape({ contour }: { contour: DxfPreviewContour }) {
+  if (!contour || !contour.points || contour.points.length === 0) {
+    return <div className="w-12 h-12 bg-slate-50 border border-slate-200 rounded shrink-0" />;
+  }
+  const bounds = dxfBounds(contour.points);
+  if (!bounds) return <div className="w-12 h-12 bg-slate-50 border border-slate-200 rounded shrink-0" />;
+  const w = bounds.maxX - bounds.minX;
+  const h = bounds.maxY - bounds.minY;
+  const cx = bounds.minX + w / 2;
+  const cy = bounds.minY + h / 2;
+  const size = Math.max(w, h) || 1;
+  const viewBox = `${cx - size * 0.6} ${cy - size * 0.6} ${size * 1.2} ${size * 1.2}`;
+  
+  return (
+    <svg viewBox={viewBox} className="w-12 h-12 bg-slate-50 border border-slate-200 rounded shrink-0" style={{ transform: 'scale(1, -1)' }}>
+      <path d={dxfSvgPath(contour.points, contour.holes)} fill="#cbd5e1" fillRule="evenodd" stroke="#3b82f6" strokeWidth={size * 0.02} vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
 function DxfOverview({
   contours,
   binding,
