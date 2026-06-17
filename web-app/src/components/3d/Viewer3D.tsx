@@ -136,9 +136,10 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
 
     if (part.holes) {
       part.holes.forEach((hole: any) => {
-        if (!hole.points) return;
+        // hole is an array of Points (from DXF parser)
+        if (!hole || !Array.isArray(hole)) return;
         const holePath = new THREE.Path();
-        hole.points.forEach((p: any, i: number) => {
+        hole.forEach((p: any, i: number) => {
           const nx = p.x / part.width;
           const ny = p.y / part.height;
           if (i === 0) holePath.moveTo(nx, ny);
