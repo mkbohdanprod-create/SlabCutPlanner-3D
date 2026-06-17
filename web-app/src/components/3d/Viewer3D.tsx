@@ -83,8 +83,8 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
   const fallbackUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
   const texture = useTexture(photoUrl || fallbackUrl);
   
-  const { clone: clonedTexture } = useMemo(() => {
-    if (!texture || !photoUrl || !slab) return { clone: null };
+  const { clone: clonedTexture, sideClone } = useMemo(() => {
+    if (!texture || !photoUrl || !slab) return { clone: null, sideClone: null };
     
     const clone = texture.clone();
     clone.wrapS = THREE.RepeatWrapping;
@@ -93,7 +93,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
     const transform = slab.textureTransform || { scale: 1, offsetX: 0, offsetY: 0, rotation: 0 };
     const imageWidth = (slab.width || 1) * transform.scale;
     const imageHeight = (slab.height || 1) * transform.scale;
-    const sourceRot = layout?.sourceRotation ?? 0;
+    const sourceRot = layout?.sourceRotation ?? layout?.rotation ?? 0;
     
     const isRotated = sourceRot === 90 || sourceRot === 270;
     const rotatedWidth = isRotated ? part.height : part.width;
@@ -125,13 +125,24 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
       clone.rotation = -totalRot * (Math.PI / 180);
     }
     
-    const sx = part.width / (isRotated ? imageHeight : imageWidth);
-    const sy = part.height / (isRotated ? imageWidth : imageHeight);
+    const sx = rotatedWidth / imageWidth;
+    const sy = rotatedHeight / imageHeight;
     
     clone.repeat.set(sx, sy);
     clone.needsUpdate = true;
+    
+    const sideClone = texture.clone();
+    sideClone.wrapS = THREE.RepeatWrapping;
+    sideClone.wrapT = THREE.RepeatWrapping;
+    const sideSy = (slab.thickness || 20) / imageHeight;
+    sideClone.repeat.set(sx, sideSy);
+    if (totalRot !== 0) {
+      sideClone.center.set(0.5, 0.5);
+      sideClone.rotation = -totalRot * (Math.PI / 180);
+    }
+    sideClone.needsUpdate = true;
 
-    return { clone };
+    return { clone, sideClone };
   }, [texture, photoUrl, slab, part, sourceX, sourceY, layout]);
 
   const { geometry, baseQuaternion } = useMemo(() => {
@@ -227,7 +238,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
           />
           <meshStandardMaterial 
             attach="material-1"
-            map={clonedTexture} 
+            map={sideClone || clonedTexture} 
             roughness={0.1} 
             emissive={isSelected ? new THREE.Color(0x3b82f6) : new THREE.Color(0x000000)}
             emissiveIntensity={isSelected ? 0.3 : 0}
