@@ -9,7 +9,7 @@ import { UnplacedPartsPanel } from './components/ui/UnplacedPartsPanel';
 import { TextureLayoutPanel } from './components/ui/TextureLayoutPanel';
 import { HeaderToolbar } from './components/ui/HeaderToolbar';
 import { AppStatusBar } from './components/ui/AppStatusBar';
-import { Settings, Layers, Box, Package, Download, UserCircle, LogOut, FolderOpen } from 'lucide-react';
+import { Settings, Layers, Box, Package, Download, UserCircle, LogOut, FolderOpen, Loader2 } from 'lucide-react';
 import { LanguageDomTranslator } from './components/ui/LanguageDomTranslator';
 import { useAuth } from './components/auth/AuthContext';
 import { LoginModal } from './components/auth/LoginModal';
@@ -149,7 +149,12 @@ function App() {
             </div>
           ) : (
             <ErrorBoundary componentName="Viewer3D">
-              <Suspense fallback={<div className="flex-1 flex items-center justify-center bg-slate-100 text-slate-500 w-full h-full">Завантаження 3D-движка...</div>}>
+              <Suspense fallback={
+                <div className="flex-1 flex flex-col items-center justify-center bg-slate-100 text-slate-500 w-full h-full gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="font-medium">Завантаження 3D-движка...</span>
+                </div>
+              }>
                 <Viewer3D />
               </Suspense>
             </ErrorBoundary>

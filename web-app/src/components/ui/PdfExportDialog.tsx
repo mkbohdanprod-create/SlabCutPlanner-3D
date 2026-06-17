@@ -3,7 +3,9 @@ import type { DetailPart, Project } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { defaultPdfExportOptions, exportProjectPdf } from '../../utils/export';
 import type { PdfExportOptions, PdfOrientation, PdfPageFormat } from '../../utils/export';
-import { Viewer3D } from '../3d/Viewer3D';
+import { lazy, Suspense } from 'react';
+
+const Viewer3D = lazy(() => import('../3d/Viewer3D').then(m => ({ default: m.Viewer3D })));
 
 type PdfExportDialogProps = {
   open: boolean;
@@ -86,7 +88,9 @@ export function PdfExportDialog({ open, project, parts, onClose }: PdfExportDial
     <div className="modal-backdrop">
       {capturing3d && (
         <div className="fixed top-0 left-0 w-[1200px] h-[800px] z-[-10] pointer-events-none" style={{ opacity: 0.01 }}>
-          <Viewer3D onCaptureReady={(captures: any) => doExport(captures)} isCaptureMode={true} />
+          <Suspense fallback={null}>
+            <Viewer3D onCaptureReady={(captures: any) => doExport(captures)} isCaptureMode={true} />
+          </Suspense>
         </div>
       )}
       <div className="detail-modal pdf-modal z-10">

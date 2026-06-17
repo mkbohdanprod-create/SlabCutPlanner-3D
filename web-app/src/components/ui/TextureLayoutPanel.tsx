@@ -4,7 +4,10 @@ import { translateStaticUiText } from '../../i18n';
 import { pointString, rotatePoint, rotatedLocalPoints, rotatedPoints, rotatedSize } from '../../lib/project';
 import { useProjectStore } from '../../store/useProjectStore';
 import { edgeMarkersForPart, edgeProfileShortLabel } from '../../utils/edgeProfiles';
-import { Viewer3D } from '../3d/Viewer3D';
+import { lazy, Suspense } from 'react';
+import { Loader2 } from 'lucide-react';
+
+const Viewer3D = lazy(() => import('../3d/Viewer3D').then(m => ({ default: m.Viewer3D })));
 
 const MIN_TEXTURE_WIDTH = 1000;
 const MIN_TEXTURE_HEIGHT = 320;
@@ -1192,7 +1195,14 @@ export function TextureLayoutPanel() {
                 detailsById={detailsById}
               />
             ) : (
-              <Viewer3D className="w-full h-full bg-slate-900 overflow-hidden relative" />
+              <Suspense fallback={
+                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-slate-500 gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="font-medium text-sm">Завантаження 3D-движка...</span>
+                </div>
+              }>
+                <Viewer3D className="w-full h-full bg-slate-900 overflow-hidden relative" />
+              </Suspense>
             )}
           </div>
         </aside>
