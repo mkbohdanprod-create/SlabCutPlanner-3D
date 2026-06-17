@@ -3,9 +3,8 @@ import type { DetailPart, Project } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { defaultPdfExportOptions, exportProjectPdf } from '../../utils/export';
 import type { PdfExportOptions, PdfOrientation, PdfPageFormat } from '../../utils/export';
-import { lazy, Suspense } from 'react';
-
-const Viewer3D = lazy(() => import('../3d/Viewer3D').then(m => ({ default: m.Viewer3D })));
+import { Suspense } from 'react';
+import { Viewer3D } from '../3d/Viewer3DLazy';
 
 type PdfExportDialogProps = {
   open: boolean;

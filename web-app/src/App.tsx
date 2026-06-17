@@ -2,7 +2,7 @@ import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { useUIStore } from './store/useStore';
 import { useProjectStore } from './store/useProjectStore';
 import { SlabBoard } from './components/2d/SlabBoard';
-const Viewer3D = lazy(() => import('./components/3d/Viewer3D').then(m => ({ default: m.Viewer3D })));
+import { Viewer3D } from './components/3d/Viewer3DLazy';
 import { Sidebar } from './components/ui/Sidebar';
 import { Sidebar3D } from './components/ui/Sidebar3D';
 import { UnplacedPartsPanel } from './components/ui/UnplacedPartsPanel';

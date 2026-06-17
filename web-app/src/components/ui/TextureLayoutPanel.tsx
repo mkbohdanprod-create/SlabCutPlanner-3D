@@ -4,10 +4,9 @@ import { translateStaticUiText } from '../../i18n';
 import { pointString, rotatePoint, rotatedLocalPoints, rotatedPoints, rotatedSize } from '../../lib/project';
 import { useProjectStore } from '../../store/useProjectStore';
 import { edgeMarkersForPart, edgeProfileShortLabel } from '../../utils/edgeProfiles';
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
-
-const Viewer3D = lazy(() => import('../3d/Viewer3D').then(m => ({ default: m.Viewer3D })));
+import { Viewer3D } from '../3d/Viewer3DLazy';
 
 const MIN_TEXTURE_WIDTH = 1000;
 const MIN_TEXTURE_HEIGHT = 320;
