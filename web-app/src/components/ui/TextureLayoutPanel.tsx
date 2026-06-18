@@ -21,6 +21,7 @@ import type {
 import {
   clampTextureLayoutPosition,
   constrainTextureGroupPosition,
+  findPart,
   getTextureItems,
   resolveTextureOverlaps,
   snapTexturePosition,
