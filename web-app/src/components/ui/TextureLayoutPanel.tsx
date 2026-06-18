@@ -2,6 +2,7 @@ import { CSSProperties, MouseEvent, Ref, WheelEvent, useEffect, useMemo, useRef,
 import type { Detail, DetailPart, Rotation, SlabInstance, TextureFrame, TextureLayout } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { pointString, rotatePoint, rotatedLocalPoints, rotatedPoints, rotatedSize } from '../../lib/project';
+import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
 import { useProjectStore } from '../../store/useProjectStore';
 import { edgeMarkersForPart, edgeProfileShortLabel } from '../../utils/edgeProfiles';
 import { Suspense } from 'react';
@@ -109,12 +110,7 @@ function sideSegment(part: DetailPart, side: string | undefined, rotation: Rotat
     };
   }
   const resolvedSide = part.sideAliases?.[side] ?? side;
-  const segmentIndexes: Record<string, Partial<Record<string, number>>> = {
-    'Прямокутна': { B: 0, C: 1, D: 2, A: 3 },
-    'Г-подібна': { B: 0, C: 1, D: 2, E: 3, F: 4, A: 5 },
-    'П-подібна': { B: 0, C: 1, D: 2, E: 3, F: 4, G: 5, H: 6, A: 7 },
-  };
-  const index = segmentIndexes[part.shape]?.[resolvedSide];
+  const index = SIDE_SEGMENT_INDEXES[part.shape]?.[resolvedSide];
   if (index === undefined || !part.points[index]) return undefined;
   const rotated = rotatedPoints(part, rotation);
   return { start: rotated[index], end: rotated[(index + 1) % rotated.length] };

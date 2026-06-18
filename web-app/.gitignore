@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Junk files
+old_*.tsx
+*_old.tsx
+*_test.png
+compile_errors.txt

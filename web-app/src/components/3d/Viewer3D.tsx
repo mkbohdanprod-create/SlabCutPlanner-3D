@@ -3,6 +3,8 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, Grid, Center, ContactShadows, TransformControls , useTexture } from '@react-three/drei';
 import type { Placement, DetailPart, SlabInstance, Detail } from '../../domain/types';
 import * as THREE from 'three';
+import { Vector2 } from 'three';
+import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUIStore } from '../../store/useStore';
 
@@ -98,13 +100,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
       let start = { x: 0, y: 0 };
       let end = { x: 0, y: 0 };
       
-      const segmentIndexes: Record<string, Record<string, number>> = {
-        'Прямокутна': { B: 0, C: 1, D: 2, A: 3 },
-        'Г-подібна': { B: 0, C: 1, D: 2, E: 3, F: 4, A: 5 },
-        'П-подібна': { B: 0, C: 1, D: 2, E: 3, F: 4, G: 5, H: 6, A: 7 },
-      };
-      
-      const index = segmentIndexes[mainPart.shape]?.[part.edgeSide];
+      const index = SIDE_SEGMENT_INDEXES[mainPart.shape]?.[part.edgeSide];
       if (index !== undefined && mainPart.points && mainPart.points.length > index) {
         start = mainPart.points[index];
         end = mainPart.points[(index + 1) % mainPart.points.length];
