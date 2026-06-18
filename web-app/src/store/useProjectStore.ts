@@ -76,7 +76,6 @@ function rotatedTextureLayouts(layouts: TextureLayout[], parts: DetailPart[], so
 
 interface ProjectState {
   project: Project;
-  viewMode: ViewMode;
   packingMode: PackingMode;
   parts: DetailPart[];
   isPacking: boolean;
@@ -89,7 +88,6 @@ interface ProjectState {
   movementHistory: MovementSnapshot[];
   movementFuture: MovementSnapshot[];
   initialize: () => void;
-  setViewMode: (mode: ViewMode) => void;
   setPackingMode: (mode: PackingMode) => void;
   setUiLanguage: (language: UiLanguage) => void;
   setSelectedSlabId: (id?: string) => void;
@@ -414,7 +412,6 @@ function partNameForLabel(part: DetailPart, label: string) {
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   project: createEmptyProject(),
-  viewMode: '2d',
   packingMode: 'economy',
   parts: [],
   isPacking: false,
@@ -459,7 +456,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const next = loadWithoutPacking(projectObj || createEmptyProject());
     set({ ...next, selectedSlabId: next.project.slabs[0]?.id, isInitialized: true });
   },
-  setViewMode: (viewMode) => set({ viewMode }),
   setPackingMode: (packingMode) => set({ packingMode }),
   setUiLanguage: (uiLanguage) => {
     updateWithoutPacking(set, get, { ...get().project, uiLanguage } as Project, false);

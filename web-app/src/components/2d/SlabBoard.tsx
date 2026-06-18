@@ -4,6 +4,7 @@ import type { CutAllowances, DetailPart, DefectZone, EdgeProfileSelection, Manua
 import { t, translateStaticUiText } from '../../i18n';
 import { normalizeRotation, placementPolygon, pointString, polygonBounds, rotatedLocalPoints, rotatedPoints, rotatedSize, translatePoints } from '../../lib/project';
 import { useProjectStore } from '../../store/useProjectStore';
+import { useUIStore } from '../../store/useStore';
 import { edgeMarkersForPart, edgeProfileShortLabel } from '../../utils/edgeProfiles';
 import { readFileAsDataUrl } from '../../utils/file';
 import {
@@ -28,9 +29,7 @@ export function SlabBoard() {
   const {
     project,
     parts,
-    viewMode,
     bufferDragPartId,
-    setViewMode,
     movePlacement,
     placeUnplacedPart,
     unplacePart,
@@ -61,6 +60,7 @@ export function SlabBoard() {
     setPlacementLocks,
     pushMovementSnapshot,
   } = useProjectStore();
+  const { viewMode, setViewMode } = useUIStore();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const unplacedRevealTimer = useRef<number | undefined>(undefined);
   const unplacedRevealPoint = useRef<{ x: number; y: number } | undefined>(undefined);
