@@ -1,0 +1,63 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`packing.ts (Safety Net) > should autoPack project with deterministic output matching snapshot > placements 1`] = `
+[
+  {
+    "id": "test-id-2",
+    "manualLocked": false,
+    "partId": "part-exact",
+    "rotation": 90,
+    "slabId": "slab-1",
+    "x": 10,
+    "y": 10,
+  },
+  {
+    "id": "test-id-138",
+    "manualLocked": false,
+    "partId": "part-1",
+    "rotation": 0,
+    "slabId": "slab-1",
+    "x": 10,
+    "y": 10,
+  },
+  {
+    "id": "test-id-318",
+    "manualLocked": false,
+    "partId": "part-dup-1",
+    "rotation": 0,
+    "slabId": "slab-1",
+    "x": 10,
+    "y": 10,
+  },
+  {
+    "id": "test-id-498",
+    "manualLocked": false,
+    "partId": "part-dup-2",
+    "rotation": 0,
+    "slabId": "slab-1",
+    "x": 10,
+    "y": 10,
+  },
+  {
+    "id": "test-id-678",
+    "manualLocked": false,
+    "partId": "part-fold-1",
+    "rotation": 0,
+    "slabId": "slab-1",
+    "x": 10,
+    "y": 10,
+  },
+]
+`;
+
+exports[`packing.ts (Safety Net) > should autoPack project with deterministic output matching snapshot > unplacedPartIds 1`] = `
+[
+  "part-huge",
+]
+`;
+
+exports[`packing.ts (Safety Net) > should autoPack project with deterministic output matching snapshot > unplacedReasons 1`] = `
+{
+  "part-huge": "недостатньо місця на слебах",
+}
+`;
