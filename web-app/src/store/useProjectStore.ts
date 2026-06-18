@@ -11,72 +11,13 @@ import { t } from '../i18n';
 import { rotatedSize } from '../lib/project';
 import { supabase } from '../lib/supabase';
 
-import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { type EditorUISlice, createEditorUISlice } from './slices/editorUISlice';
+import { type TextureSlice, createTextureSlice } from './slices/textureSlice';
+import { persist } from './persistence';
 
 const STORAGE_KEY = 'slab_cut_planner_current_project';
 
-type MovementSnapshot = Pick<Project, 'placements' | 'textureLayouts' | 'unplacedPartIds' | 'unplacedReasons' | 'calculationStatus'>;
-
-function texturePartGroupKey(part: DetailPart | undefined) {
-  if (!part) return undefined;
-  if (part.textureGroupLabel?.startsWith('import:')) return part.textureGroupLabel;
-  return `${part.detailId}:${part.textureGroupLabel ?? part.parentLabel}`;
-}
-
-function texturePartInteractionKey(part: DetailPart | undefined) {
-  if (!part) return undefined;
-  if (part.textureGroupKind || part.textureGroupLabel?.startsWith('import:')) return texturePartGroupKey(part);
-  return `${part.detailId}:${part.parentLabel}`;
-}
-
-function rotatedTextureLayouts(layouts: TextureLayout[], parts: DetailPart[], sourceLayout: TextureLayout, targetRotation: Rotation) {
-  const sourcePart = parts.find((part) => part.id === sourceLayout.partId);
-  const groupKey = texturePartInteractionKey(sourcePart);
-  const delta = targetRotation - sourceLayout.rotation;
-  const selected = layouts.filter((layout) => {
-    const part = parts.find((candidate) => candidate.id === layout.partId);
-    return layout.id === sourceLayout.id || (groupKey && texturePartInteractionKey(part) === groupKey);
-  });
-  if (selected.length <= 1) {
-    return layouts.map((layout) => layout.id === sourceLayout.id ? { ...layout, rotation: targetRotation } : layout);
-  }
-
-  const boxes = selected.flatMap((layout) => {
-    const part = parts.find((candidate) => candidate.id === layout.partId);
-    if (!part) return [];
-    const size = rotatedSize(part, layout.rotation);
-    return [{ layout, part, size }];
-  });
-  const minX = Math.min(...boxes.map(({ layout }) => layout.x));
-  const minY = Math.min(...boxes.map(({ layout }) => layout.y));
-  const maxX = Math.max(...boxes.map(({ layout, size }) => layout.x + size.width));
-  const maxY = Math.max(...boxes.map(({ layout, size }) => layout.y + size.height));
-  const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
-  const angle = (delta * Math.PI) / 180;
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const updates = new Map(boxes.map(({ layout, part, size }) => {
-    const itemCenter = { x: layout.x + size.width / 2, y: layout.y + size.height / 2 };
-    const dx = itemCenter.x - center.x;
-    const dy = itemCenter.y - center.y;
-    const nextCenter = {
-      x: center.x + dx * cos - dy * sin,
-      y: center.y + dx * sin + dy * cos,
-    };
-    const rotation = layout.rotation + delta;
-    const nextSize = rotatedSize(part, rotation);
-    return [layout.id, {
-      ...layout,
-      x: nextCenter.x - nextSize.width / 2,
-      y: nextCenter.y - nextSize.height / 2,
-      rotation,
-    }];
-  }));
-  return layouts.map((layout) => updates.get(layout.id) ?? layout);
-}
-
-interface ProjectState extends EditorUISlice {
+interface ProjectState extends EditorUISlice, TextureSlice {
   project: Project;
   packingMode: PackingMode;
   parts: DetailPart[];
@@ -108,22 +49,9 @@ interface ProjectState extends EditorUISlice {
   unplaceParts: (partIds: string[]) => void;
   renamePartFamily: (partId: string, label: string) => void;
   rotatePlacement: (placementId: string) => void;
-  previewTextureSource: (partId: string, slabId: string, x: number, y: number, rotation: Rotation) => void;
-  moveTextureLayout: (layoutId: string, x: number, y: number) => void;
-  rotateTextureLayout: (layoutId: string) => void;
-  setTextureLayoutRotation: (layoutId: string, rotation: Rotation) => void;
-  addTextureFrame: (frame: Omit<TextureFrame, 'id'>) => void;
-  updateTextureFrame: (frameId: string, patch: Partial<Omit<TextureFrame, 'id'>>) => void;
-  deleteTextureFrame: (frameId: string) => void;
-  addManualDimension: (dimension: ManualDimension) => void;
-  deleteManualDimension: (dimensionId: string) => void;
-  clearManualDimensionsForSlab: (slabId: string) => void;
   pushMovementSnapshot: () => void;
   undoLastMovement: () => void;
   redoMovement: () => void;
-  addDefect: (slabId: string, defect: DefectZone) => void;
-  updateDefect: (slabId: string, defectId: string, patch: Partial<DefectZone>) => void;
-  deleteDefect: (slabId: string, defectId: string) => void;
   importProject: (project: Project) => void;
   exportProject: () => string;
   updatePlacement3dTransform: (placementId: string, transform: { x: number; y: number; z: number; rx: number; ry: number; rz: number; } | undefined) => void;
@@ -133,52 +61,7 @@ interface ProjectState extends EditorUISlice {
   isInitialized: boolean;
 }
 
-let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-let isSavingToIDB = false;
-window.addEventListener('beforeunload', (e) => {
-  if (isSavingToIDB) {
-    e.preventDefault();
-    e.returnValue = '';
-  }
-});
-
-async function persist(project: Project) {
-  isSavingToIDB = true;
-  try {
-    const toSave = { ...project, schemaVersion: 1 };
-    await idbSet(STORAGE_KEY, toSave);
-  } catch (err) {
-    console.warn("IndexedDB failed, falling back to localStorage", err);
-    try {
-      const toSaveLocal = { ...project, schemaVersion: 1 };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSaveLocal));
-    } catch (lsErr) {
-      console.error("QuotaExceededError in localStorage fallback!", lsErr);
-    }
-  } finally {
-    isSavingToIDB = false;
-  }
-
-  try {
-    const state = useProjectStore.getState();
-    if (state && state.currentDbProjectId) {
-      clearTimeout(saveTimeout);
-      saveTimeout = setTimeout(async () => {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) return;
-        
-        await supabase.from('projects').update({
-          data: project,
-          name: project.orderNumber || 'Проект без назви',
-          updated_at: new Date().toISOString()
-        }).eq('id', state.currentDbProjectId);
-      }, 1000);
-    }
-  } catch (e) {
-    // Store might not be initialized yet
-  }
-}
 
 function calcStatus(project: Project, placements: Placement[]) {
   const hasConflict = placements.some((p) => p.conflict);
@@ -302,7 +185,7 @@ function triggerPackingAsync(
       } as Project;
       finalProject.calculationStatus = calcStatus(finalProject, placements);
       
-      persist(finalProject);
+      persist(finalProject, get().currentDbProjectId);
       set({ project: finalProject, isPacking: false });
     };
     
@@ -322,7 +205,7 @@ function triggerPackingAsync(
 }
 
 function directUpdate(set: (state: Partial<ProjectState>) => void, get: () => ProjectState, project: Project) {
-  persist(project);
+  persist(project, get().currentDbProjectId);
   set({ project, parts: get().parts, selectedSlabId: get().selectedSlabId ?? project.slabs[0]?.id, packingRequestId: get().packingRequestId + 1 });
 }
 
@@ -331,7 +214,7 @@ function updateWithoutPacking(set: (state: Partial<ProjectState>) => void, get: 
   const placements = refreshConflicts ? detectConflicts(normalized, get().parts, normalized.placements) : normalized.placements;
   const nextProject = { ...normalized, placements, updatedAt: new Date().toISOString() } as Project;
   nextProject.calculationStatus = calcStatus(nextProject, placements);
-  persist(nextProject);
+  persist(nextProject, get().currentDbProjectId);
   set({ project: nextProject, parts: get().parts, selectedSlabId: get().selectedSlabId ?? nextProject.slabs[0]?.id, packingRequestId: get().packingRequestId + 1 });
 }
 
@@ -400,6 +283,7 @@ function partNameForLabel(part: DetailPart, label: string) {
 
 export const useProjectStore = create<ProjectState>()(immer((set, get, store) => ({
   ...createEditorUISlice(set, get, store),
+  ...createTextureSlice(set, get, store),
   project: createEmptyProject(),
   packingMode: 'economy',
   parts: [],
@@ -536,7 +420,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
       exportSnapshot: undefined,
       updatedAt: new Date().toISOString(),
     } as Project;
-    persist(nextProject);
+    persist(nextProject, get().currentDbProjectId);
     set({ project: nextProject, parts: [], selectedSlabId: undefined, editingDetailId: undefined, bufferDragPartId: undefined, placementDragPartId: undefined, unplacedDropVisible: false, movementHistory: [], movementFuture: [] });
   },
   runPacking: (mode) => {
@@ -669,7 +553,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
     const placements = detectConflicts(project, get().parts, project.placements);
     const nextProject = { ...project, placements } as Project;
     nextProject.calculationStatus = calcStatus(nextProject, placements);
-    persist(nextProject);
+    persist(nextProject, get().currentDbProjectId);
     set({ project: nextProject, parts: get().parts, selectedSlabId: slabId, bufferDragPartId: undefined, unplacedDropVisible: false });
   },
   unplacePart: (partId) => {
@@ -687,7 +571,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
     const placements = detectConflicts(project, get().parts, project.placements);
     const nextProject = { ...project, placements } as Project;
     nextProject.calculationStatus = calcStatus(nextProject, placements);
-    persist(nextProject);
+    persist(nextProject, get().currentDbProjectId);
     set({ project: nextProject, parts: get().parts, placementDragPartId: undefined, unplacedDropVisible: false });
   },
   unplaceParts: (partIds) => {
@@ -709,7 +593,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
     const placements = detectConflicts(project, get().parts, project.placements);
     const nextProject = { ...project, placements } as Project;
     nextProject.calculationStatus = calcStatus(nextProject, placements);
-    persist(nextProject);
+    persist(nextProject, get().currentDbProjectId);
     set({ project: nextProject, parts: get().parts, placementDragPartId: undefined, unplacedDropVisible: false });
   },
   renamePartFamily: (partId, label) => {
@@ -731,7 +615,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
         name: partNameForLabel(part, nextLabel),
       };
     });
-    persist(project);
+    persist(project, get().currentDbProjectId);
     set({ project, parts });
   },
   rotatePlacement: (placementId) => {
@@ -745,82 +629,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
     });
     directUpdate(set, get, nextProject);
   },
-  previewTextureSource: (partId, slabId, x, y, rotation) => {
-    const current = get().project;
-    const textureLayouts = current.textureLayouts.map((layout) => (
-      layout.partId === partId
-        ? { ...layout, slabId, sourceX: x, sourceY: y, sourceRotation: rotation }
-        : layout
-    ));
-    set({ project: { ...current, textureLayouts } as Project, parts: get().parts });
-  },
-  moveTextureLayout: (layoutId, x, y) => {
-    const sourceLayout = get().project.textureLayouts.find((layout) => layout.id === layoutId);
-    const sourcePart = sourceLayout ? get().parts.find((part) => part.id === sourceLayout.partId) : undefined;
-    const groupKey = texturePartInteractionKey(sourcePart);
-    const dx = sourceLayout ? x - sourceLayout.x : 0;
-    const dy = sourceLayout ? y - sourceLayout.y : 0;
-    const nextProject = {
-      ...get().project,
-      textureLayouts: get().project.textureLayouts.map((layout) => {
-        const part = get().parts.find((candidate) => candidate.id === layout.partId);
-        const key = texturePartInteractionKey(part);
-        return layout.id === layoutId
-          ? { ...layout, x, y }
-          : groupKey && key === groupKey
-            ? { ...layout, x: layout.x + dx, y: layout.y + dy }
-            : layout;
-      }),
-      updatedAt: new Date().toISOString(),
-    } as Project;
-    directUpdate(set, get, nextProject);
-  },
-  rotateTextureLayout: (layoutId) => {
-    const sourceLayout = get().project.textureLayouts.find((layout) => layout.id === layoutId);
-    if (!sourceLayout) return;
-    const nextProject = {
-      ...get().project,
-      textureLayouts: rotatedTextureLayouts(get().project.textureLayouts, get().parts, sourceLayout, sourceLayout.rotation + 90),
-      updatedAt: new Date().toISOString(),
-    } as Project;
-    directUpdate(set, get, nextProject);
-  },
-  setTextureLayoutRotation: (layoutId, rotation) => {
-    const sourceLayout = get().project.textureLayouts.find((layout) => layout.id === layoutId);
-    if (!sourceLayout) return;
-    const nextProject = {
-      ...get().project,
-      textureLayouts: rotatedTextureLayouts(get().project.textureLayouts, get().parts, sourceLayout, rotation),
-      updatedAt: new Date().toISOString(),
-    } as Project;
-    directUpdate(set, get, nextProject);
-  },
-  addTextureFrame: (frame) => {
-    const nextProject = {
-      ...get().project,
-      textureFrames: [...(get().project.textureFrames ?? []), { ...frame, id: uid('texture_frame') }],
-      updatedAt: new Date().toISOString(),
-    } as Project;
-    directUpdate(set, get, nextProject);
-  },
-  updateTextureFrame: (frameId, patch) => {
-    const nextProject = {
-      ...get().project,
-      textureFrames: (get().project.textureFrames ?? []).map((frame) => (
-        frame.id === frameId ? { ...frame, ...patch } : frame
-      )),
-      updatedAt: new Date().toISOString(),
-    } as Project;
-    directUpdate(set, get, nextProject);
-  },
-  deleteTextureFrame: (frameId) => {
-    const nextProject = {
-      ...get().project,
-      textureFrames: (get().project.textureFrames ?? []).filter((frame) => frame.id !== frameId),
-      updatedAt: new Date().toISOString(),
-    } as Project;
-    directUpdate(set, get, nextProject);
-  },
+
   addManualDimension: (dimension) => {
     const nextProject = {
       ...get().project,
@@ -855,7 +664,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
     if (!snapshot) return;
     const currentSnapshot = movementSnapshot(get().project);
     const nextProject = restoreMovementSnapshot(get().project, get().parts, snapshot);
-    persist(nextProject);
+    persist(nextProject, get().currentDbProjectId);
     set({
       project: nextProject,
       movementHistory: history.slice(0, -1),
@@ -868,25 +677,17 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
     if (!snapshot) return;
     const currentSnapshot = movementSnapshot(get().project);
     const nextProject = restoreMovementSnapshot(get().project, get().parts, snapshot);
-    persist(nextProject);
+    persist(nextProject, get().currentDbProjectId);
     set({
       project: nextProject,
       movementHistory: [...get().movementHistory.slice(-79), currentSnapshot],
       movementFuture: future.slice(0, -1),
     });
   },
-  addDefect: (slabId, defect) => {
-    updateWithoutPacking(set, get, { ...get().project, slabs: get().project.slabs.map((s) => s.id === slabId ? { ...s, defects: [...s.defects, defect] } : s) } as Project);
-  },
-  updateDefect: (slabId, defectId, patch) => {
-    updateWithoutPacking(set, get, { ...get().project, slabs: get().project.slabs.map((s) => s.id === slabId ? { ...s, defects: s.defects.map((d) => d.id === defectId ? { ...d, ...patch } : d) } : s) } as Project);
-  },
-  deleteDefect: (slabId, defectId) => {
-    updateWithoutPacking(set, get, { ...get().project, slabs: get().project.slabs.map((s) => s.id === slabId ? { ...s, defects: s.defects.filter((d) => d.id !== defectId) } : s) } as Project);
-  },
+
   importProject: (project) => {
     const next = loadWithoutPacking(project);
-    persist(next.project); set({ ...next, selectedSlabId: next.project.slabs[0]?.id, movementHistory: [], movementFuture: [] });
+    persist(next.project, get().currentDbProjectId); set({ ...next, selectedSlabId: next.project.slabs[0]?.id, movementHistory: [], movementFuture: [] });
   },
   exportProject: () => JSON.stringify(get().project, null, 2),
   updatePlacement3dTransform: (placementId, transform) => {
