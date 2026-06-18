@@ -144,7 +144,7 @@ interface ProjectState {
   setCurrentDbProjectId: (id: string | null) => void;
 }
 
-let saveTimeout: any = null;
+let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function persist(project: Project) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(project));

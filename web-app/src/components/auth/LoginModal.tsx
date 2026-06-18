@@ -43,8 +43,12 @@ export function LoginModal({ isOpen, onClose }: LoginModalProps) {
           onClose();
         }
       }
-    } catch (err: any) {
-      setError(err.message || 'Сталася помилка');
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Unknown error');
+      }
     } finally {
       setIsLoading(false);
     }

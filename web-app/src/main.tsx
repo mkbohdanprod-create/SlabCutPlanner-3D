@@ -7,10 +7,18 @@ import { AuthProvider } from './components/auth/AuthContext.tsx'
 import { mockProject, mockParts } from './engines/__tests__/mockData';
 import { useProjectStore } from './store/useProjectStore';
 
+declare global {
+  interface Window {
+    mockProject: typeof mockProject;
+    mockParts: typeof mockParts;
+    useProjectStore: typeof useProjectStore;
+  }
+}
+
 if (import.meta.env.DEV) {
-  (window as any).mockProject = mockProject;
-  (window as any).mockParts = mockParts;
-  (window as any).useProjectStore = useProjectStore;
+  window.mockProject = mockProject;
+  window.mockParts = mockParts;
+  window.useProjectStore = useProjectStore;
 }
 
 createRoot(document.getElementById('root')!).render(

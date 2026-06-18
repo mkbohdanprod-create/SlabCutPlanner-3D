@@ -88,7 +88,7 @@ export function PdfExportDialog({ open, project, parts, onClose }: PdfExportDial
       {capturing3d && (
         <div className="fixed top-0 left-0 w-[1200px] h-[800px] z-[-10] pointer-events-none" style={{ opacity: 0.01 }}>
           <Suspense fallback={null}>
-            <Viewer3D onCaptureReady={(captures: any) => doExport(captures)} isCaptureMode={true} />
+            <Viewer3D onCaptureReady={(captures: string[]) => doExport(captures)} isCaptureMode={true} />
           </Suspense>
         </div>
       )}

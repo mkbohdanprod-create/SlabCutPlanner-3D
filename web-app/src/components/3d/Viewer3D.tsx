@@ -200,7 +200,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
       { x: 0, y: part.height }
     ];
     
-    points.forEach((p: any, i: number) => {
+    points.forEach((p: {x: number, y: number}, i: number) => {
       const nx = p.x / part.width;
       const ny = p.y / part.height;
       if (i === 0) shape.moveTo(nx, ny);
@@ -208,10 +208,10 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
     });
 
     if (part.holes) {
-      part.holes.forEach((hole: any) => {
+      part.holes.forEach((hole: {x: number, y: number}[]) => {
         if (!hole || !Array.isArray(hole)) return;
         const holePath = new THREE.Path();
-        hole.forEach((p: any, i: number) => {
+        hole.forEach((p: {x: number, y: number}, i: number) => {
           const nx = p.x / part.width;
           const ny = p.y / part.height;
           if (i === 0) holePath.moveTo(nx, ny);
@@ -374,7 +374,7 @@ function getSinkPartTransform(part: DetailPart, detail: Detail | undefined, thic
   return null;
 }
 
-function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, selectedId, onSelect, isSink }: any) {
+function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, selectedId, onSelect, isSink }: { mainPlacement: Placement, mainPart: DetailPart, foldPlacements: Placement[], parts: DetailPart[], slabs: SlabInstance[], selectedId: string | null, onSelect: (id: string) => void, isSink?: boolean }) {
   const [group, setGroup] = useState<THREE.Group | null>(null);
   const is3dAssemblyMode = useUIStore(s => s.is3dAssemblyMode);
   const transformMode = useUIStore(s => s.transformMode);
@@ -466,7 +466,7 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
   );
 }
 
-function CaptureController({ onCaptureReady, contentRef }: { onCaptureReady?: (snaps: string[]) => void, contentRef: any }) {
+function CaptureController({ onCaptureReady, contentRef }: { onCaptureReady?: (snaps: string[]) => void, contentRef: React.RefObject<THREE.Group | null> }) {
   const { gl, camera, scene } = useThree();
   useEffect(() => {
     if (!onCaptureReady || !contentRef.current) return;
@@ -519,11 +519,11 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
   const is3dGroupingEnabled = useUIStore(s => s.is3dGroupingEnabled);
   const selectedId = useUIStore(s => s.selectedId3d);
   const setSelectedId = useUIStore(s => s.setSelectedId3d);
-  const contentRef = React.useRef(null);
+  const contentRef = React.useRef<THREE.Group | null>(null);
 
   const groups = useMemo(() => {
      const handledPlacementIds = new Set<string>();
-     const grouped: any[] = [];
+     const grouped: { mainPlacement: Placement, mainPart: DetailPart, foldPlacements: Placement[], isSink?: boolean }[] = [];
      
      // 1. Handle Sinks
      const sinkDetailIds = new Set(parts.filter(p => p.type?.includes('Мийка') || p.name?.includes('мийки')).map(p => p.detailId));
