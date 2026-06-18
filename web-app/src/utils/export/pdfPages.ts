@@ -23,18 +23,20 @@ import {
   getSourceY,
   getTextureItems,
   localHoles,
-  outwardNormal,
   pathFromPolygons,
   placementHoles,
-  pointInPolygon,
-  pointOnSegment,
-  pointsBounds,
   resolveTextureOverlaps,
   rotateVector,
   sideSegment,
   textureBox,
   textureBoxesOverlap,
 } from './pdfGeometry';
+import {
+  outwardNormal,
+  pointInPolygonStrict as pointInPolygon,
+  pointOnSegment,
+  pointsBounds,
+} from '../../engines/geometryUtils';
 import type {
   PageSize,
   PdfExportOptions,
