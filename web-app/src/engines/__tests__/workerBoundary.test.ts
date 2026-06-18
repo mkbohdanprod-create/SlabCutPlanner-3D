@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { autoPack } from '../packing';
 import { mockProject, mockParts } from './mockData';
 import { stripBase64 } from '../workerMapper';
+import { produce } from 'immer';
 
 let idCounter = 0;
 
@@ -24,7 +25,9 @@ describe('Worker Boundary (Serialization Safety Net)', () => {
     const directResult = autoPack(mockProject, mockParts);
 
     // 2. Prepare data for worker transfer (strip base64)
-    const strippedProject = stripBase64(mockProject);
+    // We wrap mockProject in immer produce to simulate a Zustand frozen state/proxy
+    const frozenProject = produce(mockProject, draft => { draft.orderNumber = mockProject.orderNumber; });
+    const strippedProject = stripBase64(frozenProject);
     
     // 3. Serialize/Deserialize using structuredClone (simulating postMessage)
     const clonedProject = structuredClone(strippedProject);

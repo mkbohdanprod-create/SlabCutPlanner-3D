@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 import { createEmptyProject, uid } from '../domain/defaults';
 import type { CutAllowances, DefectZone, Detail, DetailPart, ManualDimension, PackingMode, Placement, Project, Rotation, SlabInstance, TextureFrame, TextureLayout, UiLanguage, ViewMode } from '../domain/types';
 import { explodeDetails } from '../engines/geometry';
@@ -410,7 +411,7 @@ function partNameForLabel(part: DetailPart, label: string) {
   return `${prefix} ${genitiveLabel(label)} сторона ${part.edgeSide}`;
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
+export const useProjectStore = create<ProjectState>()(immer((set, get) => ({
   project: createEmptyProject(),
   packingMode: 'economy',
   parts: [],
@@ -928,4 +929,4 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } as Project;
     updateWithoutPacking(set, get, project, false);
   },
-}));
+})));
