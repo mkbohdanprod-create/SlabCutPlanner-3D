@@ -58,3 +58,27 @@ SlabCutPlanner — це просунутий інструмент для 2D-ро
 - **Неправильно розраховується форма стільниці?** -> `src/engines/geometry.ts`
 - **Потрібно додати нове поле для сляба?** -> Онови `types.ts`, потім `useProjectStore.ts`, і нарешті UI в `Sidebar`.
 - **Проблеми з текстурою в 3D?** -> `src/components/3d/Viewer3D.tsx`
+
+## 🖨 Експорт PDF (Архітектура)
+Модуль генерації PDF (`src/utils/export`) декомпозовано за принципом **Facade Pattern**, щоб забезпечити стабільність зовнішнього API:
+
+```mermaid
+graph TD
+    UI[UI Компоненти<br/>Sidebar, PdfExportDialog] -->|Виклик експорту| FACADE(Фасад export.ts)
+    
+    subgraph "src/utils/export/"
+        FACADE -->|Типи та Налаштування| TYPES[pdfTypes.ts]
+        FACADE -->|Генерація Сторінок| PAGES[pdfPages.ts]
+        
+        PAGES -->|Допоміжні утиліти, SVG| UTILS[pdfUtils.ts]
+        PAGES -->|Розрахунки перетинів, площ| GEOMETRY[pdfGeometry.ts]
+        PAGES -->|Пакування ZIP| ZIP[zipArchive.ts]
+    end
+    
+    GEOMETRY -->|Залежить від| CORE[Ключові домени<br/>lib/project.ts]
+```
+
+- **`export.ts`**: Лише orchestration (оркестрація). Експортує `exportProjectPdf` та `exportProjectPng`.
+- **`pdfPages.ts`**: Генерує SVG рядки для кожної сторінки (Overview, Details, Slabs, 3D).
+- **`pdfGeometry.ts`**: Вся "важка" математика відв'язана від рендеру сторінок.
+- **`pdfUtils.ts`**: Робота з текстом, одиницями виміру, конвертація SVG -> PNG.
