@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, Play, Trash2, Globe, Settings, Download, Loader2 } from 'lucide-react';
+import { ChevronDown, Play, Trash2, Loader2 } from 'lucide-react';
 import type { PackingMode } from '../../domain/types';
 import { languageOptions, packingModeLabel, t } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
@@ -60,21 +60,7 @@ export function HeaderToolbar() {
         </label>
       </div>
 
-      {/* Language */}
-      <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 relative">
-        <Globe className="w-4 h-4 text-slate-500" />
-        <select 
-          className="bg-transparent text-sm font-medium text-slate-700 focus:outline-none appearance-none pr-4 cursor-pointer"
-          data-i18n-skip="true" 
-          value={language} 
-          onChange={(event) => setUiLanguage(event.target.value as typeof language)}
-        >
-          {languageOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
-        <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 pointer-events-none" />
-      </div>
+
 
       {/* Action Buttons */}
       <div className="flex items-center gap-2 ml-4">
