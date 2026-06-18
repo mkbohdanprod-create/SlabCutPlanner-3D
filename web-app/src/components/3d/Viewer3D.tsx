@@ -385,10 +385,9 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
   const s = 0.001;
   const mainSlab = slabs.find((s: SlabInstance) => s.id === mainPlacement.slabId);
   const thickness = mainSlab?.thickness ? mainSlab.thickness * s : 0.02;
-  
-  const initialX = ((layout?.x ?? mainPlacement.x) + mainPart.width / 2) * s - 1.5;
+  const initialX = (mainPlacement.x + mainPart.width / 2) * s - 1.5;
   const initialY = thickness / 2;
-  const initialZ = ((layout?.y ?? mainPlacement.y) + mainPart.height / 2) * s - 0.8;
+  const initialZ = (mainPlacement.y + mainPart.height / 2) * s - 0.8;
 
   const transform = mainPlacement.transform3d;
   const position: [number, number, number] = transform ? [transform.x, transform.y, transform.z] : [initialX, initialY, initialZ];
