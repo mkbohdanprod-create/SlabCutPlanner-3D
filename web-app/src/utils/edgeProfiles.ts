@@ -1,5 +1,6 @@
 import type { DetailPart, EdgeProfileSelection, EdgeProfileType, Point, Rotation } from '../domain/types';
 import { polygonBounds, rotatePoint, rotatedPoints } from '../lib/project';
+import { pointInPolygonStrict as pointInPolygon } from '../engines/geometryUtils';
 
 export const DEFAULT_EDGE_PROFILE: EdgeProfileType = 'polished_straight';
 
@@ -38,30 +39,7 @@ export function edgeProfileShortLabel(profile: EdgeProfileType) {
   return EDGE_PROFILE_OPTIONS.find((option) => option.value === profile)?.shortLabel ?? profile;
 }
 
-function pointOnSegment(point: Point, a: Point, b: Point, epsilon = 0.001) {
-  const cross = (point.y - a.y) * (b.x - a.x) - (point.x - a.x) * (b.y - a.y);
-  if (Math.abs(cross) > epsilon) return false;
-  return (
-    point.x >= Math.min(a.x, b.x) - epsilon
-    && point.x <= Math.max(a.x, b.x) + epsilon
-    && point.y >= Math.min(a.y, b.y) - epsilon
-    && point.y <= Math.max(a.y, b.y) + epsilon
-  );
-}
 
-function pointInPolygon(point: Point, polygon: Point[]) {
-  if (polygon.some((current, index) => pointOnSegment(point, current, polygon[(index + 1) % polygon.length]))) return false;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const a = polygon[i];
-    const b = polygon[j];
-    if ((a.y > point.y) !== (b.y > point.y)) {
-      const x = ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y || 1) + a.x;
-      if (point.x < x) inside = !inside;
-    }
-  }
-  return inside;
-}
 
 function rotateLocalPoint(point: Point, rotation: Rotation, part: DetailPart) {
   const rotatedReference = part.points.map((item) => rotatePoint(item, rotation, part.width, part.height));

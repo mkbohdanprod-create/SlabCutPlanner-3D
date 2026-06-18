@@ -5,6 +5,7 @@ import { pointString, rotatePoint, rotatedLocalPoints, rotatedPoints, rotatedSiz
 import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
 import { useProjectStore } from '../../store/useProjectStore';
 import { edgeMarkersForPart, edgeProfileShortLabel } from '../../utils/edgeProfiles';
+import { pointInPolygonStrict as pointInPolygon, pointOnSegment } from '../../engines/geometryUtils';
 import { Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Viewer3D } from '../3d/Viewer3DLazy';
@@ -116,30 +117,7 @@ function sideSegment(part: DetailPart, side: string | undefined, rotation: Rotat
   return { start: rotated[index], end: rotated[(index + 1) % rotated.length] };
 }
 
-function pointOnSegment(point: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }, epsilon = 0.001) {
-  const cross = (point.y - a.y) * (b.x - a.x) - (point.x - a.x) * (b.y - a.y);
-  if (Math.abs(cross) > epsilon) return false;
-  return (
-    point.x >= Math.min(a.x, b.x) - epsilon
-    && point.x <= Math.max(a.x, b.x) + epsilon
-    && point.y >= Math.min(a.y, b.y) - epsilon
-    && point.y <= Math.max(a.y, b.y) + epsilon
-  );
-}
 
-function pointInPolygon(point: { x: number; y: number }, polygon: Array<{ x: number; y: number }>) {
-  if (polygon.some((current, index) => pointOnSegment(point, current, polygon[(index + 1) % polygon.length]))) return false;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const a = polygon[i];
-    const b = polygon[j];
-    if ((a.y > point.y) !== (b.y > point.y)) {
-      const x = ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
-      if (point.x < x) inside = !inside;
-    }
-  }
-  return inside;
-}
 
 function outwardNormal(segment: { start: { x: number; y: number }; end: { x: number; y: number } }, polygon: Array<{ x: number; y: number }>) {
   const dx = segment.end.x - segment.start.x;

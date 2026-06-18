@@ -2,6 +2,7 @@ import { uid } from '../domain/defaults';
 import type { DefectZone, DetailPart, PackingMode, Placement, Point, Project, Rotation, SlabInstance } from '../domain/types';
 import { rotatePoint as rotateProjectPoint, rotatedLocalPoints, rotatedSize as projectRotatedSize } from '../lib/project';
 import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
+import { pointInPolygonStrict, pointInPolygonOrOn, pointOnSegment } from './geometryUtils';
 
 type OccupiedBox = { x: number; y: number; width: number; height: number };
 type OccupiedShape = { box: OccupiedBox; polygon: Point[]; holes: Point[][] };
@@ -185,16 +186,7 @@ function outwardNormal(segment: { start: Point; end: Point }, polygon: Point[]) 
   return candidates.find((normal) => !pointInPolygonStrict({ x: midpoint.x + normal.x * 8, y: midpoint.y + normal.y * 8 }, polygon)) ?? candidates[0];
 }
 
-function pointOnSegment(point: Point, a: Point, b: Point, epsilon = 0.001) {
-  const cross = (point.y - a.y) * (b.x - a.x) - (point.x - a.x) * (b.y - a.y);
-  if (Math.abs(cross) > epsilon) return false;
-  return (
-    point.x >= Math.min(a.x, b.x) - epsilon
-    && point.x <= Math.max(a.x, b.x) + epsilon
-    && point.y >= Math.min(a.y, b.y) - epsilon
-    && point.y <= Math.max(a.y, b.y) + epsilon
-  );
-}
+
 
 function cross(a: Point, b: Point, c: Point) {
   return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
@@ -211,23 +203,7 @@ function segmentsIntersectStrict(a: Point, b: Point, c: Point, d: Point, epsilon
   return abC * abD < -epsilon && cdA * cdB < -epsilon;
 }
 
-function pointInPolygonStrict(point: Point, polygon: Point[]) {
-  if (polygon.some((current, index) => pointOnSegment(point, current, polygon[(index + 1) % polygon.length]))) {
-    return false;
-  }
 
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const a = polygon[i];
-    const b = polygon[j];
-    const crossesRay = (a.y > point.y) !== (b.y > point.y);
-    if (crossesRay) {
-      const x = ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
-      if (point.x < x) inside = !inside;
-    }
-  }
-  return inside;
-}
 
 function polygonCenter(polygon: Point[]) {
   const sum = polygon.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
@@ -269,10 +245,7 @@ function polygonsOverlap(a: Point[], b: Point[]) {
   );
 }
 
-function pointInPolygonOrOn(point: Point, polygon: Point[]) {
-  return polygon.some((current, index) => pointOnSegment(point, current, polygon[(index + 1) % polygon.length]))
-    || pointInPolygonStrict(point, polygon);
-}
+
 
 function polygonInsidePolygonOrOn(inner: Point[], outer: Point[]) {
   const allPointsInside = inner.every((point) => pointInPolygonOrOn(point, outer));
