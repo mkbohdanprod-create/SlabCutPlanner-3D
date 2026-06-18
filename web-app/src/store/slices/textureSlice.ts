@@ -113,12 +113,26 @@ export const createTextureSlice: StateCreator<
   },
   previewTextureSource: (partId, slabId, x, y, rotation) => {
     set((state) => {
-      const layoutIndex = state.project.textureLayouts.findIndex(layout => layout.partId === partId);
-      if (layoutIndex >= 0) {
-        state.project.textureLayouts[layoutIndex].slabId = slabId;
-        state.project.textureLayouts[layoutIndex].x = x;
-        state.project.textureLayouts[layoutIndex].y = y;
-        state.project.textureLayouts[layoutIndex].rotation = rotation;
+      const sourceLayout = state.project.textureLayouts.find(l => l.partId === partId);
+      if (sourceLayout) {
+        const sourcePart = state.parts.find(p => p.id === partId);
+        const groupKey = texturePartInteractionKey(sourcePart);
+        const dx = x - sourceLayout.x;
+        const dy = y - sourceLayout.y;
+        const dRot = rotation - sourceLayout.rotation;
+
+        state.project.textureLayouts.forEach(layout => {
+          const part = state.parts.find(candidate => candidate.id === layout.partId);
+          if (layout.id === sourceLayout.id || (groupKey && texturePartInteractionKey(part) === groupKey)) {
+            layout.slabId = slabId;
+            layout.x += dx;
+            layout.y += dy;
+            layout.rotation = ((layout.rotation + dRot) % 360) as Rotation;
+            layout.sourceX = layout.x;
+            layout.sourceY = layout.y;
+            layout.sourceRotation = layout.rotation;
+          }
+        });
       } else {
         const placement = state.project.placements.find((p) => p.partId === partId);
         if (!placement) return;
@@ -151,6 +165,8 @@ export const createTextureSlice: StateCreator<
         if (layout.id === sourceLayout.id || (groupKey && texturePartInteractionKey(part) === groupKey)) {
           layout.x += dx;
           layout.y += dy;
+          layout.sourceX = layout.x;
+          layout.sourceY = layout.y;
         }
       });
       state.project.updatedAt = new Date().toISOString();

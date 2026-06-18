@@ -19,7 +19,11 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
 function App() {
   const { mainView, setMainView } = useUIStore();
-  const { initialize, undoLastMovement, redoMovement, currentDbProjectId, isInitialized } = useProjectStore();
+  const initialize = useProjectStore(s => s.initialize);
+  const undoLastMovement = useProjectStore(s => s.undoLastMovement);
+  const redoMovement = useProjectStore(s => s.redoMovement);
+  const currentDbProjectId = useProjectStore(s => s.currentDbProjectId);
+  const isInitialized = useProjectStore(s => s.isInitialized);
   const { user, signOut } = useAuth();
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isProjectsOpen, setIsProjectsOpen] = useState(false);
