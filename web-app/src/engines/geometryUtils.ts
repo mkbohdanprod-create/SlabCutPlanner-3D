@@ -33,3 +33,15 @@ export function pointInPolygonOrOn(point: Point, polygon: Point[]) {
   return polygon.some((current, index) => pointOnSegment(point, current, polygon[(index + 1) % polygon.length]))
     || pointInPolygonStrict(point, polygon);
 }
+
+export function outwardNormal(segment: { start: Point; end: Point }, polygon: Point[]) {
+  const dx = segment.end.x - segment.start.x;
+  const dy = segment.end.y - segment.start.y;
+  const length = Math.max(Math.hypot(dx, dy), 1);
+  const midpoint = { x: (segment.start.x + segment.end.x) / 2, y: (segment.start.y + segment.end.y) / 2 };
+  const candidates = [
+    { x: -dy / length, y: dx / length },
+    { x: dy / length, y: -dx / length },
+  ];
+  return candidates.find((normal) => !pointInPolygonStrict({ x: midpoint.x + normal.x * 8, y: midpoint.y + normal.y * 8 }, polygon)) ?? candidates[0];
+}

@@ -2,7 +2,7 @@ import { uid } from '../domain/defaults';
 import type { DefectZone, DetailPart, PackingMode, Placement, Point, Project, Rotation, SlabInstance } from '../domain/types';
 import { rotatePoint as rotateProjectPoint, rotatedLocalPoints, rotatedSize as projectRotatedSize } from '../lib/project';
 import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
-import { pointInPolygonStrict, pointInPolygonOrOn, pointOnSegment } from './geometryUtils';
+import { pointInPolygonStrict, pointInPolygonOrOn, pointOnSegment, outwardNormal } from './geometryUtils';
 
 type OccupiedBox = { x: number; y: number; width: number; height: number };
 type OccupiedShape = { box: OccupiedBox; polygon: Point[]; holes: Point[][] };
@@ -174,17 +174,7 @@ function sideSegment(part: DetailPart, side: string | undefined, rotation: Rotat
   return { start: rotated[index], end: rotated[(index + 1) % rotated.length] };
 }
 
-function outwardNormal(segment: { start: Point; end: Point }, polygon: Point[]) {
-  const dx = segment.end.x - segment.start.x;
-  const dy = segment.end.y - segment.start.y;
-  const length = Math.max(Math.hypot(dx, dy), 1);
-  const midpoint = { x: (segment.start.x + segment.end.x) / 2, y: (segment.start.y + segment.end.y) / 2 };
-  const candidates = [
-    { x: -dy / length, y: dx / length },
-    { x: dy / length, y: -dx / length },
-  ];
-  return candidates.find((normal) => !pointInPolygonStrict({ x: midpoint.x + normal.x * 8, y: midpoint.y + normal.y * 8 }, polygon)) ?? candidates[0];
-}
+
 
 
 
