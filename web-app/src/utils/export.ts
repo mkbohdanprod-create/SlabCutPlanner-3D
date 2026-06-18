@@ -1,90 +1,15 @@
 import { jsPDF } from 'jspdf';
-import type {
-  Detail,
-  DetailPart,
-  Placement,
-  Point,
-  Project,
-  Rotation,
-  SlabInstance,
-  TextureFrame,
-  TextureLayout,
-} from '../domain/types';
-import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
-import { getStatusLabel, placementPolygon, pointString, rotatePoint, rotatedLocalPoints, rotatedPoints, rotatedSize } from '../lib/project';
-import { edgeMarkersForPart, edgeProfileShortLabel } from './edgeProfiles';
-import {
-  attachedCurvedPosition,
-  attachedDisplayPosition,
-  curvedEdgeOffset,
-  curvedSideDirection,
-  findEdgeThickness,
-  findMainLayout,
-  findPart,
-  frameIntersectsItem,
-  getSourceRotation,
-  getSourceX,
-  getSourceY,
-  getTextureItems,
-  localHoles,
-  outwardNormal,
-  pathFromPolygons,
-  placementHoles,
-  pointInPolygon,
-  pointOnSegment,
-  pointsBounds,
-  resolveTextureOverlaps,
-  rotateVector,
-  sideSegment,
-  textureBox,
-  textureBoxesOverlap,
-} from './export/pdfGeometry';
-import type {
-  Bounds,
-  PageSize,
-  PdfExportOptions,
-  PdfOrientation,
-  PdfPageFormat,
-  PdfScaleMode,
-  PdfSlabLayout,
-  PdfSlabMode,
-  Slot,
-  TextureItem,
-} from './export/pdfTypes';
+import type { DetailPart, Project } from '../domain/types';
+import type { PdfExportOptions } from './export/pdfTypes';
 import { defaultPdfExportOptions } from './export/pdfTypes';
 import {
-  PAGE_FONT,
-  PAGE_MARGIN,
-  PAGE_TITLE_Y,
-  calculateTotalArea,
-  clampText,
-  detailDimensions,
-  detailName,
   downloadBytes,
-  escapeXml,
-  exportStamp,
-  formatDate,
-  generatedLabel,
-  pageSvg,
-  pageSize,
-  partParentLabel,
   projectBaseName,
-  projectText,
   safeFilePart,
   svgStringToPngData,
-  svgToDataUrl,
-  text,
-  textMiddle,
-  uiText,
-  uniqueText,
-  unitText,
+  pageSize
 } from './export/pdfUtils';
 import { dataUrlBytes, zipStore } from './export/zipArchive';
-
-
-
-
-
 import {
   renderTitlePage,
   renderOverviewPage,
@@ -95,6 +20,10 @@ import {
   render3dPhotosPages,
   renderSlabSvg
 } from './export/pdfPages';
+
+export { defaultPdfExportOptions } from './export/pdfTypes';
+export type { PdfExportOptions, PdfOrientation, PdfPageFormat, PdfScaleMode, PdfSlabLayout, PdfSlabMode } from './export/pdfTypes';
+export { calculateTotalArea } from './export/pdfUtils';
 
 export async function exportProjectPng(project: Project, parts: DetailPart[]) {
   if (!project.slabs.length) return;
@@ -133,4 +62,3 @@ export async function exportProjectPdf(project: Project, parts: DetailPart[], op
   }
   doc.save(`${projectBaseName(project)}.pdf`);
 }
-

@@ -1,7 +1,7 @@
 import type { DetailPart, Placement, Point, Project, Rotation, SlabInstance, TextureLayout, TextureFrame } from '../../domain/types';
 import { rotatedLocalPoints, rotatedPoints, rotatedSize } from '../../lib/project';
 import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
-import { Bounds, TextureItem } from './pdfTypes';
+import type { Bounds, TextureItem } from './pdfTypes';
 
 export function pointsBounds(points: Point[]): Bounds {
   const xs = points.map((p) => p.x);

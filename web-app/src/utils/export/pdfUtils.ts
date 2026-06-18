@@ -1,7 +1,7 @@
 import type { Detail, DetailPart, Project } from '../../domain/types';
 import { localeForLanguage, translateStaticUiText } from '../../i18n';
 import { round } from '../math';
-import { PageSize, PdfExportOptions } from './pdfTypes';
+import type { PageSize, PdfExportOptions } from './pdfTypes';
 
 export const PAGE_MARGIN = 54;
 export const PAGE_TITLE_Y = 56;
