@@ -3,13 +3,9 @@ import type { ProjectState } from '../useProjectStore';
 import type { DetailPart, Project } from '../../domain/types';
 import { detectConflicts } from '../../engines/packing';
 import { persist } from '../persistence';
+import { calcStatus } from '../projectHelpers';
 
 export type MovementSnapshot = Pick<Project, 'placements' | 'textureLayouts' | 'unplacedPartIds' | 'unplacedReasons' | 'calculationStatus'>;
-
-function calcStatus(project: Project, placements: any[]) {
-  const hasConflict = placements.some((p) => p.conflict);
-  return hasConflict ? 'error' : project.calculationStatus;
-}
 
 export function movementSnapshot(project: Project): MovementSnapshot {
   return {
