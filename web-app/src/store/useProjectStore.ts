@@ -10,6 +10,8 @@ import { t } from '../i18n';
 import { rotatedSize } from '../lib/project';
 import { supabase } from '../lib/supabase';
 
+import { get as idbGet, set as idbSet } from 'idb-keyval';
+
 const STORAGE_KEY = 'slab_cut_planner_current_project';
 
 type MovementSnapshot = Pick<Project, 'placements' | 'textureLayouts' | 'unplacedPartIds' | 'unplacedReasons' | 'calculationStatus'>;
@@ -142,12 +144,34 @@ interface ProjectState {
   reset3dAssembly: () => void;
   currentDbProjectId: string | null;
   setCurrentDbProjectId: (id: string | null) => void;
+  isInitialized: boolean;
 }
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-function persist(project: Project) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+let isSavingToIDB = false;
+window.addEventListener('beforeunload', (e) => {
+  if (isSavingToIDB) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+async function persist(project: Project) {
+  isSavingToIDB = true;
+  try {
+    const toSave = { ...project, schemaVersion: 1 };
+    await idbSet(STORAGE_KEY, toSave);
+  } catch (err) {
+    console.warn("IndexedDB failed, falling back to localStorage", err);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+    } catch (lsErr) {
+      console.error("QuotaExceededError in localStorage fallback!", lsErr);
+    }
+  } finally {
+    isSavingToIDB = false;
+  }
 
   try {
     const state = useProjectStore.getState();
@@ -401,11 +425,38 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   movementHistory: [],
   movementFuture: [],
   currentDbProjectId: null,
+  isInitialized: false,
   setCurrentDbProjectId: (id) => set({ currentDbProjectId: id }),
-  initialize: () => {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const next = loadWithoutPacking(raw ? (JSON.parse(raw) as Project) : createEmptyProject());
-    set({ ...next, selectedSlabId: next.project.slabs[0]?.id });
+  initialize: async () => {
+    let projectObj;
+    try {
+      projectObj = await idbGet(STORAGE_KEY);
+    } catch (err) {
+      console.warn("Failed to read from IDB", err);
+    }
+    
+    // Fallback & Migration з localStorage
+    if (!projectObj) {
+      const local = localStorage.getItem(STORAGE_KEY);
+      if (local) {
+        try {
+          projectObj = JSON.parse(local);
+        } catch (e) {
+          console.error("Failed to parse localStorage project", e);
+        }
+        try {
+          if (projectObj) {
+            await idbSet(STORAGE_KEY, { ...projectObj, schemaVersion: 1 });
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        } catch (e) {
+          console.warn("Could not migrate from localStorage to IDB", e);
+        }
+      }
+    }
+    
+    const next = loadWithoutPacking(projectObj || createEmptyProject());
+    set({ ...next, selectedSlabId: next.project.slabs[0]?.id, isInitialized: true });
   },
   setViewMode: (viewMode) => set({ viewMode }),
   setPackingMode: (packingMode) => set({ packingMode }),

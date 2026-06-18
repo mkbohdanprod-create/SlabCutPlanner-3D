@@ -19,13 +19,13 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
 function App() {
   const { mainView, setMainView } = useUIStore();
-  const { initialize, undoLastMovement, redoMovement, currentDbProjectId } = useProjectStore();
+  const { initialize, undoLastMovement, redoMovement, currentDbProjectId, isInitialized } = useProjectStore();
   const { user, signOut } = useAuth();
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isProjectsOpen, setIsProjectsOpen] = useState(false);
 
   useEffect(() => {
-    initialize();
+    initialize().catch(console.error);
   }, [initialize]);
 
   useEffect(() => {
@@ -44,6 +44,15 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [redoMovement, undoLastMovement]);
+
+  if (!isInitialized) {
+    return (
+      <div className="flex h-screen w-full flex-col items-center justify-center bg-slate-50 font-sans text-slate-500 gap-4">
+        <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+        <span className="font-medium text-lg">Завантаження проєкту...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full flex-col bg-slate-50 font-sans">

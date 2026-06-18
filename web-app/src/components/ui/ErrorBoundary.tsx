@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCcw } from 'lucide-react';
+import { del } from 'idb-keyval';
 
 interface Props {
   children: ReactNode;
@@ -70,10 +71,16 @@ export class ErrorBoundary extends Component<Props, State> {
             </button>
             
             <button 
-              onClick={() => {
+              onClick={async () => {
                 if (confirm('Увага! Це видалить всі незбережені локальні дані поточного проекту. Продовжити?')) {
-                  localStorage.removeItem('slab_cut_planner_current_project');
-                  window.location.reload();
+                  try {
+                    await del('slab_cut_planner_current_project');
+                  } catch (e) {
+                    console.error("Failed to delete IDB", e);
+                  } finally {
+                    localStorage.removeItem('slab_cut_planner_current_project');
+                    window.location.reload();
+                  }
                 }
               }}
               className="flex items-center gap-2 px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-sm transition-colors font-medium"
