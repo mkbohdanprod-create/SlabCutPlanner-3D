@@ -1,5 +1,7 @@
 import type { DetailPart, Placement, Project } from '../domain/types';
 import { DEFAULT_ALLOWANCES } from '../domain/defaults';
+import { explodeDetails } from '../engines/geometry';
+import { detectConflicts } from '../engines/packing';
 
 export function normalizeProject(project: Project): Project {
   return { ...project, uiLanguage: project.uiLanguage ?? 'uk', textureFrames: project.textureFrames ?? [], manualDimensions: project.manualDimensions ?? [], allowances: { ...DEFAULT_ALLOWANCES, ...(project.allowances ?? {}) } };
@@ -8,6 +10,15 @@ export function normalizeProject(project: Project): Project {
 export function calcStatus(project: Project, placements: Placement[]) {
   const hasConflict = placements.some((p) => p.conflict);
   return hasConflict ? 'error' : project.calculationStatus;
+}
+
+export function loadWithoutPacking(project: Project) {
+  const normalized = normalizeProject(project);
+  const parts = explodeDetails(normalized.details, normalized.allowances);
+  const placements = detectConflicts(normalized, parts, normalized.placements);
+  const nextProject = { ...normalized, placements } as Project;
+  nextProject.calculationStatus = calcStatus(nextProject, placements);
+  return { project: nextProject, parts };
 }
 
 export function partIdentity(part: DetailPart) {
@@ -39,4 +50,32 @@ export function remapStoredPartReferences(project: Project, previousParts: Detai
     unplacedPartIds: project.unplacedPartIds.map(remapPartId),
     unplacedReasons,
   } as Project;
+}
+
+export function genitiveLabel(label: string) {
+  const words = label.trim().split(/\s+/);
+  if (!words.length) return label;
+  const typedForms: Array<[RegExp, string]> = [
+    [/^Стільниця\b/i, 'стільниці'],
+    [/^Стінова панель\b/i, 'стінової панелі'],
+    [/^Мийка\b/i, 'мийки'],
+    [/^Фасад\b/i, 'фасаду'],
+    [/^Опора\b/i, 'опори'],
+  ];
+  const typed = typedForms.find(([pattern]) => pattern.test(label));
+  if (typed) return label.replace(typed[0], typed[1]);
+
+  return words.map((word, index) => {
+    const lower = word[0].toLocaleLowerCase('uk-UA') + word.slice(1);
+    if (index === 0 && lower.endsWith('ий')) return `${lower.slice(0, -2)}ого`;
+    if (index === 0 && lower.endsWith('ій')) return `${lower.slice(0, -2)}ього`;
+    if (index === words.length - 1 && /[бвгґджзклмнпрстфхцчшщ]$/i.test(lower)) return `${lower}у`;
+    return lower;
+  }).join(' ');
+}
+
+export function partNameForLabel(part: DetailPart, label: string) {
+  if (part.isMain || !part.edgeKind || !part.edgeSide) return label;
+  const prefix = part.edgeKind === 'fold' ? 'Підворот' : 'Потовщення';
+  return `${prefix} ${genitiveLabel(label)} сторона ${part.edgeSide}`;
 }
