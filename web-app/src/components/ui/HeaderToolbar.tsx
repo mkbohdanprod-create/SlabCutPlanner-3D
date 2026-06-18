@@ -58,6 +58,19 @@ export function HeaderToolbar() {
           />
           {t(language, 'textureSelection')}
         </label>
+        
+        <div className="flex flex-col ml-4">
+          <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{t(language, 'language')}</label>
+          <select 
+            className="bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={language}
+            onChange={(e) => setUiLanguage(e.target.value as any)}
+          >
+            {languageOptions.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
 

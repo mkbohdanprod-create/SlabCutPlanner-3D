@@ -374,3 +374,40 @@ export function getSourceY(layout: TextureLayout) {
 export function getSourceRotation(layout: TextureLayout): Rotation {
   return layout.sourceRotation ?? layout.rotation;
 }
+
+export const MIN_TEXTURE_WIDTH = 1000;
+export const MIN_TEXTURE_HEIGHT = 320;
+export const MAX_TEXTURE_HEIGHT = 1400;
+export const TEXTURE_PADDING = 48;
+
+export function roundToGrid(value: number, grid = 10) {
+  return Math.round(value / grid) * grid;
+}
+
+export function getDefaultScale(slabs: SlabInstance[]) {
+  const maxW = Math.max(...slabs.map((slab) => slab.width), 3200);
+  const totalHeight = slabs.reduce((sum, slab) => sum + slab.height, 0) + slabs.length * 110;
+  return Math.min(1080 / maxW, 940 / Math.max(totalHeight, 1600));
+}
+
+export function buildViewBox(items: TextureItem[], scale: number, containerWidth: number): ViewBox {
+  const width = Math.max(MIN_TEXTURE_WIDTH, containerWidth);
+  if (!items.length) return { x: 0, y: 0, width, height: MIN_TEXTURE_HEIGHT };
+
+  const bounds = items.reduce((acc, item) => {
+    const size = rotatedSize(item.part, item.layout.rotation);
+    const minX = item.displayX * scale;
+    const minY = item.displayY * scale;
+    const maxX = (item.displayX + size.width) * scale;
+    const maxY = (item.displayY + size.height) * scale;
+    return {
+      minX: Math.min(acc.minX, minX),
+      minY: Math.min(acc.minY, minY),
+      maxX: Math.max(acc.maxX, maxX),
+      maxY: Math.max(acc.maxY, maxY),
+    };
+  }, { minX: 0, minY: 0, maxX: width, maxY: MIN_TEXTURE_HEIGHT });
+
+  const height = Math.max(MIN_TEXTURE_HEIGHT, bounds.maxY + TEXTURE_PADDING, Math.abs(Math.min(0, bounds.minY)) + MIN_TEXTURE_HEIGHT);
+  return { x: 0, y: 0, width, height };
+}
