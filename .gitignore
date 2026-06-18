@@ -9,3 +9,8 @@ old_*.tsx
 *_old.tsx
 *_test.png
 compile_errors.txt
+OLD catting/
+Рефактор/
+Architecture_Audit.md
+web-app/git_log*.txt
+web-app/*_old.ts
