@@ -165,7 +165,8 @@ async function persist(project: Project) {
   } catch (err) {
     console.warn("IndexedDB failed, falling back to localStorage", err);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+      const toSaveLocal = { ...project, schemaVersion: 1 };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSaveLocal));
     } catch (lsErr) {
       console.error("QuotaExceededError in localStorage fallback!", lsErr);
     }
