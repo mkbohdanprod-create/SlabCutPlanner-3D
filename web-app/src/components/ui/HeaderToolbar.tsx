@@ -35,7 +35,7 @@ export function HeaderToolbar() {
           <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{t(language, 'orderNumber')}</label>
           <input 
             className="w-32 bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={project.orderNumber} 
+            value={project.orderNumber || ''} 
             onChange={(e) => updateProjectHeader({ orderNumber: e.target.value })} 
             placeholder="№..."
           />
@@ -44,7 +44,7 @@ export function HeaderToolbar() {
           <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{t(language, 'customer')}</label>
           <input 
             className="w-48 bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={project.customer} 
+            value={project.customer || ''} 
             onChange={(e) => updateProjectHeader({ customer: e.target.value })} 
             placeholder="Ім'я..."
           />
@@ -53,7 +53,7 @@ export function HeaderToolbar() {
           <input
             type="checkbox"
             className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            checked={project.textureSelectionEnabled}
+            checked={project.textureSelectionEnabled || false}
             onChange={(e) => updateProjectHeader({ textureSelectionEnabled: e.target.checked })}
           />
           {t(language, 'textureSelection')}
