@@ -125,12 +125,12 @@ export const createTextureSlice: StateCreator<
           const part = state.parts.find(candidate => candidate.id === layout.partId);
           if (layout.id === sourceLayout.id || (groupKey && texturePartInteractionKey(part) === groupKey)) {
             layout.slabId = slabId;
-            layout.x += dx;
-            layout.y += dy;
-            layout.rotation = ((layout.rotation + dRot) % 360) as Rotation;
-            layout.sourceX = layout.x;
-            layout.sourceY = layout.y;
-            layout.sourceRotation = layout.rotation;
+            // IMPORTANT: Do NOT update layout.x/y here. layout.x/y act as the stable 3D assembly anchors for manual details.
+            // We only want to preview the physical cut (sourceX/Y) changing relative to the slab,
+            // which updates the texture mapping on the 3D model without physically moving it in 3D space.
+            layout.sourceX = (layout.sourceX ?? layout.x) + dx;
+            layout.sourceY = (layout.sourceY ?? layout.y) + dy;
+            layout.sourceRotation = (((layout.sourceRotation ?? layout.rotation) + dRot) % 360) as Rotation;
           }
         });
       } else {
@@ -140,12 +140,12 @@ export const createTextureSlice: StateCreator<
           id: uid('texture'),
           slabId,
           partId,
-          x,
-          y,
-          rotation: 0,
-          sourceX: x,
+          x: placement.x, // Initial anchor is the placement x
+          y: placement.y,
+          rotation: placement.rotation,
+          sourceX: x, // Preview the drag position as sourceX
           sourceY: y,
-          sourceRotation: placement.rotation
+          sourceRotation: rotation
         });
       }
     });
