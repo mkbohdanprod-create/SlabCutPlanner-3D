@@ -312,7 +312,7 @@ function triggerPackingAsync(
 
 function directUpdate(set: (state: Partial<ProjectState>) => void, get: () => ProjectState, project: Project) {
   persist(project);
-  set({ project, parts: get().parts, selectedSlabId: get().selectedSlabId ?? project.slabs[0]?.id });
+  set({ project, parts: get().parts, selectedSlabId: get().selectedSlabId ?? project.slabs[0]?.id, packingRequestId: get().packingRequestId + 1 });
 }
 
 function updateWithoutPacking(set: (state: Partial<ProjectState>) => void, get: () => ProjectState, project: Project, refreshConflicts = true) {
@@ -321,7 +321,7 @@ function updateWithoutPacking(set: (state: Partial<ProjectState>) => void, get: 
   const nextProject = { ...normalized, placements, updatedAt: new Date().toISOString() } as Project;
   nextProject.calculationStatus = calcStatus(nextProject, placements);
   persist(nextProject);
-  set({ project: nextProject, parts: get().parts, selectedSlabId: get().selectedSlabId ?? nextProject.slabs[0]?.id });
+  set({ project: nextProject, parts: get().parts, selectedSlabId: get().selectedSlabId ?? nextProject.slabs[0]?.id, packingRequestId: get().packingRequestId + 1 });
 }
 
 function loadWithoutPacking(project: Project) {

@@ -64,7 +64,7 @@
 
 ### 8. `any` типи (TypeScript escape hatches)
 
-⏳ В черзі: Знайдено **рівно 9 місць** з `any` типами (підтверджено grep: `(: any\b|<any>|as any\b)`), переважно у компонентах 3D і PdfExport.
+✅ **ВИРІШЕНО:** Знайдено рівно 9 місць з `any` типами і успішно їх замінено на строгу типізацію (`Viewer3D.tsx`, `useProjectStore.ts`, `LoginModal.tsx` та `main.tsx`). Перевірка типів `npx tsc --noEmit` проходить успішно.
 
 ---
 
@@ -135,9 +135,9 @@ _Не зроблено: lazy сам `FormsPanel` (через важкий DXF pa
 - [x] Lazy imports для Viewer3D (Бандл-оптимізація 3MB)
 - [ ] Додати code splitting для chunks < 500 KB
 
-### Фаза 4: Стабільність і тести (Завершено 4/5)
+### Фаза 4: Стабільність і тести (Завершено 5/5)
 
 - [x] Написати Snapshot-тести для `packing.ts` перед Web Worker
 - [x] Написати Snapshot-тести для `geometry.ts`
 - [x] Винести `autoPack` у Web Worker для оптимізації продуктивності
-- [ ] Видалити `any` типи (рівно 9 місць у `src/`)
+- [x] Видалити `any` типи (рівно 9 місць у `src/`)
