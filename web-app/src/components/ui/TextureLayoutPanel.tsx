@@ -8,9 +8,11 @@ import { edgeMarkersForPart, edgeProfileShortLabel } from '../../utils/edgeProfi
 import { pointInPolygonStrict as pointInPolygon, pointOnSegment, outwardNormal } from '../../engines/geometryUtils';
 import { Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
-import {
+import type {
   TextureItem,
   ViewBox,
+} from '../../engines/textureLayout';
+import {
   clampTextureLayoutPosition,
   constrainTextureGroupPosition,
   getTextureItems,
