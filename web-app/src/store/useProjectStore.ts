@@ -12,6 +12,7 @@ import { rotatedSize } from '../lib/project';
 import { supabase } from '../lib/supabase';
 
 import { get as idbGet, set as idbSet } from 'idb-keyval';
+import { type EditorUISlice, createEditorUISlice } from './slices/editorUISlice';
 
 const STORAGE_KEY = 'slab_cut_planner_current_project';
 
@@ -75,29 +76,17 @@ function rotatedTextureLayouts(layouts: TextureLayout[], parts: DetailPart[], so
   return layouts.map((layout) => updates.get(layout.id) ?? layout);
 }
 
-interface ProjectState {
+interface ProjectState extends EditorUISlice {
   project: Project;
   packingMode: PackingMode;
   parts: DetailPart[];
   isPacking: boolean;
   packingRequestId: number;
-  selectedSlabId?: string;
-  editingDetailId?: string;
-  bufferDragPartId?: string;
-  placementDragPartId?: string;
-  unplacedDropVisible: boolean;
   movementHistory: MovementSnapshot[];
   movementFuture: MovementSnapshot[];
   initialize: () => void;
   setPackingMode: (mode: PackingMode) => void;
   setUiLanguage: (language: UiLanguage) => void;
-  setSelectedSlabId: (id?: string) => void;
-  startBufferDrag: (partId: string) => void;
-  clearBufferDrag: () => void;
-  startPlacementDrag: (partId: string) => void;
-  clearPlacementDrag: () => void;
-  showUnplacedDropZone: () => void;
-  hideUnplacedDropZone: () => void;
   updateProjectHeader: (patch: Partial<Pick<Project, 'orderNumber' | 'customer' | 'textureSelectionEnabled'>>) => void;
   updateAllowances: (patch: Partial<CutAllowances>) => void;
   addSlab: (slab: SlabInstance) => void;
@@ -106,8 +95,6 @@ interface ProjectState {
   addDetail: (detail: Detail) => void;
   addDetails: (details: Detail[]) => void;
   updateDetailRecord: (detailId: string, detail: Detail) => void;
-  startEditDetail: (detailId: string) => void;
-  clearEditDetail: () => void;
   deleteDetail: (detailId: string) => void;
   clearCalculation: () => void;
   runPacking: (mode?: PackingMode) => void;
@@ -411,16 +398,13 @@ function partNameForLabel(part: DetailPart, label: string) {
   return `${prefix} ${genitiveLabel(label)} сторона ${part.edgeSide}`;
 }
 
-export const useProjectStore = create<ProjectState>()(immer((set, get) => ({
+export const useProjectStore = create<ProjectState>()(immer((set, get, store) => ({
+  ...createEditorUISlice(set, get, store),
   project: createEmptyProject(),
   packingMode: 'economy',
   parts: [],
   isPacking: false,
   packingRequestId: 0,
-  unplacedDropVisible: false,
-  editingDetailId: undefined,
-  bufferDragPartId: undefined,
-  placementDragPartId: undefined,
   movementHistory: [],
   movementFuture: [],
   currentDbProjectId: null,
@@ -461,13 +445,6 @@ export const useProjectStore = create<ProjectState>()(immer((set, get) => ({
   setUiLanguage: (uiLanguage) => {
     updateWithoutPacking(set, get, { ...get().project, uiLanguage } as Project, false);
   },
-  setSelectedSlabId: (selectedSlabId) => set({ selectedSlabId }),
-  startBufferDrag: (bufferDragPartId) => set({ bufferDragPartId }),
-  clearBufferDrag: () => set({ bufferDragPartId: undefined }),
-  startPlacementDrag: (placementDragPartId) => set({ placementDragPartId, unplacedDropVisible: false }),
-  clearPlacementDrag: () => set({ placementDragPartId: undefined, unplacedDropVisible: false }),
-  showUnplacedDropZone: () => set({ unplacedDropVisible: true }),
-  hideUnplacedDropZone: () => set({ unplacedDropVisible: false }),
   updateProjectHeader: (patch) => {
     updateWithoutPacking(set, get, { ...get().project, ...patch } as Project, false);
   },
@@ -518,8 +495,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get) => ({
     } as Project, get().packingMode, get().parts, set, get);
     set({ editingDetailId: undefined });
   },
-  startEditDetail: (editingDetailId) => set({ editingDetailId }),
-  clearEditDetail: () => set({ editingDetailId: undefined }),
+
   deleteDetail: (detailId) => {
     const current = get().project;
     const detailIds = new Set([detailId]);
