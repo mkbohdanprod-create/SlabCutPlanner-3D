@@ -82,21 +82,22 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
   const s = 0.001;
   const thickness = slab?.thickness ? slab.thickness * s : 0.02;
 
+  const placements = useProjectStore((state) => state.project.placements);
   const textureLayouts = useProjectStore((state) => state.project.textureLayouts);
   const layout = textureLayouts.find((l) => l.partId === part.id);
   const sourceX = layout?.sourceX ?? layout?.x ?? 0;
   const sourceY = layout?.sourceY ?? layout?.y ?? 0;
 
-  let posX = ((layout?.x ?? placement.x) + part.width / 2) * s;
-  let posZ = ((layout?.y ?? placement.y) + part.height / 2) * s;
+  let posX = (placement.x + part.width / 2) * s;
+  let posZ = (placement.y + part.height / 2) * s;
   let posY = thickness / 2;
   let quaternion = new THREE.Quaternion();
 
   if (!localTransform && !part.isMain && (part.edgeKind === 'fold' || part.edgeKind === 'thickening')) {
     const mainPart = parts.find((p) => p.parentLabel === part.parentLabel && p.isMain);
-    const mainLayout = mainPart ? textureLayouts.find((l) => l.partId === mainPart.id) : null;
+    const mainPlacement = mainPart ? placements.find((l) => l.partId === mainPart.id) : null;
     
-    if (mainPart && mainLayout && part.edgeSide) {
+    if (mainPart && mainPlacement && part.edgeSide) {
       let start = { x: 0, y: 0 };
       let end = { x: 0, y: 0 };
       
@@ -113,10 +114,10 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
         else if (part.edgeSide === 'D') { start = { x: w, y: h }; end = { x: 0, y: h }; }
       }
 
-      const P1x = (mainLayout.x + start.x) * s;
-      const P1z = (mainLayout.y + start.y) * s;
-      const P2x = (mainLayout.x + end.x) * s;
-      const P2z = (mainLayout.y + end.y) * s;
+      const P1x = (mainPlacement.x + start.x) * s;
+      const P1z = (mainPlacement.y + start.y) * s;
+      const P2x = (mainPlacement.x + end.x) * s;
+      const P2z = (mainPlacement.y + end.y) * s;
 
       const edgeCenter = { x: (P1x + P2x) / 2, z: (P1z + P2z) / 2 };
       const dx = P2x - P1x;

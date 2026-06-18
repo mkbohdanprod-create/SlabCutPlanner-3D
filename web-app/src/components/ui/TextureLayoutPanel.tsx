@@ -19,6 +19,7 @@ import type {
   ViewBox,
 } from '../../engines/textureLayout';
 import {
+  clamp,
   clampTextureLayoutPosition,
   constrainTextureGroupPosition,
   findPart,

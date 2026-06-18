@@ -154,7 +154,6 @@ export const createTextureSlice: StateCreator<
         }
       });
       state.project.updatedAt = new Date().toISOString();
-      state.packingRequestId += 1;
     });
     persist(get().project, get().currentDbProjectId);
   },
@@ -165,7 +164,6 @@ export const createTextureSlice: StateCreator<
       const targetRotation = ((sourceLayout.rotation + 90) % 360) as Rotation;
       state.project.textureLayouts = rotatedTextureLayouts(state.project.textureLayouts, state.parts, sourceLayout, targetRotation);
       state.project.updatedAt = new Date().toISOString();
-      state.packingRequestId += 1;
     });
     persist(get().project, get().currentDbProjectId);
   },
@@ -175,7 +173,6 @@ export const createTextureSlice: StateCreator<
       if (!sourceLayout) return;
       state.project.textureLayouts = rotatedTextureLayouts(state.project.textureLayouts, state.parts, sourceLayout, rotation);
       state.project.updatedAt = new Date().toISOString();
-      state.packingRequestId += 1;
     });
     persist(get().project, get().currentDbProjectId);
   },
@@ -184,7 +181,6 @@ export const createTextureSlice: StateCreator<
       if (!state.project.textureFrames) state.project.textureFrames = [];
       state.project.textureFrames.push({ ...frame, id: uid('texture_frame') });
       state.project.updatedAt = new Date().toISOString();
-      state.packingRequestId += 1;
     });
     persist(get().project, get().currentDbProjectId);
   },
@@ -194,7 +190,6 @@ export const createTextureSlice: StateCreator<
       const frame = state.project.textureFrames.find(f => f.id === frameId);
       if (frame) Object.assign(frame, patch);
       state.project.updatedAt = new Date().toISOString();
-      state.packingRequestId += 1;
     });
     persist(get().project, get().currentDbProjectId);
   },
@@ -203,7 +198,6 @@ export const createTextureSlice: StateCreator<
       if (!state.project.textureFrames) return;
       state.project.textureFrames = state.project.textureFrames.filter(f => f.id !== frameId);
       state.project.updatedAt = new Date().toISOString();
-      state.packingRequestId += 1;
     });
     persist(get().project, get().currentDbProjectId);
   },
