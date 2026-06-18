@@ -76,9 +76,8 @@ function calculateCustomTextureMatrix(
   ];
 }
 
-function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, originOffset = [0, 0, 0], localTransform }: { placement: Placement; part: DetailPart; slab: SlabInstance; parts: DetailPart[]; isSelected?: boolean; onSelect?: () => void; originOffset?: [number, number, number]; localTransform?: { pos: [number, number, number], quat: THREE.Quaternion, hidden?: boolean } | null }) {
+function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, originOffset, localTransform, baseX, baseY }: { placement: Placement, part: DetailPart, slab?: SlabInstance, parts: DetailPart[], isSelected: boolean, onSelect: () => void, originOffset: [number, number, number], localTransform?: {x: number, y: number, z: number, rx: number, ry: number, rz: number, hidden?: boolean} | null, baseX: number, baseY: number }) {
   if (localTransform?.hidden) return null;
-
   const s = 0.001;
   const thickness = slab?.thickness ? slab.thickness * s : 0.02;
 
@@ -88,8 +87,8 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
   const sourceX = layout?.sourceX ?? layout?.x ?? 0;
   const sourceY = layout?.sourceY ?? layout?.y ?? 0;
 
-  let posX = (placement.x + part.width / 2) * s;
-  let posZ = (placement.y + part.height / 2) * s;
+  let posX = (baseX + part.width / 2) * s;
+  let posZ = (baseY + part.height / 2) * s;
   let posY = thickness / 2;
   let quaternion = new THREE.Quaternion();
 
@@ -114,10 +113,10 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
         else if (part.edgeSide === 'D') { start = { x: w, y: h }; end = { x: 0, y: h }; }
       }
 
-      const P1x = (mainPlacement.x + start.x) * s;
-      const P1z = (mainPlacement.y + start.y) * s;
-      const P2x = (mainPlacement.x + end.x) * s;
-      const P2z = (mainPlacement.y + end.y) * s;
+      const P1x = (baseX + start.x) * s;
+      const P1z = (baseY + start.y) * s;
+      const P2x = (baseX + end.x) * s;
+      const P2z = (baseY + end.y) * s;
 
       const edgeCenter = { x: (P1x + P2x) / 2, z: (P1z + P2z) / 2 };
       const dx = P2x - P1x;
@@ -385,9 +384,13 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
   const s = 0.001;
   const mainSlab = slabs.find((s: SlabInstance) => s.id === mainPlacement.slabId);
   const thickness = mainSlab?.thickness ? mainSlab.thickness * s : 0.02;
-  const initialX = (mainPlacement.x + mainPart.width / 2) * s - 1.5;
+  const mainPartDetail = details.find((d: Detail) => d.id === mainPart.detailId);
+  const baseX = mainPartDetail?.importOffsetX ?? mainPlacement.x;
+  const baseY = mainPartDetail?.importOffsetY ?? mainPlacement.y;
+
+  const initialX = (baseX + mainPart.width / 2) * s - 1.5;
   const initialY = thickness / 2;
-  const initialZ = (mainPlacement.y + mainPart.height / 2) * s - 0.8;
+  const initialZ = (baseY + mainPart.height / 2) * s - 0.8;
 
   const transform = mainPlacement.transform3d;
   const position: [number, number, number] = transform ? [transform.x, transform.y, transform.z] : [initialX, initialY, initialZ];
@@ -419,6 +422,8 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
           onSelect={select}
           originOffset={originOffset}
           localTransform={isSink ? getSinkPartTransform(mainPart, detail, thickness) : null}
+          baseX={baseX}
+          baseY={baseY}
         />
       </Suspense>
       {foldPlacements.map((fp: Placement) => {
@@ -435,6 +440,8 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
                onSelect={select}
                originOffset={originOffset}
                localTransform={isSink ? getSinkPartTransform(fPart, detail, thickness) : null}
+               baseX={baseX}
+               baseY={baseY}
              />
            </Suspense>
          );
