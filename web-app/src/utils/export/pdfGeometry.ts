@@ -2,13 +2,9 @@ import type { DetailPart, Placement, Point, Project, Rotation, SlabInstance, Tex
 import { rotatedLocalPoints, rotatedPoints, rotatedSize } from '../../lib/project';
 import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
 import type { Bounds, TextureItem } from './pdfTypes';
-import { pointInPolygonStrict as pointInPolygon, pointOnSegment, outwardNormal } from '../../engines/geometryUtils';
+import { pointInPolygonStrict as pointInPolygon, pointOnSegment, outwardNormal, pointsBounds } from '../../engines/geometryUtils';
 
-export function pointsBounds(points: Point[]): Bounds {
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
-}
+
 
 export function pathFromPolygons(polygons: Point[][], scale = 1, offsetX = 0, offsetY = 0) {
   return polygons

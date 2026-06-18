@@ -1,9 +1,9 @@
-﻿import { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Detail, Point, SlabInstance, UiLanguage } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
 
-function pointsBounds(points: Point[]) {
+function pointsBoundsWithPadding(points: Point[]) {
   const xs = points.map((point) => point.x);
   const ys = points.map((point) => point.y);
   const minX = Math.min(...xs);
@@ -51,7 +51,7 @@ function detailDims(detail: Detail, language?: UiLanguage) {
   const mm = translateStaticUiText(language, 'мм');
   const g = detail.geometry;
   if (g.customPoints?.length) {
-    const bounds = pointsBounds(g.customPoints);
+    const bounds = pointsBoundsWithPadding(g.customPoints);
     return `${Math.round(bounds.width)}×${Math.round(bounds.height)} ${mm}`;
   }
   if (g.diameter) return `Ø ${g.diameter} ${mm}`;
@@ -73,7 +73,7 @@ function SlabThumb({ slab }: { slab: SlabInstance }) {
 
 function DetailThumb({ detail }: { detail: Detail }) {
   const { points, holes } = detailPoints(detail);
-  const bounds = pointsBounds(points);
+  const bounds = pointsBoundsWithPadding(points);
   const pad = Math.max(bounds.width, bounds.height) * 0.08;
   return (
     <svg className="list-thumb" viewBox={`${bounds.minX - pad} ${bounds.minY - pad} ${bounds.width + pad * 2} ${bounds.height + pad * 2}`} aria-hidden="true">

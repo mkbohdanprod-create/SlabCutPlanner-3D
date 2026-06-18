@@ -1,6 +1,7 @@
 import type { CutAllowances, Detail, DetailPart, EdgeFeature, Point } from '../domain/types';
 import { getDimsLabel, buildDetailCounters } from '../lib/project';
 import { mm2ToM2 } from '../utils/math';
+import { pointsBounds } from './geometryUtils';
 
 import { DEFAULT_ALLOWANCES } from '../domain/defaults';
 import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
@@ -50,15 +51,7 @@ function scalePoints(points: Point[], width: number, height: number, nextWidth: 
   return points.map((point) => ({ x: (point.x / safeWidth) * nextWidth, y: (point.y / safeHeight) * nextHeight }));
 }
 
-function pointsBounds(points: Point[]) {
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  const maxX = Math.max(...xs);
-  const maxY = Math.max(...ys);
-  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
-}
+
 
 /** Returns signed polygon area so offset normals follow the contour direction. */
 function signedPolygonArea(points: Point[]) {
