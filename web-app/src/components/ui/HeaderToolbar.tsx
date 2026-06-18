@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, Play, Trash2, Globe, Settings, Download } from 'lucide-react';
+import { ChevronDown, Play, Trash2, Globe, Settings, Download, Loader2 } from 'lucide-react';
 import type { PackingMode } from '../../domain/types';
 import { languageOptions, packingModeLabel, t } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
@@ -10,6 +10,7 @@ export function HeaderToolbar() {
   const { 
     project, 
     packingMode, 
+    isPacking,
     setPackingMode, 
     setUiLanguage, 
     updateProjectHeader, 
@@ -82,6 +83,7 @@ export function HeaderToolbar() {
         <button 
           className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors ml-2"
           onClick={clearClick}
+          disabled={isPacking}
         >
           <Trash2 className="w-4 h-4" />
           {t(language, 'clearCalculation')}
@@ -89,15 +91,29 @@ export function HeaderToolbar() {
 
         <div className="relative flex items-center shadow-sm rounded-lg">
           <button 
-            className="flex items-center gap-2 px-4 py-1.5 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-l-lg transition-colors"
-            onClick={() => runPacking(packingMode)}
+            className={`flex items-center gap-2 px-4 py-1.5 text-sm font-bold text-white rounded-l-lg transition-colors ${
+              isPacking ? 'bg-slate-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+            }`}
+            onClick={() => {
+              if (!isPacking) runPacking(packingMode);
+            }}
+            disabled={isPacking}
           >
-            <Play className="w-4 h-4 fill-current" />
+            {isPacking ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Play className="w-4 h-4 fill-current" />
+            )}
             {t(language, 'recalculate')}
           </button>
           <button 
-            className="flex items-center px-2 py-1.5 text-white bg-green-700 hover:bg-green-800 rounded-r-lg border-l border-green-800 transition-colors"
-            onClick={() => setMenuOpen(!menuOpen)}
+            className={`flex items-center px-2 py-1.5 text-white rounded-r-lg border-l transition-colors ${
+              isPacking ? 'bg-slate-500 border-slate-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-800 border-green-800'
+            }`}
+            onClick={() => {
+              if (!isPacking) setMenuOpen(!menuOpen);
+            }}
+            disabled={isPacking}
           >
             <ChevronDown className="w-4 h-4" />
           </button>

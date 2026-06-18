@@ -2,7 +2,10 @@ import { create } from 'zustand';
 import { createEmptyProject, uid } from '../domain/defaults';
 import type { CutAllowances, DefectZone, Detail, DetailPart, ManualDimension, PackingMode, Placement, Project, Rotation, SlabInstance, TextureFrame, TextureLayout, UiLanguage, ViewMode } from '../domain/types';
 import { explodeDetails } from '../engines/geometry';
-import { autoPack, buildTextureLayout, detectConflicts } from '../engines/packing';
+import { buildTextureLayout, detectConflicts } from '../engines/packing';
+import PackingWorker from '../workers/packing.worker?worker';
+import { stripBase64 } from '../engines/workerMapper';
+import type { PackingWorkerRequest, PackingWorkerResponse } from '../workers/packing.worker';
 import { t } from '../i18n';
 import { rotatedSize } from '../lib/project';
 import { supabase } from '../lib/supabase';
@@ -74,6 +77,8 @@ interface ProjectState {
   viewMode: ViewMode;
   packingMode: PackingMode;
   parts: DetailPart[];
+  isPacking: boolean;
+  packingRequestId: number;
   selectedSlabId?: string;
   editingDetailId?: string;
   bufferDragPartId?: string;
@@ -211,45 +216,98 @@ function remapStoredPartReferences(project: Project, previousParts: DetailPart[]
   } as Project;
 }
 
-function recalc(project: Project, mode: PackingMode, previousParts: DetailPart[] = []) {
+let worker: Worker | null = null;
+let debounceTimeout: ReturnType<typeof setTimeout> | null = null;
+function getWorker() {
+  if (!worker) worker = new PackingWorker();
+  return worker;
+}
+
+function triggerPackingAsync(
+  project: Project,
+  mode: PackingMode,
+  previousParts: DetailPart[],
+  set: (state: Partial<ProjectState>) => void,
+  get: () => ProjectState
+) {
+  // 1. Synchronously prepare data (explode, remap) so UI updates list immediately
   const normalized = normalizeProject(project);
   const parts = explodeDetails(normalized.details, normalized.allowances);
   const remappedProject = remapStoredPartReferences(normalized, previousParts, parts);
-  const packed = autoPack(remappedProject, parts, mode);
-  const placements = detectConflicts(remappedProject, parts, packed.placements);
-  let textureLayouts = buildTextureLayout(placements, parts);
-  if (remappedProject.textureLayouts.length) {
-    const validPartIds = new Set(parts.map((part) => part.id));
-    textureLayouts = textureLayouts.map((layout) => {
-      const old = remappedProject.textureLayouts.find((item) => item.partId === layout.partId);
-      return old
-        ? {
-          ...layout,
-          id: old.id,
-          x: old.x,
-          y: old.y,
-          rotation: old.rotation,
-          sourceX: layout.sourceX,
-          sourceY: layout.sourceY,
-          sourceRotation: layout.sourceRotation,
-        }
-        : layout;
-    });
-    const refreshedPartIds = new Set(textureLayouts.map((layout) => layout.partId));
-    textureLayouts.push(...remappedProject.textureLayouts.filter((layout) => (
-      validPartIds.has(layout.partId) && !refreshedPartIds.has(layout.partId)
-    )));
-  }
-  const nextProject = {
-    ...remappedProject,
-    placements,
-    textureLayouts,
-    unplacedPartIds: packed.unplacedPartIds,
-    unplacedReasons: packed.unplacedReasons,
-    updatedAt: new Date().toISOString(),
-  } as Project;
-  nextProject.calculationStatus = calcStatus(nextProject, placements);
-  return { project: nextProject, parts };
+  
+  set({ 
+    project: { ...remappedProject, updatedAt: new Date().toISOString() } as Project, 
+    parts, 
+    packingMode: mode,
+    isPacking: true,
+    movementHistory: [],
+    movementFuture: []
+  });
+
+  // 2. Debounce async packing
+  if (debounceTimeout) clearTimeout(debounceTimeout);
+  debounceTimeout = setTimeout(() => {
+    const state = get();
+    const requestId = state.packingRequestId + 1;
+    set({ packingRequestId: requestId });
+    
+    const w = getWorker();
+    w.onmessage = (e: MessageEvent<PackingWorkerResponse | { requestId: number; error: string }>) => {
+      const data = e.data;
+      if (data.requestId !== get().packingRequestId) return; // Stale response
+      
+      if ('error' in data) {
+        console.error('Packing Worker Error:', data.error);
+        set({ isPacking: false });
+        return;
+      }
+      
+      const packed = data.result;
+      const latestState = get(); // get latest state just in case
+      const placements = detectConflicts(latestState.project, latestState.parts, packed.placements);
+      
+      let textureLayouts = buildTextureLayout(placements, latestState.parts);
+      if (latestState.project.textureLayouts.length) {
+        const validPartIds = new Set(latestState.parts.map((part) => part.id));
+        textureLayouts = textureLayouts.map((layout) => {
+          const old = latestState.project.textureLayouts.find((item) => item.partId === layout.partId);
+          return old
+            ? { ...layout, id: old.id, x: old.x, y: old.y, rotation: old.rotation, sourceX: layout.sourceX, sourceY: layout.sourceY, sourceRotation: layout.sourceRotation }
+            : layout;
+        });
+        const refreshedPartIds = new Set(textureLayouts.map((layout) => layout.partId));
+        textureLayouts.push(...latestState.project.textureLayouts.filter((layout) => (
+          validPartIds.has(layout.partId) && !refreshedPartIds.has(layout.partId)
+        )));
+      }
+      
+      const finalProject = {
+        ...latestState.project,
+        placements,
+        textureLayouts,
+        unplacedPartIds: packed.unplacedPartIds,
+        unplacedReasons: packed.unplacedReasons,
+        updatedAt: new Date().toISOString(),
+      } as Project;
+      finalProject.calculationStatus = calcStatus(finalProject, placements);
+      
+      persist(finalProject);
+      set({ project: finalProject, isPacking: false });
+    };
+    
+    w.onerror = (err) => {
+      console.error('Worker threw an error:', err);
+      set({ isPacking: false });
+    };
+
+    w.postMessage({
+      requestId,
+      project: stripBase64(state.project),
+      parts: state.parts,
+      mode
+    } as PackingWorkerRequest);
+    
+  }, 200);
 }
 
 function directUpdate(set: (state: Partial<ProjectState>) => void, get: () => ProjectState, project: Project) {
@@ -331,14 +389,15 @@ function partNameForLabel(part: DetailPart, label: string) {
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   project: createEmptyProject(),
-  viewMode: 'technical',
-  packingMode: 'optimal',
+  viewMode: '2d',
+  packingMode: 'economy',
   parts: [],
-  selectedSlabId: undefined,
+  isPacking: false,
+  packingRequestId: 0,
+  unplacedDropVisible: false,
   editingDetailId: undefined,
   bufferDragPartId: undefined,
   placementDragPartId: undefined,
-  unplacedDropVisible: false,
   movementHistory: [],
   movementFuture: [],
   currentDbProjectId: null,
@@ -394,21 +453,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ selectedSlabId });
   },
   addDetail: (detail) => {
-    const next = recalc({ ...get().project, details: [...get().project.details, detail] } as Project, get().packingMode, get().parts);
-    persist(next.project); set({ ...next, movementHistory: [], movementFuture: [] });
+    const currentProject = get().project;
+    triggerPackingAsync({ ...currentProject, details: [...currentProject.details, detail] } as Project, get().packingMode, get().parts, set, get);
   },
   addDetails: (details) => {
     if (!details.length) return;
-    const next = recalc({ ...get().project, details: [...get().project.details, ...details] } as Project, get().packingMode, get().parts);
-    persist(next.project); set({ ...next, movementHistory: [], movementFuture: [] });
+    const currentProject = get().project;
+    triggerPackingAsync({ ...currentProject, details: [...currentProject.details, ...details] } as Project, get().packingMode, get().parts, set, get);
   },
   updateDetailRecord: (detailId, detail) => {
     const current = get().project;
-    const next = recalc({
+    triggerPackingAsync({
       ...current,
       details: current.details.map((item) => item.id === detailId ? { ...detail, id: detailId } : item),
-    } as Project, get().packingMode, get().parts);
-    persist(next.project); set({ ...next, editingDetailId: undefined, movementHistory: [], movementFuture: [] });
+    } as Project, get().packingMode, get().parts, set, get);
+    set({ editingDetailId: undefined });
   },
   startEditDetail: (editingDetailId) => set({ editingDetailId }),
   clearEditDetail: () => set({ editingDetailId: undefined }),
@@ -457,8 +516,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
   runPacking: (mode) => {
     const packingMode = mode ?? get().packingMode;
-    const next = recalc(get().project, packingMode, get().parts);
-    persist(next.project); set({ ...next, packingMode });
+    triggerPackingAsync(get().project, packingMode, get().parts, set, get);
   },
   movePlacement: (placementId, x, y, slabId, rotation) => {
     const project = {

@@ -5,59 +5,61 @@ exports[`packing.ts (Safety Net) > should autoPack project with deterministic ou
   {
     "id": "test-id-2",
     "manualLocked": false,
-    "partId": "part-exact",
+    "partId": "part:det-2:main:body:Det2:0:0",
     "rotation": 90,
     "slabId": "slab-1",
     "x": 10,
     "y": 10,
   },
   {
-    "id": "test-id-138",
+    "id": "test-id-258",
     "manualLocked": false,
-    "partId": "part-1",
+    "partId": "part:det-1:main:body:Det1:0:0",
+    "rotation": 0,
+    "slabId": "slab-2",
+    "x": 10,
+    "y": 754,
+  },
+  {
+    "id": "test-id-675",
+    "manualLocked": false,
+    "partId": "part:det-3:main:body:Det3 3:0:0",
     "rotation": 0,
     "slabId": "slab-1",
-    "x": 10,
+    "x": 1570,
     "y": 10,
   },
   {
-    "id": "test-id-318",
+    "id": "test-id-1167",
     "manualLocked": false,
-    "partId": "part-dup-1",
+    "partId": "part:det-3:main:body:Det3 4:0:0",
     "rotation": 0,
     "slabId": "slab-1",
-    "x": 10,
-    "y": 10,
+    "x": 1570,
+    "y": 634,
   },
   {
-    "id": "test-id-498",
+    "id": "test-id-2184",
     "manualLocked": false,
-    "partId": "part-dup-2",
+    "partId": "part:det-4:fold:B:Det4:0:0",
     "rotation": 0,
     "slabId": "slab-1",
     "x": 10,
-    "y": 10,
-  },
-  {
-    "id": "test-id-678",
-    "manualLocked": false,
-    "partId": "part-fold-1",
-    "rotation": 0,
-    "slabId": "slab-1",
-    "x": 10,
-    "y": 10,
+    "y": 1186,
   },
 ]
 `;
 
 exports[`packing.ts (Safety Net) > should autoPack project with deterministic output matching snapshot > unplacedPartIds 1`] = `
 [
-  "part-huge",
+  "part:det-5:main:body:Det5:0:0",
+  "part:det-4:main:body:Det4:0:0",
 ]
 `;
 
 exports[`packing.ts (Safety Net) > should autoPack project with deterministic output matching snapshot > unplacedReasons 1`] = `
 {
-  "part-huge": "недостатньо місця на слебах",
+  "part:det-4:main:body:Det4:0:0": "неможливо розмістити без колізії",
+  "part:det-5:main:body:Det5:0:0": "недостатньо місця на слебах",
 }
 `;

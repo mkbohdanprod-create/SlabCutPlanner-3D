@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { autoPack } from '../packing';
+import { autoPack, detectConflicts } from '../packing';
 import { mockProject, mockParts } from './mockData';
 
 let idCounter = 0;
@@ -19,6 +19,14 @@ describe('packing.ts (Safety Net)', () => {
 
   it('should autoPack project with deterministic output matching snapshot', () => {
     const result = autoPack(mockProject, mockParts);
+
+    // Sanity check 1: всі placement унікальні за (slabId, x, y)
+    const positions = result.placements.map(p => `${p.slabId}:${p.x}:${p.y}`);
+    expect(new Set(positions).size).toBe(positions.length);
+
+    // Sanity check 2: ніяких колізій між розміщеннями
+    const conflicts = detectConflicts(mockProject, mockParts, result.placements);
+    expect(conflicts.filter(p => p.conflict || p.outOfBounds)).toEqual([]);
 
     // Normalize placements to prevent floating-point flakiness
     const normalizedPlacements = result.placements.map(p => ({

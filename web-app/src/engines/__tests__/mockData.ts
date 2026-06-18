@@ -1,4 +1,6 @@
-import type { DetailPart, Project, SlabInstance } from '../../domain/types';
+import { explodeDetails } from '../geometry';
+import type { Detail, Project, SlabInstance } from '../../domain/types';
+import { DEFAULT_ALLOWANCES } from '../../domain/defaults';
 
 export const mockSlabs: SlabInstance[] = [
   {
@@ -32,57 +34,81 @@ export const mockSlabs: SlabInstance[] = [
   }
 ];
 
-export const mockParts: DetailPart[] = [
+export const mockDetails: Detail[] = [
   // 1. Normal large part
   {
-    id: 'part-1', detailId: 'det-1', name: 'Стільниця', type: 'Стільниця', shape: 'Прямокутна',
-    width: 2000, height: 600, rotation: 0, area: 1.2, points: [], isMain: true,
-    parentLabel: 'Det1', dimsLabel: '2000x600', textureIrrelevant: false
+    id: 'det-1',
+    type: 'Стільниця',
+    shape: 'Прямокутна',
+    quantity: 1,
+    geometry: { width: 2000, height: 600 },
+    thickness: 20,
+    label: 'Det1'
   },
   // 2. Exact match (zero gap vertically for slab 1) - height 1480 + 2*10 margin = 1500
   {
-    id: 'part-exact', detailId: 'det-2', name: 'Стільниця Exact', type: 'Стільниця', shape: 'Прямокутна',
-    width: 1000, height: 1480, rotation: 0, area: 1.48, points: [], isMain: true,
-    parentLabel: 'Det2', dimsLabel: '1000x1480', textureIrrelevant: false
+    id: 'det-2',
+    type: 'Стільниця',
+    shape: 'Прямокутна',
+    quantity: 1,
+    geometry: { width: 1000, height: 1480 },
+    thickness: 20,
+    label: 'Det2'
   },
   // 3. Multiple identical parts
   {
-    id: 'part-dup-1', detailId: 'det-3', name: 'Полиця 1', type: 'Стільниця', shape: 'Прямокутна',
-    width: 500, height: 500, rotation: 0, area: 0.25, points: [], isMain: true,
-    parentLabel: 'Det3', dimsLabel: '500x500', textureIrrelevant: false
-  },
-  {
-    id: 'part-dup-2', detailId: 'det-3', name: 'Полиця 2', type: 'Стільниця', shape: 'Прямокутна',
-    width: 500, height: 500, rotation: 0, area: 0.25, points: [], isMain: true,
-    parentLabel: 'Det3', dimsLabel: '500x500', textureIrrelevant: false
+    id: 'det-3',
+    type: 'Стільниця',
+    shape: 'Прямокутна',
+    quantity: 2,
+    geometry: { width: 500, height: 500 },
+    thickness: 20,
+    label: 'Det3'
   },
   // 4. Fold part (підворот)
   {
-    id: 'part-fold-1', detailId: 'det-1', name: 'Підворот', type: 'Стільниця', shape: 'Прямокутна',
-    width: 2000, height: 50, rotation: 0, area: 0.1, points: [], isMain: false,
-    parentLabel: 'Det1', dimsLabel: '2000x50', edgeKind: 'fold', textureIrrelevant: false
+    id: 'det-4',
+    type: 'Стільниця',
+    shape: 'Прямокутна',
+    quantity: 1,
+    geometry: { width: 2000, height: 500 },
+    thickness: 20,
+    label: 'Det4',
+    fold: { enabled: true, size: 50, sides: ['B'] }
   },
   // 5. Overflow part (won't fit anywhere)
   {
-    id: 'part-huge', detailId: 'det-5', name: 'Too Big', type: 'Стільниця', shape: 'Прямокутна',
-    width: 4000, height: 4000, rotation: 0, area: 16, points: [], isMain: true,
-    parentLabel: 'Det5', dimsLabel: '4000x4000', textureIrrelevant: false
+    id: 'det-5',
+    type: 'Стільниця',
+    shape: 'Прямокутна',
+    quantity: 1,
+    geometry: { width: 4000, height: 4000 },
+    thickness: 20,
+    label: 'Det5'
   }
 ];
+
+export const mockAllowances = {
+  ...DEFAULT_ALLOWANCES,
+  detailLength: 10,
+  detailWidth: 10,
+  elementLength: 5,
+  elementWidth: 5,
+  interPartSpacing: 10
+};
+
+// mockParts генеруються через реальний explodeDetails, тож зміни в geometry.ts
+// можуть тригерити перегенерацію snapshot не тільки geometry.test, а й packing.test.
+// Це нормально — це end-to-end safety net.
+export const mockParts = explodeDetails(mockDetails, mockAllowances);
 
 export const mockProject = {
   slabs: mockSlabs,
   placements: [],
-  details: [],
+  details: mockDetails,
   textureLayouts: [],
   textureFrames: [],
   manualDimensions: [],
   unplacedPartIds: [],
-  allowances: {
-    detailLength: 10,
-    detailWidth: 10,
-    elementLength: 5,
-    elementWidth: 5,
-    interPartSpacing: 10
-  }
+  allowances: mockAllowances
 } as unknown as Project;
