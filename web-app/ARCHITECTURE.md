@@ -82,3 +82,8 @@ graph TD
 - **`pdfPages.ts`**: Генерує SVG рядки для кожної сторінки (Overview, Details, Slabs, 3D).
 - **`pdfGeometry.ts`**: Вся "важка" математика відв'язана від рендеру сторінок.
 - **`pdfUtils.ts`**: Робота з текстом, одиницями виміру, конвертація SVG -> PNG.
+
+## 🤖 AI Workflow Instructions
+Всі AI-асистенти зобов'язані слідувати 9-кроковому протоколу співпраці з користувачем.
+Правила описані у файлі `C:\Users\b_dulysh\.gemini\antigravity-ide\knowledge\workflow-rules\artifacts\workflow_rules.md`.
+**Ніколи не робіть git push або deploy без прямої команди "Деплой" від користувача.**
