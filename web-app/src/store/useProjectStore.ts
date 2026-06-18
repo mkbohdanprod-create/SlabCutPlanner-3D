@@ -13,18 +13,17 @@ import { supabase } from '../lib/supabase';
 
 import { type EditorUISlice, createEditorUISlice } from './slices/editorUISlice';
 import { type TextureSlice, createTextureSlice } from './slices/textureSlice';
+import { type HistorySlice, createHistorySlice } from './slices/historySlice';
 import { persist } from './persistence';
 
 const STORAGE_KEY = 'slab_cut_planner_current_project';
 
-interface ProjectState extends EditorUISlice, TextureSlice {
+interface ProjectState extends EditorUISlice, TextureSlice, HistorySlice {
   project: Project;
   packingMode: PackingMode;
   parts: DetailPart[];
   isPacking: boolean;
   packingRequestId: number;
-  movementHistory: MovementSnapshot[];
-  movementFuture: MovementSnapshot[];
   initialize: () => void;
   setPackingMode: (mode: PackingMode) => void;
   setUiLanguage: (language: UiLanguage) => void;
@@ -49,9 +48,6 @@ interface ProjectState extends EditorUISlice, TextureSlice {
   unplaceParts: (partIds: string[]) => void;
   renamePartFamily: (partId: string, label: string) => void;
   rotatePlacement: (placementId: string) => void;
-  pushMovementSnapshot: () => void;
-  undoLastMovement: () => void;
-  redoMovement: () => void;
   importProject: (project: Project) => void;
   exportProject: () => string;
   updatePlacement3dTransform: (placementId: string, transform: { x: number; y: number; z: number; rx: number; ry: number; rz: number; } | undefined) => void;
@@ -227,31 +223,6 @@ function loadWithoutPacking(project: Project) {
   return { project: nextProject, parts };
 }
 
-function movementSnapshot(project: Project): MovementSnapshot {
-  return {
-    placements: project.placements.map((placement) => ({ ...placement })),
-    textureLayouts: project.textureLayouts.map((layout) => ({ ...layout })),
-    unplacedPartIds: [...project.unplacedPartIds],
-    unplacedReasons: { ...(project.unplacedReasons ?? {}) },
-    calculationStatus: project.calculationStatus,
-  };
-}
-
-function restoreMovementSnapshot(project: Project, parts: DetailPart[], snapshot: MovementSnapshot): Project {
-  const restored = {
-    ...project,
-    placements: snapshot.placements,
-    textureLayouts: snapshot.textureLayouts,
-    unplacedPartIds: snapshot.unplacedPartIds,
-    unplacedReasons: snapshot.unplacedReasons,
-    calculationStatus: snapshot.calculationStatus,
-    updatedAt: new Date().toISOString(),
-  } as Project;
-  const placements = detectConflicts(restored, parts, restored.placements);
-  const nextProject = { ...restored, placements } as Project;
-  nextProject.calculationStatus = calcStatus(nextProject, placements);
-  return nextProject;
-}
 
 function genitiveLabel(label: string) {
   const words = label.trim().split(/\s+/);
@@ -284,6 +255,7 @@ function partNameForLabel(part: DetailPart, label: string) {
 export const useProjectStore = create<ProjectState>()(immer((set, get, store) => ({
   ...createEditorUISlice(set, get, store),
   ...createTextureSlice(set, get, store),
+  ...createHistorySlice(set, get, store),
   project: createEmptyProject(),
   packingMode: 'economy',
   parts: [],
@@ -654,36 +626,7 @@ export const useProjectStore = create<ProjectState>()(immer((set, get, store) =>
     } as Project;
     updateWithoutPacking(set, get, nextProject, false);
   },
-  pushMovementSnapshot: () => {
-    const current = get().project;
-    set({ movementHistory: [...get().movementHistory.slice(-79), movementSnapshot(current)], movementFuture: [] });
-  },
-  undoLastMovement: () => {
-    const history = get().movementHistory;
-    const snapshot = history[history.length - 1];
-    if (!snapshot) return;
-    const currentSnapshot = movementSnapshot(get().project);
-    const nextProject = restoreMovementSnapshot(get().project, get().parts, snapshot);
-    persist(nextProject, get().currentDbProjectId);
-    set({
-      project: nextProject,
-      movementHistory: history.slice(0, -1),
-      movementFuture: [...get().movementFuture.slice(-79), currentSnapshot],
-    });
-  },
-  redoMovement: () => {
-    const future = get().movementFuture;
-    const snapshot = future[future.length - 1];
-    if (!snapshot) return;
-    const currentSnapshot = movementSnapshot(get().project);
-    const nextProject = restoreMovementSnapshot(get().project, get().parts, snapshot);
-    persist(nextProject, get().currentDbProjectId);
-    set({
-      project: nextProject,
-      movementHistory: [...get().movementHistory.slice(-79), currentSnapshot],
-      movementFuture: future.slice(0, -1),
-    });
-  },
+
 
   importProject: (project) => {
     const next = loadWithoutPacking(project);
