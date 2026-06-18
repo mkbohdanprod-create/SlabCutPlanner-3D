@@ -362,3 +362,15 @@ export function resolveTextureOverlaps(items: TextureItem[]): TextureItem[] {
     return shift.x || shift.y ? { ...item, displayX: item.displayX + shift.x, displayY: item.displayY + shift.y } : item;
   });
 }
+
+export function getSourceX(layout: TextureLayout) {
+  return layout.sourceX ?? layout.x;
+}
+
+export function getSourceY(layout: TextureLayout) {
+  return layout.sourceY ?? layout.y;
+}
+
+export function getSourceRotation(layout: TextureLayout): Rotation {
+  return layout.sourceRotation ?? layout.rotation;
+}
