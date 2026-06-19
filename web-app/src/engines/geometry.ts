@@ -339,6 +339,10 @@ function parentLabelForDetail(detail: Detail, counters: Map<string, number>, qua
 }
 
 function sideSegment(part: DetailPart, side: string) {
+  if (part.sideSegments?.[side]) return part.sideSegments[side];
+  if (part.shape === 'customContour' && !part.sideSegments) {
+    console.warn(`customContour part missing sideSegments. Falling back to bounding box. ID: ${part.id}`);
+  }
   const index = SIDE_SEGMENT_INDEXES[part.shape]?.[side];
   if (index === undefined || !part.points[index]) return undefined;
   return { start: part.points[index], end: part.points[(index + 1) % part.points.length] };
@@ -455,7 +459,8 @@ function edgeParts(detail: Detail, feature: EdgeFeature | undefined, basePart: D
   const meta = basePart.textureGroupLabel
     ? splitMeta(basePart.textureGroupLabel, basePart.textureOffsetX ?? 0, basePart.textureOffsetY ?? 0)
     : undefined;
-  const isCurved = basePart.points.length > 8;
+  const CURVED_SHAPES = new Set<DetailShape>(['Кругла', 'Овальна']);
+  const isCurved = CURVED_SHAPES.has(basePart.shape);
   const validSides = feature.sides.filter((side, index, sides) => (
     sides.indexOf(side) === index && (isCurved ? ['A', 'B', 'C', 'D'].includes(side) : sideSegment(basePart, side))
   ));

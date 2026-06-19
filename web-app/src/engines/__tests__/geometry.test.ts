@@ -67,4 +67,54 @@ describe('geometry.ts (Safety Net)', () => {
 
     expect(normalizedParts).toMatchSnapshot('exploded-parts');
   });
+
+  describe('isCurved logic (Whitelist)', () => {
+    it('does not apply curved logic to customContour even with >8 points', () => {
+      const parts = explodeDetails([{
+        id: 'det-custom',
+        type: 'Стільниця',
+        shape: 'customContour', // NOT in whitelist
+        quantity: 1,
+        geometry: {}, // No specific geometry needed
+        thickness: 20,
+        points: Array.from({length: 20}).map((_, i) => ({x: i*10, y: i%2*10})), // 20 points!
+        fold: { sides: ['A'], size: 50, enabled: true }
+      }], mockAllowances);
+      
+      // curved parts are generated as sectors (many points), whereas straight parts are rectangles (4 points)
+      const hasCurvedParts = parts.some(p => p.edgeKind === 'fold' && p.points.length > 4);
+      expect(hasCurvedParts).toBe(false);
+    });
+
+    it('applies curved logic to Кругла', () => {
+      const parts = explodeDetails([{
+        id: 'det-round',
+        type: 'Стільниця',
+        shape: 'Кругла', // In whitelist
+        quantity: 1,
+        geometry: { diameter: 1000 },
+        thickness: 20,
+        fold: { sides: ['A'], size: 50, enabled: true }
+      }], mockAllowances);
+      
+      const hasCurvedParts = parts.some(p => p.edgeKind === 'fold' && p.points.length > 4);
+      expect(hasCurvedParts).toBe(true);
+    });
+
+    it('does not apply curved logic to Прямокутна even with >8 points', () => {
+      const parts = explodeDetails([{
+        id: 'det-rect',
+        type: 'Стільниця',
+        shape: 'Прямокутна', // NOT in whitelist
+        quantity: 1,
+        geometry: { width: 1000, height: 600 },
+        thickness: 20,
+        points: Array.from({length: 12}).map((_, i) => ({x: i*10, y: i%2*10})), // 12 points!
+        fold: { sides: ['A'], size: 50, enabled: true }
+      }], mockAllowances);
+      
+      const hasCurvedParts = parts.some(p => p.edgeKind === 'fold' && p.points.length > 4);
+      expect(hasCurvedParts).toBe(false);
+    });
+  });
 });

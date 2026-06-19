@@ -5,6 +5,7 @@ import type { Placement, DetailPart, SlabInstance, Detail } from '../../domain/t
 import * as THREE from 'three';
 import { Vector2 } from 'three';
 import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
+import { buildAssemblyGroups } from '../../engines/grouping3d';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUIStore } from '../../store/useStore';
 
@@ -100,8 +101,13 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
       let start = { x: 0, y: 0 };
       let end = { x: 0, y: 0 };
       
+      const explicitSegment = mainPart.sideSegments?.[part.edgeSide];
       const index = SIDE_SEGMENT_INDEXES[mainPart.shape]?.[part.edgeSide];
-      if (index !== undefined && mainPart.points && mainPart.points.length > index) {
+      
+      if (explicitSegment) {
+        start = explicitSegment.start;
+        end = explicitSegment.end;
+      } else if (index !== undefined && mainPart.points && mainPart.points.length > index) {
         start = mainPart.points[index];
         end = mainPart.points[(index + 1) % mainPart.points.length];
       } else {
@@ -249,7 +255,13 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
   // Combine base layout rotation with any edge-specific rotation
   const finalQuaternion = quaternion.clone().multiply(baseQuaternion);
   
-  const meshPos: [number, number, number] = localPosOffset ? [localPosOffset[0], localPosOffset[1], localPosOffset[2]] : [posX - 1.5 - originOffset[0], posY - originOffset[1], posZ - 0.8 - originOffset[2]];
+  const meshPos: [number, number, number] = localPosOffset 
+    ? [localPosOffset[0], localPosOffset[1], localPosOffset[2]] 
+    : [
+        posX - 1.5 - originOffset[0], 
+        posY - originOffset[1], 
+        posZ - 0.8 - originOffset[2]
+      ];
   
 
   return (
@@ -392,7 +404,8 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
   const initialY = thickness / 2;
   const initialZ = (baseY + mainPart.height / 2) * s - 0.8;
 
-  const transform = mainPlacement.transform3d;
+  // TODO: [10.07.2026] Remove assemblyTransform completely. This is a temporary fallback for existing projects.
+  const transform = mainPlacement.transform3d ?? (mainPlacement as any).assemblyTransform;
   const position: [number, number, number] = transform ? [transform.x, transform.y, transform.z] : [initialX, initialY, initialZ];
   const rotation: [number, number, number] = transform ? [transform.rx, transform.ry, transform.rz] : [0, 0, 0];
   const originOffset: [number, number, number] = [initialX, initialY, initialZ];
@@ -515,7 +528,6 @@ function CaptureController({ onCaptureReady, contentRef }: { onCaptureReady?: (s
   }, [gl, camera, scene, contentRef, onCaptureReady]); 
   return null;
 }
-
 export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900 rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode }: { className?: string, onCaptureReady?: (snaps: string[]) => void, isCaptureMode?: boolean } = {}) {
   const project = useProjectStore((state) => state.project);
   const parts = useProjectStore((state) => state.parts);
@@ -525,68 +537,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
   const contentRef = React.useRef<THREE.Group | null>(null);
 
   const groups = useMemo(() => {
-     const handledPlacementIds = new Set<string>();
-     const grouped: { mainPlacement: Placement, mainPart: DetailPart, foldPlacements: Placement[], isSink?: boolean }[] = [];
-     
-     // 1. Handle Sinks
-     const sinkDetailIds = new Set(parts.filter(p => p.type?.includes('Мийка') || p.name?.includes('мийки')).map(p => p.detailId));
-     
-     sinkDetailIds.forEach(id => {
-         const sinkParts = parts.filter(p => p.detailId === id);
-         const sinkPlacements = project.placements.filter(pl => sinkParts.some(p => p.id === pl.partId));
-         
-         if (sinkPlacements.length > 0) {
-             const anchorPart = sinkParts.find(p => p.textureGroupAnchor) || sinkParts.find(p => p.name.includes('дно')) || sinkParts[0];
-             const anchorPlacement = sinkPlacements.find(pl => pl.partId === anchorPart.id) || sinkPlacements[0];
-             
-             const folds = sinkPlacements.filter(pl => pl.id !== anchorPlacement.id);
-             
-             grouped.push({
-                 mainPlacement: anchorPlacement,
-                 mainPart: anchorPart,
-                 foldPlacements: folds,
-                 isSink: true
-             });
-             
-             sinkPlacements.forEach(pl => handledPlacementIds.add(pl.id));
-         }
-     });
-
-     // 2. Handle standard parts
-     const mainPlacements = project.placements.filter(p => {
-         if (handledPlacementIds.has(p.id)) return false;
-         return parts.find(part => part.id === p.partId)?.isMain;
-     });
-     
-     mainPlacements.forEach(mainP => {
-        const mainPart = parts.find(part => part.id === mainP.partId);
-        
-        let folds: Placement[] = [];
-        if (is3dGroupingEnabled) {
-            folds = project.placements.filter(p => {
-               if (handledPlacementIds.has(p.id)) return false;
-               const pPart = parts.find(part => part.id === p.partId);
-               return pPart && !pPart.isMain && mainPart && pPart.parentLabel === mainPart.parentLabel;
-            });
-        }
-        
-        handledPlacementIds.add(mainP.id);
-        folds.forEach(f => handledPlacementIds.add(f.id));
-        grouped.push({ mainPlacement: mainP, mainPart, foldPlacements: folds, isSink: false });
-     });
-
-     // 3. Unhandled placements
-     const unhandled = project.placements.filter(p => !handledPlacementIds.has(p.id));
-     unhandled.forEach(p => {
-        grouped.push({
-           mainPlacement: p,
-           mainPart: parts.find(part => part.id === p.partId),
-           foldPlacements: [],
-           isSink: false
-        });
-     });
-
-     return grouped;
+     return buildAssemblyGroups(parts, project.placements, is3dGroupingEnabled);
   }, [project.placements, parts, is3dGroupingEnabled]);
 
   return (

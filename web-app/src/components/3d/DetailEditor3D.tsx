@@ -9,6 +9,7 @@ export function DetailEditor3D() {
   const project = useProjectStore((s) => s.project);
   const parts = useProjectStore((s) => s.parts);
   const updatePlacement3dTransform = useProjectStore((s) => s.updatePlacement3dTransform);
+  const [localValues, setLocalValues] = React.useState<Record<string, string>>({});
 
   if (!selectedId) return null;
 
@@ -43,8 +44,22 @@ export function DetailEditor3D() {
   const toDeg = (rad: number) => Math.round((rad || 0) * (180 / Math.PI));
   const fromDeg = (deg: number) => deg * (Math.PI / 180);
 
-  const handleChange = (axis: 'x'|'y'|'z'|'rx'|'ry'|'rz', value: number) => {
-    updatePlacement3dTransform(selectedId, { ...transform, [axis]: value });
+  const handleChange = (axis: 'x'|'y'|'z'|'rx'|'ry'|'rz', rawValue: string) => {
+    setLocalValues(prev => ({ ...prev, [axis]: rawValue }));
+    const parsed = parseFloat(rawValue);
+    
+    if (!isNaN(parsed)) {
+      const finalValue = axis.startsWith('r') ? fromDeg(parsed) : fromMm(parsed);
+      updatePlacement3dTransform(selectedId, { ...transform, [axis]: finalValue });
+    }
+  };
+
+  const handleBlur = (axis: string) => {
+    setLocalValues(prev => {
+      const next = { ...prev };
+      delete next[axis];
+      return next;
+    });
   };
 
   return (
@@ -72,15 +87,15 @@ export function DetailEditor3D() {
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <span className="text-xs text-red-500 font-bold w-3">X</span>
-              <input type="number" step="1" value={toMm(transform.x)} onChange={e => handleChange('x', fromMm(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="text" inputMode="decimal" value={localValues['x'] !== undefined ? localValues['x'] : toMm(transform.x)} onChange={e => handleChange('x', e.target.value)} onBlur={() => handleBlur('x')} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-green-500 font-bold w-3">Y</span>
-              <input type="number" step="1" value={toMm(transform.y)} onChange={e => handleChange('y', fromMm(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="text" inputMode="decimal" value={localValues['y'] !== undefined ? localValues['y'] : toMm(transform.y)} onChange={e => handleChange('y', e.target.value)} onBlur={() => handleBlur('y')} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-blue-500 font-bold w-3">Z</span>
-              <input type="number" step="1" value={toMm(transform.z)} onChange={e => handleChange('z', fromMm(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="text" inputMode="decimal" value={localValues['z'] !== undefined ? localValues['z'] : toMm(transform.z)} onChange={e => handleChange('z', e.target.value)} onBlur={() => handleBlur('z')} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
           </div>
         </div>
@@ -90,15 +105,15 @@ export function DetailEditor3D() {
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <span className="text-xs text-red-500 font-bold w-3">X</span>
-              <input type="number" step="1" value={toDeg(transform.rx)} onChange={e => handleChange('rx', fromDeg(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="text" inputMode="decimal" value={localValues['rx'] !== undefined ? localValues['rx'] : toDeg(transform.rx)} onChange={e => handleChange('rx', e.target.value)} onBlur={() => handleBlur('rx')} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-green-500 font-bold w-3">Y</span>
-              <input type="number" step="1" value={toDeg(transform.ry)} onChange={e => handleChange('ry', fromDeg(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="text" inputMode="decimal" value={localValues['ry'] !== undefined ? localValues['ry'] : toDeg(transform.ry)} onChange={e => handleChange('ry', e.target.value)} onBlur={() => handleBlur('ry')} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-blue-500 font-bold w-3">Z</span>
-              <input type="number" step="1" value={toDeg(transform.rz)} onChange={e => handleChange('rz', fromDeg(parseFloat(e.target.value) || 0))} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
+              <input type="text" inputMode="decimal" value={localValues['rz'] !== undefined ? localValues['rz'] : toDeg(transform.rz)} onChange={e => handleChange('rz', e.target.value)} onBlur={() => handleBlur('rz')} className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-blue-500" />
             </div>
           </div>
         </div>

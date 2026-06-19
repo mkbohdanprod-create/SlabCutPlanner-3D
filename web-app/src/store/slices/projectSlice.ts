@@ -438,7 +438,7 @@ export const createProjectSlice: StateCreator<
     set((state) => {
       const placement = state.project.placements.find(p => p.id === placementId);
       if (placement) {
-        placement.assemblyTransform = transform;
+        placement.transform3d = transform;
       }
       // do not refresh conflicts or bump IDs for 3d view rotation
       state.project.updatedAt = new Date().toISOString();
@@ -449,7 +449,7 @@ export const createProjectSlice: StateCreator<
   reset3dAssembly: () => {
     set((state) => {
       state.project.placements.forEach(p => {
-        p.assemblyTransform = undefined;
+        p.transform3d = undefined;
       });
       state.project.updatedAt = new Date().toISOString();
     });
