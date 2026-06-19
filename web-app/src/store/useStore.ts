@@ -15,6 +15,8 @@ interface UIState {
   setTransformMode: (mode: 'translate' | 'rotate') => void;
   selectedId3d: string | null;
   setSelectedId3d: (id: string | null) => void;
+  showEdges: boolean;
+  setShowEdges: (show: boolean) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -30,4 +32,6 @@ export const useUIStore = create<UIState>((set) => ({
   setTransformMode: (transformMode) => set({ transformMode }),
   selectedId3d: null,
   setSelectedId3d: (selectedId3d) => set({ selectedId3d }),
+  showEdges: true,
+  setShowEdges: (showEdges) => set({ showEdges }),
 }));

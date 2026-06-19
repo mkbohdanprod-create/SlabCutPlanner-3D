@@ -1,6 +1,6 @@
 import React, { Suspense, useMemo, useState, useEffect, useLayoutEffect } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, Environment, Grid, Center, ContactShadows, TransformControls , useTexture } from '@react-three/drei';
+import { OrbitControls, Environment, Grid, Center, ContactShadows, TransformControls , useTexture, Edges } from '@react-three/drei';
 import type { Placement, DetailPart, SlabInstance, Detail } from '../../domain/types';
 import * as THREE from 'three';
 import { Vector2 } from 'three';
@@ -84,6 +84,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
 
   const placements = useProjectStore((state) => state.project.placements);
   const textureLayouts = useProjectStore((state) => state.project.textureLayouts);
+  const showEdges = useUIStore((state) => state.showEdges);
   const layout = textureLayouts.find((l) => l.partId === part.id);
   const sourceX = layout?.sourceX ?? layout?.x ?? 0;
   const sourceY = layout?.sourceY ?? layout?.y ?? 0;
@@ -278,6 +279,7 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
         }
       }}
     >
+      {showEdges && <Edges color="black" threshold={15} />}
       {clonedTexture ? (
         <>
           <meshStandardMaterial 
@@ -543,7 +545,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
   return (
     <div className={className}>
       <Canvas camera={{ position: [0, 5, 8], fov: 50 }} shadows onPointerMissed={() => setSelectedId(null)}>
-        <color attach="background" args={['#0f172a']} />
+        <color attach="background" args={['#b2c6ce']} />
         
         <ambientLight intensity={0.5} />
           <directionalLight 
@@ -575,26 +577,26 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
             </group>
           </Center>
 
-          <ContactShadows 
-            position={[0, -0.5, 0]} 
-            opacity={0.4} 
-            scale={10} 
-            blur={2} 
-            far={4} 
-          />
-          
-          <Grid 
-            infiniteGrid 
-            fadeDistance={20} 
-            sectionColor="#475569" 
-            cellColor="#334155" 
-            position={[0, -0.5, 0]} 
-          />
+
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow raycast={() => null}>
+            <planeGeometry args={[500, 500]} />
+            <meshStandardMaterial color="#c8c8c8" />
+          </mesh>
+          <axesHelper args={[50]} position={[0, -0.49, 0]} />
           <OrbitControls makeDefault minPolarAngle={0} maxPolarAngle={Math.PI / 2.1} />
           {isCaptureMode && <CaptureController onCaptureReady={onCaptureReady} contentRef={contentRef} />}
       </Canvas>
-      <div className="absolute top-4 left-4 text-white text-sm bg-black/50 px-3 py-1 rounded">
-        3D Перегляд (Drag to rotate, Scroll to zoom)
+      <div className="absolute top-4 left-4 text-white text-sm bg-black/50 px-3 py-1 rounded flex items-center gap-4 z-10">
+        <span>3D Перегляд</span>
+        <label className="flex items-center gap-2 cursor-pointer pointer-events-auto">
+          <input 
+            type="checkbox" 
+            checked={useUIStore(s => s.showEdges)} 
+            onChange={(e) => useUIStore.getState().setShowEdges(e.target.checked)} 
+            className="w-4 h-4"
+          />
+          Показувати контури
+        </label>
       </div>
     </div>
   );
