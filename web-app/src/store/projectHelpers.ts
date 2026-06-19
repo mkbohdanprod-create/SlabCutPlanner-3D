@@ -1,10 +1,26 @@
 import type { DetailPart, Placement, Project } from '../domain/types';
-import { DEFAULT_ALLOWANCES } from '../domain/defaults';
+import { DEFAULT_ALLOWANCES, defaultCommercialQuoteSettings } from '../domain/defaults';
 import { explodeDetails } from '../engines/geometry';
 import { detectConflicts } from '../engines/packing';
 
 export function normalizeProject(project: Project): Project {
-  return { ...project, uiLanguage: project.uiLanguage ?? 'uk', textureFrames: project.textureFrames ?? [], manualDimensions: project.manualDimensions ?? [], allowances: { ...DEFAULT_ALLOWANCES, ...(project.allowances ?? {}) } };
+  return { 
+    ...project, 
+    uiLanguage: project.uiLanguage ?? 'uk', 
+    textureFrames: project.textureFrames ?? [], 
+    manualDimensions: project.manualDimensions ?? [], 
+    allowances: { ...DEFAULT_ALLOWANCES, ...(project.allowances ?? {}) },
+    commercialQuote: {
+      ...defaultCommercialQuoteSettings,
+      ...(project.commercialQuote ?? {}),
+      edgePrices: {
+        ...defaultCommercialQuoteSettings.edgePrices,
+        ...(project.commercialQuote?.edgePrices ?? {}),
+      },
+      manualLines: project.commercialQuote?.manualLines ?? [],
+      lineOverrides: project.commercialQuote?.lineOverrides ?? {},
+    }
+  };
 }
 
 export function calcStatus(project: Project, placements: Placement[]) {

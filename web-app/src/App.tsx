@@ -14,6 +14,7 @@ import { LanguageDomTranslator } from './components/ui/LanguageDomTranslator';
 import { useAuth } from './components/auth/AuthContext';
 import { LoginModal } from './components/auth/LoginModal';
 import { ProjectsDashboard } from './components/ui/ProjectsDashboard';
+import { CommercialQuoteDialog } from './components/ui/CommercialQuoteDialog';
 
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
@@ -27,6 +28,7 @@ function App() {
   const { user, signOut } = useAuth();
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isProjectsOpen, setIsProjectsOpen] = useState(false);
+  const [isQuoteOpen, setIsQuoteOpen] = useState(false);
 
   useEffect(() => {
     initialize().catch(console.error);
@@ -97,6 +99,13 @@ function App() {
             <HeaderToolbar />
             <div className="h-8 w-px bg-slate-200 mx-2"></div>
             
+            <button
+              onClick={() => setIsQuoteOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
+            >
+              Комерційна пропозиція
+            </button>
+            
             {user && (
               <button
                 onClick={() => setIsProjectsOpen(true)}
@@ -140,6 +149,7 @@ function App() {
       
       <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
       <ProjectsDashboard isOpen={isProjectsOpen} onClose={() => setIsProjectsOpen(false)} />
+      <CommercialQuoteDialog open={isQuoteOpen} onClose={() => setIsQuoteOpen(false)} />
 
       {/* Main Content Workspace */}
       <main className="flex-1 min-h-0 overflow-hidden flex p-4 gap-4">

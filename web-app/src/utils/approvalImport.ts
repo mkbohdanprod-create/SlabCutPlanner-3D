@@ -2,6 +2,8 @@ import JSZip from 'jszip';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import * as XLSX from 'xlsx';
 import { referenceData } from '../domain/defaults';
+// verbatimModuleSyntax: true (GitHub tsconfig) — типи МАЮТЬ імпортуватись через `import type`,
+// інакше Vite/HMR падає білим екраном (SyntaxError), хоч tsc у старій конфізі мовчав.
 import type { DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, EdgeProfileType, MaterialType, Point } from '../domain/types';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
@@ -16,7 +18,7 @@ const SHAPE_U = referenceData.detailShapes[2] as DetailShape;
 const SHAPE_CIRCLE = referenceData.detailShapes[3] as DetailShape;
 const SHAPE_ELLIPSE = referenceData.detailShapes[4] as DetailShape;
 export const APPROVAL_IMPORT_PIPELINE_VERSION = 'approval-import-v2' as const;
-export const APPROVAL_IMPORT_BUILD_ID = 'approval-v2-20260610-002' as const;
+export const APPROVAL_IMPORT_BUILD_ID = 'approval-v2-20260617-reviewable-drawing-geometry' as const;
 
 export type ApprovalSpecRow = {
   side: string;
@@ -30,12 +32,30 @@ export type ApprovalDimensionLabel = {
   side: string;
   value: number;
   source: string;
+  confidence?: number;
+  sourceBox?: { x: number; y: number; width: number; height: number };
 };
 
 export type ApprovalImportStatus = 'OK' | 'Needs review' | 'Error';
-export type ApprovalGeometrySource = 'pdf-vector' | 'image-contour' | 'none';
+export type ApprovalGeometrySource = 'pdf-vector' | 'image-contour' | 'spec-generated' | 'none';
 export type ApprovalShapeMode = 'customContour' | 'rectangle' | 'none';
-export type ApprovalDimensionsSource = 'drawing-labels' | 'spec-calibrated' | 'visual-area' | 'none';
+export type ApprovalDimensionsSource =
+  | 'drawing-labels'
+  | 'drawing-ocr'
+  | 'drawing-labels+drawing-ocr'
+  | 'drawing-labels+spec-table'
+  | 'drawing-ocr+spec-table'
+  | 'drawing-labels+drawing-ocr+spec-table'
+  | 'spec-table'
+  | 'none';
+
+export type ApprovalImportJoint = {
+  id: string;
+  type: 'vertical' | 'horizontal' | 'diagonal45' | 'pointToPoint';
+  start: Point;
+  end: Point;
+  source: 'detected' | 'manual';
+};
 
 export type ApprovalImportItem = {
   id: string;
@@ -64,6 +84,7 @@ export type ApprovalImportItem = {
   quantity: number;
   jointVertical?: boolean;
   jointHorizontal?: boolean;
+  joints?: ApprovalImportJoint[];
   sizeSource: 'drawing' | 'none';
   pipelineVersion: typeof APPROVAL_IMPORT_PIPELINE_VERSION;
   geometrySource: ApprovalGeometrySource;
@@ -77,7 +98,7 @@ export type ApprovalImportItem = {
   warnings: string[];
   importStatus: ApprovalImportStatus;
   debug: {
-    sourceSize: { width: number; height: number; source: 'drawing' | 'none' };
+    sourceSize: { width: number; height: number; source: 'drawing' | 'specification' | 'area-fallback' | 'none' };
     drawing?: { width: number; height: number; area: number };
     sourcePage?: number;
     sourceImageRegion?: { x: number; y: number; width: number; height: number };
@@ -115,7 +136,13 @@ export type ApprovalImportDebugDump = {
     productName: string;
     sourcePage: number | null;
     sourceImageRegion: { x: number; y: number; width: number; height: number } | null;
-    detectedDimensions: Array<{ label: string; valueMm: number; rawText: string }>;
+    detectedDimensions: Array<{
+      label: string;
+      valueMm: number;
+      rawText: string;
+      confidence?: number;
+      sourceBox?: { x: number; y: number; width: number; height: number };
+    }>;
     detectedSpecificationRows: Array<{ side: string; type: string; height: number; width: number; form: string }>;
     detectedGeometry: {
       source: ApprovalGeometrySource;
@@ -150,14 +177,36 @@ export type ApprovalImportDebugDump = {
 type ApprovalDrawingGeometry = {
   points: Point[];
   holes: Point[][];
+  jointLines?: ApprovalImportJoint[];
   width: number;
   height: number;
   area: number;
   sourcePage?: number;
   sourceProductNumber?: number;
+  sourcePageTopRatio?: number;
   sourceBounds: { minX: number; minY: number; maxX: number; maxY: number };
   sourceImage?: string;
   sourceImageBounds?: { minX: number; minY: number; maxX: number; maxY: number };
+  sourceDimensions?: ApprovalDimensionLabel[];
+  sourceDimensionsOcrStatus?: 'skipped-text-layer' | 'ok' | 'no-match' | 'error';
+  sourceDimensionsOcrText?: string;
+  sourceDimensionsOcrError?: string;
+};
+
+type ApprovalProductAnchor = {
+  number: number;
+  pageNumber: number;
+  topRatio: number;
+  globalTop: number;
+};
+
+type ApprovalPositionedTextItem = {
+  text: string;
+  pageNumber: number;
+  rasterX: number;
+  rasterY: number;
+  rasterWidth: number;
+  rasterHeight: number;
 };
 
 function normalizeText(value: string) {
@@ -262,11 +311,29 @@ function inferEdgeProfile(value = ''): EdgeProfileType {
   return 'straight_edge';
 }
 
-function approvalSideToAppSide(side: string, shape: DetailShape) {
+function approvalSideToAppSide(side: string, _shape: DetailShape) {
   const normalized = side.toUpperCase();
-  const map: Record<string, string> = { A: 'B', B: 'C', C: 'D', D: 'A' };
-  if (shape === SHAPE_RECT) return map[normalized] ?? normalized;
-  return map[normalized] ?? normalized;
+  return normalized;
+}
+
+function approvalSpecRowText(row: ApprovalSpecRow) {
+  return `${row.elementType} ${row.profile}`.toLocaleLowerCase('uk-UA');
+}
+
+function isApprovalFoldRow(row: ApprovalSpecRow) {
+  return /підвор|підгин|fold|miter/u.test(approvalSpecRowText(row));
+}
+
+function isApprovalThickeningRow(row: ApprovalSpecRow) {
+  return /опуск|потовщ|підклей|thicken|drop/u.test(approvalSpecRowText(row));
+}
+
+function isApprovalLegRow(row: ApprovalSpecRow) {
+  return /нога|опор|leg|support/u.test(approvalSpecRowText(row));
+}
+
+function isApprovalEdgeRow(row: ApprovalSpecRow) {
+  return /крайк|кром|фаск|радіус|r2|edge|bullnose|sharknose/u.test(approvalSpecRowText(row));
 }
 
 function cleanProductName(value: string, productNumber: number) {
@@ -281,11 +348,15 @@ function cleanProductName(value: string, productNumber: number) {
 }
 
 function isFoldOrThickening(row: ApprovalSpecRow) {
-  return /підвор|підгин|fold|miter|опуск|потовщ|підклей|thicken/iu.test(`${row.elementType} ${row.profile}`);
+  return isApprovalFoldRow(row) || isApprovalThickeningRow(row);
 }
 
 function isEdgeRow(row: ApprovalSpecRow) {
-  return /крайк|кром|фаск|радіус|r2|edge|bullnose|sharknose/iu.test(`${row.elementType} ${row.profile}`);
+  return isApprovalEdgeRow(row);
+}
+
+function isWallPanelRow(row: ApprovalSpecRow) {
+  return /стінова\s+панель|РЎС‚С–РЅРѕРІР°\s+РїР°РЅРµР»СЊ|wall\s*panel/iu.test(`${row.elementType} ${row.profile}`);
 }
 
 function parseSpecRows(lines: string[], start: number, end: number): ApprovalSpecRow[] {
@@ -335,6 +406,7 @@ function normalizeSourceSide(value: string) {
     .replace('\u0412', 'B')
     .replace('\u0421', 'C')
     .replace('\u0415', 'E')
+    .replace('\u041d', 'H')
     .replace('\u0406', 'I')
     .replace('\u0420\u0452', 'A')
     .replace('\u0420\u2019', 'B')
@@ -343,23 +415,327 @@ function normalizeSourceSide(value: string) {
     .replace('\u0420\u2020', 'I');
 }
 
-function parseDimensionLabels(lines: string[], start: number, end: number): ApprovalDimensionLabel[] {
+const APPROVAL_DIMENSION_LABEL_PATTERN_SOURCE = String.raw`(?:^|[^\p{L}\d])(A|B|C|D|E|F|G|H|I|\u0410|\u0412|\u0421|\u0415|\u041d|\u0406|\u0420\u0452|\u0420\u2019|\u0420\u040E|\u0420\u2022|\u0420\u2020)\s*=?\s*([0-9][0-9\s\u00a0]{1,8}(?:[,.]\d+)?)\s*(?:мм|\u0420\u0458\u0420\u0458|mm)?(?:$|[^\p{L}\d])`;
+
+function parseDimensionLabelSampleEntries(
+  samples: Array<{
+    text: string;
+    sourcePrefix?: string;
+    confidence?: number;
+    sourceBox?: { x: number; y: number; width: number; height: number };
+  }>,
+): ApprovalDimensionLabel[] {
   const dimensions: ApprovalDimensionLabel[] = [];
   const seen = new Set<string>();
-  const labelPattern = new RegExp(String.raw`(?:^|[^\p{L}\d])(A|B|C|D|E|F|G|H|I|\u0410|\u0412|\u0421|\u0415|\u0406|\u0420\u0452|\u0420\u2019|\u0420\u040E|\u0420\u2022|\u0420\u2020)\s*=?\s*([0-9][0-9\s\u00a0]{1,8}(?:[,.]\d+)?)\s*(?:\u0420\u0458\u0420\u0458|mm)?(?:$|[^\p{L}\d])`, 'giu');
-  lines.slice(start, end).forEach((line) => {
+  const labelPattern = new RegExp(APPROVAL_DIMENSION_LABEL_PATTERN_SOURCE, 'giu');
+  samples.forEach((sample) => {
+    const line = sample.text;
     let match: RegExpExecArray | null;
+    labelPattern.lastIndex = 0;
     while ((match = labelPattern.exec(line))) {
       const side = normalizeSourceSide(match[1]);
       const value = parseNumber(match[2]);
       if (!/^[A-I]$/u.test(side) || value < 80) continue;
-      const key = `${side}:${value}:${line}`;
+      const raw = (match[0] || line).trim();
+      const key = `${side}:${value}:${raw}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      dimensions.push({ side, value, source: line });
+      dimensions.push({
+        side,
+        value,
+        source: sample.sourcePrefix ? `${sample.sourcePrefix}: ${raw}` : line,
+        confidence: sample.confidence,
+        sourceBox: sample.sourceBox,
+      });
     }
   });
   return dimensions;
+}
+
+function parseDimensionLabelSamples(samples: string[], sourcePrefix = ''): ApprovalDimensionLabel[] {
+  return parseDimensionLabelSampleEntries(samples.map((text) => ({ text, sourcePrefix })));
+}
+
+function parseDimensionLabels(lines: string[], start: number, end: number): ApprovalDimensionLabel[] {
+  return parseDimensionLabelSamples(lines.slice(start, end));
+}
+
+function uniqueDimensionLabelsBySide(labels: Array<ApprovalDimensionLabel | undefined>) {
+  const result: ApprovalDimensionLabel[] = [];
+  const seen = new Set<string>();
+  labels.forEach((label) => {
+    if (!label) return;
+    const side = normalizeSourceSide(label.side);
+    if (!/^[A-I]$/u.test(side) || seen.has(side)) return;
+    seen.add(side);
+    result.push({ ...label, side });
+  });
+  return result;
+}
+
+function positionedTextItemsForRaster(
+  items: Array<{ str?: string; transform?: unknown; width?: number; height?: number }>,
+  pageNumber: number,
+  viewport: { width: number; height: number },
+  raster: { width: number; height: number },
+): ApprovalPositionedTextItem[] {
+  return items
+    .map((item) => {
+      const text = normalizeText(item.str ?? '');
+      const transform = Array.isArray(item.transform) ? item.transform : [];
+      const x = Number(transform[4]);
+      const y = Number(transform[5]);
+      if (!text || !Number.isFinite(x) || !Number.isFinite(y) || viewport.width <= 0 || viewport.height <= 0) return undefined;
+      const itemWidth = Number(item.width) || Math.max(1, text.length * 4);
+      const itemHeight = Number(item.height) || Math.abs(Number(transform[3])) || 8;
+      const top = viewport.height - y;
+      return {
+        text,
+        pageNumber,
+        rasterX: (x / viewport.width) * raster.width,
+        rasterY: (top / viewport.height) * raster.height,
+        rasterWidth: Math.max(1, (itemWidth / viewport.width) * raster.width),
+        rasterHeight: Math.max(1, (itemHeight / viewport.height) * raster.height),
+      };
+    })
+    .filter(Boolean) as ApprovalPositionedTextItem[];
+}
+
+function extractDimensionsNearDrawingText(
+  items: ApprovalPositionedTextItem[],
+  drawing: ApprovalDrawingGeometry,
+): ApprovalDimensionLabel[] {
+  if (!items.length) return [];
+  const width = drawing.sourceBounds.maxX - drawing.sourceBounds.minX;
+  const height = drawing.sourceBounds.maxY - drawing.sourceBounds.minY;
+  const margin = Math.max(80, Math.min(420, Math.max(width, height) * 0.28));
+  const nearby = items
+    .filter((item) => (
+      item.rasterX + item.rasterWidth >= drawing.sourceBounds.minX - margin
+      && item.rasterX <= drawing.sourceBounds.maxX + margin
+      && item.rasterY + item.rasterHeight >= drawing.sourceBounds.minY - margin
+      && item.rasterY <= drawing.sourceBounds.maxY + margin
+    ))
+    .sort((first, second) => (
+      (first.rasterY + first.rasterHeight / 2) - (second.rasterY + second.rasterHeight / 2)
+      || first.rasterX - second.rasterX
+    ));
+  if (!nearby.length) return [];
+
+  const rowTolerance = Math.max(10, Math.min(28, Math.max(...nearby.map((item) => item.rasterHeight)) * 1.6));
+  const rows: ApprovalPositionedTextItem[][] = [];
+  nearby.forEach((item) => {
+    const centerY = item.rasterY + item.rasterHeight / 2;
+    const row = rows.find((entry) => {
+      const rowCenter = entry.reduce((sum, rowItem) => sum + rowItem.rasterY + rowItem.rasterHeight / 2, 0) / entry.length;
+      return Math.abs(rowCenter - centerY) <= rowTolerance;
+    });
+    if (row) row.push(item);
+    else rows.push([item]);
+  });
+
+  const samples: string[] = [];
+  rows.forEach((row) => {
+    const texts = row.sort((first, second) => first.rasterX - second.rasterX).map((item) => item.text).filter(Boolean);
+    if (!texts.length) return;
+    samples.push(texts.join(' '), texts.join(''));
+    for (let start = 0; start < texts.length; start += 1) {
+      for (let end = start + 1; end <= Math.min(texts.length, start + 5); end += 1) {
+        const window = texts.slice(start, end);
+        samples.push(window.join(' '), window.join(''));
+      }
+    }
+  });
+
+  return uniqueDimensionLabelsBySide(parseDimensionLabelSamples(samples, 'pdf drawing text'));
+}
+
+const APPROVAL_OCR_LANG_PATH = 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng/4.0.0_best_int';
+const APPROVAL_OCR_SCALE = 2;
+
+type ApprovalOcrWorker = {
+  setParameters: (params: Record<string, unknown>) => Promise<unknown>;
+  recognize: (image: string, options?: Record<string, unknown>, output?: Record<string, boolean>) => Promise<{ data?: unknown }>;
+  terminate: () => Promise<unknown>;
+};
+
+let approvalOcrWorkerPromise: Promise<ApprovalOcrWorker> | undefined;
+
+async function approvalOcrWorker() {
+  if (!approvalOcrWorkerPromise) {
+    approvalOcrWorkerPromise = (async () => {
+      console.warn('[APPROVAL_DEBUG] Starting OCR Worker initialization...');
+      const tesseract = await import('tesseract.js');
+      console.warn('[APPROVAL_DEBUG] tesseract.js imported');
+      const worker = await tesseract.createWorker('eng', tesseract.OEM.LSTM_ONLY, {
+        langPath: APPROVAL_OCR_LANG_PATH,
+        cacheMethod: 'write',
+        logger: () => {},
+      }) as ApprovalOcrWorker;
+      await worker.setParameters({
+        tessedit_pageseg_mode: tesseract.PSM.SPARSE_TEXT,
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789=.,- ',
+        preserve_interword_spaces: '1',
+        user_defined_dpi: '300',
+      });
+      console.warn('[APPROVAL_DEBUG] OCR Worker ready');
+      return worker;
+    })().catch((error) => {
+      console.error('[APPROVAL_DEBUG] OCR Worker failed', error);
+      approvalOcrWorkerPromise = undefined;
+      throw error;
+    });
+  }
+  return approvalOcrWorkerPromise;
+}
+
+function hasHorizontalAndVerticalDimensionLabels(dimensions: ApprovalDimensionLabel[]) {
+  const orientations = new Set(dimensions.map((dimension) => sourceSideOrientation(dimension.side)).filter(Boolean));
+  return orientations.has('horizontal') && orientations.has('vertical');
+}
+
+function shouldRunDrawingDimensionOcr(dimensions: ApprovalDimensionLabel[]) {
+  return dimensions.length < 2 || !hasHorizontalAndVerticalDimensionLabels(dimensions);
+}
+
+function ocrLineEntriesFromPageData(
+  data: unknown,
+  cropBounds: { minX: number; minY: number; maxX: number; maxY: number },
+): Array<{
+  text: string;
+  sourcePrefix: string;
+  confidence?: number;
+  sourceBox?: { x: number; y: number; width: number; height: number };
+}> {
+  const entries: Array<{
+    text: string;
+    sourcePrefix: string;
+    confidence?: number;
+    sourceBox?: { x: number; y: number; width: number; height: number };
+  }> = [];
+  const page = data as {
+    text?: string;
+    blocks?: Array<{
+      paragraphs?: Array<{
+        lines?: Array<{
+          text?: string;
+          confidence?: number;
+          bbox?: { x0: number; y0: number; x1: number; y1: number };
+          words?: Array<{
+            text?: string;
+            confidence?: number;
+            bbox?: { x0: number; y0: number; x1: number; y1: number };
+          }>;
+        }>;
+      }>;
+    }> | null;
+  };
+
+  const sourceBoxFromBbox = (bbox?: { x0: number; y0: number; x1: number; y1: number }) => {
+    if (!bbox) return undefined;
+    return {
+      x: cropBounds.minX + bbox.x0 / APPROVAL_OCR_SCALE,
+      y: cropBounds.minY + bbox.y0 / APPROVAL_OCR_SCALE,
+      width: Math.max(1, (bbox.x1 - bbox.x0) / APPROVAL_OCR_SCALE),
+      height: Math.max(1, (bbox.y1 - bbox.y0) / APPROVAL_OCR_SCALE),
+    };
+  };
+  const unionBox = (boxes: Array<{ x0: number; y0: number; x1: number; y1: number } | undefined>) => {
+    const valid = boxes.filter(Boolean) as Array<{ x0: number; y0: number; x1: number; y1: number }>;
+    if (!valid.length) return undefined;
+    return {
+      x0: Math.min(...valid.map((box) => box.x0)),
+      y0: Math.min(...valid.map((box) => box.y0)),
+      x1: Math.max(...valid.map((box) => box.x1)),
+      y1: Math.max(...valid.map((box) => box.y1)),
+    };
+  };
+  const pushEntry = (
+    text: string,
+    confidence?: number,
+    bbox?: { x0: number; y0: number; x1: number; y1: number },
+  ) => {
+    const normalized = normalizeText(text);
+    if (!normalized) return;
+    entries.push({
+      text: normalized,
+      sourcePrefix: 'drawing-ocr',
+      confidence,
+      sourceBox: sourceBoxFromBbox(bbox),
+    });
+  };
+
+  if (page.text) {
+    page.text.split(/\n+/).forEach((line) => pushEntry(line));
+  }
+  page.blocks?.forEach((block) => {
+    block.paragraphs?.forEach((paragraph) => {
+      paragraph.lines?.forEach((line) => {
+        pushEntry(line.text ?? '', line.confidence, line.bbox);
+        const words = (line.words ?? []).filter((word) => normalizeText(word.text ?? ''));
+        if (!words.length) return;
+        const texts = words.map((word) => normalizeText(word.text ?? ''));
+        pushEntry(texts.join(' '), line.confidence, unionBox(words.map((word) => word.bbox)));
+        pushEntry(texts.join(''), line.confidence, unionBox(words.map((word) => word.bbox)));
+        for (let start = 0; start < texts.length; start += 1) {
+          for (let end = start + 1; end <= Math.min(texts.length, start + 5); end += 1) {
+            const slice = words.slice(start, end);
+            const window = slice.map((word) => normalizeText(word.text ?? ''));
+            pushEntry(window.join(' '), line.confidence, unionBox(slice.map((word) => word.bbox)));
+            pushEntry(window.join(''), line.confidence, unionBox(slice.map((word) => word.bbox)));
+          }
+        }
+      });
+    });
+  });
+
+  return entries;
+}
+
+async function extractDimensionsNearDrawingOcr(
+  image: { width: number; height: number; data: Uint8ClampedArray | Uint8Array },
+  drawing: ApprovalDrawingGeometry,
+  existingDimensions: ApprovalDimensionLabel[],
+): Promise<{
+  dimensions: ApprovalDimensionLabel[];
+  status: ApprovalDrawingGeometry['sourceDimensionsOcrStatus'];
+  text?: string;
+  error?: string;
+}> {
+  if (!shouldRunDrawingDimensionOcr(existingDimensions)) {
+    return { dimensions: [], status: 'skipped-text-layer' };
+  }
+  const crop = approvalRasterCropDataUrl(image, drawing.sourceBounds, {
+    marginRatio: 0.36,
+    preprocessForOcr: true,
+    scale: APPROVAL_OCR_SCALE,
+  });
+  if (!crop) {
+    return { dimensions: [], status: 'error', error: 'Drawing OCR crop could not be created.' };
+  }
+
+  try {
+    console.warn(`[APPROVAL_DEBUG] Running OCR for crop ${crop.bounds.width}x${crop.bounds.height}`);
+    const worker = await approvalOcrWorker();
+    console.warn(`[APPROVAL_DEBUG] Worker retrieved, recognizing...`);
+    const result = await worker.recognize(crop.image, {}, { text: true, blocks: true });
+    console.warn(`[APPROVAL_DEBUG] OCR finished for crop`);
+    const data = result?.data;
+    const entries = ocrLineEntriesFromPageData(data, crop.bounds);
+    const dimensions = uniqueDimensionLabelsBySide(parseDimensionLabelSampleEntries(entries));
+    const text = (data as { text?: unknown } | undefined)?.text;
+    return {
+      dimensions,
+      status: dimensions.length ? 'ok' : 'no-match',
+      text: typeof text === 'string' ? text : undefined,
+    };
+  } catch (error) {
+    return {
+      dimensions: [],
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function inferShape(rows: ApprovalSpecRow[], name = '') {
@@ -385,22 +761,95 @@ function snapApprovalVisualDimension(value: number) {
   return roundToMillimeters(value, 10);
 }
 
-function areaFallbackSizeFromDrawing(drawing: ApprovalDrawingGeometry, area: number) {
-  const scale = Math.sqrt((area * 1_000_000) / Math.max(1, drawing.area));
-  let width = Math.max(1, Math.round(drawing.width * scale));
-  let height = Math.max(1, Math.round(drawing.height * scale));
-  const snappedHeight = snapApprovalVisualDimension(height);
-  if (snappedHeight && Math.abs(snappedHeight - height) <= 5) {
-    height = snappedHeight;
-    width = Math.max(1, Math.round((area * 1_000_000) / height));
-  } else {
-    const snappedWidth = snapApprovalVisualDimension(width);
-    if (snappedWidth && Math.abs(snappedWidth - width) <= 5) {
-      width = snappedWidth;
-      height = Math.max(1, Math.round((area * 1_000_000) / width));
+function areaFallbackSizeFromDrawing(drawing: ApprovalDrawingGeometry, area: number, maxAreaDivisor = 1) {
+  const naturalDimensionScore = (value: number) => {
+    if (value % 100 === 0) return 0;
+    if (value % 50 === 0) return 0.04;
+    if (value % 10 === 0) return 0.08;
+    if (value % 5 === 0) return 0.16;
+    return 0.34;
+  };
+  const areaConsistentCandidate = (candidateArea: number) => {
+    const targetMm2 = candidateArea * 1_000_000;
+    const aspect = drawing.width / Math.max(1, drawing.height);
+    if (!Number.isFinite(targetMm2) || targetMm2 <= 0 || !Number.isFinite(aspect) || aspect <= 0) return undefined;
+    const naturalHeight = Math.sqrt(targetMm2 / aspect);
+    const minHeight = Math.max(80, Math.floor(naturalHeight * 0.65));
+    const maxHeight = Math.min(6000, Math.ceil(naturalHeight * 1.35));
+    let best: { width: number; height: number; score: number } | undefined;
+    const scoreCandidate = (width: number, height: number) => {
+      if (width < 80 || width > 10000 || height < 80 || height > 6000) return undefined;
+      const areaScore = Math.abs(width * height - targetMm2) / targetMm2;
+      const aspectScore = Math.abs((width / height) - aspect) / Math.max(0.1, aspect);
+      const naturalScore = (naturalDimensionScore(width) + naturalDimensionScore(height)) * 0.02;
+      return areaScore * 2.5 + aspectScore * 0.85 + naturalScore;
+    };
+    const consider = (width: number, height: number, relaxed = false) => {
+      const score = scoreCandidate(width, height);
+      if (score === undefined) return;
+      if (!best || score < best.score || (relaxed && score <= best.score + 0.08)) {
+        best = { width, height, score };
+      }
+    };
+    for (let height = minHeight; height <= maxHeight; height += 1) {
+      consider(Math.max(1, Math.round(targetMm2 / height)), height);
     }
+    const snappedHeights = new Set<number>();
+    if (best) {
+      snappedHeights.add(best.height);
+      snappedHeights.add(roundToMillimeters(best.height, 5));
+      snappedHeights.add(roundToMillimeters(best.height, 10));
+      if (Math.abs(best.height - 600) <= 12) snappedHeights.add(600);
+      if (maxAreaDivisor > 1 && drawing.height > drawing.width && best.height >= 520 && best.height <= 680) snappedHeights.add(600);
+    }
+    snappedHeights.forEach((height) => {
+      const isPanelHeightSnap = maxAreaDivisor > 1 && drawing.height > drawing.width && height === 600;
+      if (!best || (!isPanelHeightSnap && Math.abs(height - best.height) > 12)) return;
+      const rawWidth = targetMm2 / height;
+      consider(Math.round(rawWidth), height, true);
+      if (height <= 100) consider(roundToMillimeters(rawWidth, 5), height, true);
+    });
+    return best;
+  };
+  const candidateForArea = (candidateArea: number) => {
+    const areaCandidate = areaConsistentCandidate(candidateArea);
+    if (areaCandidate && areaCandidate.score < 0.8) {
+      return { width: areaCandidate.width, height: areaCandidate.height };
+    }
+    const scale = Math.sqrt((candidateArea * 1_000_000) / Math.max(1, drawing.area));
+    let width = Math.max(1, Math.round(drawing.width * scale));
+    let height = Math.max(1, Math.round(drawing.height * scale));
+    const snappedHeight = snapApprovalVisualDimension(height);
+    if (snappedHeight && Math.abs(snappedHeight - height) <= 5) {
+      height = snappedHeight;
+      width = Math.max(1, Math.round((candidateArea * 1_000_000) / height));
+    } else {
+      const snappedWidth = snapApprovalVisualDimension(width);
+      if (snappedWidth && Math.abs(snappedWidth - width) <= 5) {
+        width = snappedWidth;
+        height = Math.max(1, Math.round((candidateArea * 1_000_000) / width));
+      }
+    }
+    return { width, height };
+  };
+  const candidateScore = (candidate: { width: number; height: number; score?: number }, divisor: number) => {
+    const panelHeightScore = maxAreaDivisor > 1 && drawing.height > drawing.width
+      ? Math.abs(candidate.height - 600) / 600 * 0.35
+      : 0;
+    return (candidate.score ?? 0)
+      + panelHeightScore
+      + (divisor - 1) * 0.04;
+  };
+  if (maxAreaDivisor > 1) {
+    const candidates = Array.from({ length: maxAreaDivisor }, (_, index) => {
+      const divisor = index + 1;
+      const candidate = candidateForArea(area / divisor);
+      return { ...candidate, divisor, score: candidateScore(candidate, divisor) };
+    }).filter((candidate) => candidate.width >= 80 && candidate.height >= 80);
+    const best = candidates.sort((first, second) => first.score - second.score)[0];
+    if (best) return { width: best.width, height: best.height };
   }
-  return { width, height };
+  return candidateForArea(area);
 }
 
 /** Provides a non-destructive size for products whose drawing dimensions are not extractable as PDF text. */
@@ -967,35 +1416,51 @@ function featuresFromRows(rows: ApprovalSpecRow[], shape: DetailShape) {
   const foldSides: string[] = [];
   const thickeningSizes: number[] = [];
   const foldSizes: number[] = [];
+  const thickeningSideSizes: Record<string, number> = {};
+  const thickeningSideLengths: Record<string, number> = {};
+  const foldSideSizes: Record<string, number> = {};
+  const foldSideLengths: Record<string, number> = {};
   const edgeProfiles: EdgeProfileSelection = {};
 
   rows.forEach((row) => {
     const side = approvalSideToAppSide(row.side, shape);
-    const text = `${row.elementType} ${row.profile}`.toLocaleLowerCase('uk-UA');
-    if (/підвор|підгин|fold|miter/u.test(text)) {
+    const text = approvalSpecRowText(row);
+    if (isApprovalFoldRow(row)) {
       foldSides.push(side);
-      if (row.height > 0) foldSizes.push(row.height);
+      if (row.height > 0) {
+        foldSizes.push(row.height);
+        foldSideSizes[side] = Math.round(row.height);
+      }
+      if (row.width > 0) foldSideLengths[side] = Math.round(row.width);
       return;
     }
-    if (/опуск|потовщ|підклей|thicken/u.test(text)) {
+    if (isApprovalThickeningRow(row)) {
       thickeningSides.push(side);
-      if (row.height > 0) thickeningSizes.push(row.height);
+      if (row.height > 0) {
+        thickeningSizes.push(row.height);
+        thickeningSideSizes[side] = Math.round(row.height);
+      }
+      if (row.width > 0) thickeningSideLengths[side] = Math.round(row.width);
       return;
     }
-    if (/крайк|кром|фаск|радіус|r2|edge|bullnose|sharknose/u.test(text)) {
+    if (isApprovalEdgeRow(row)) {
       edgeProfiles[side] = inferEdgeProfile(text);
     }
   });
 
   const thickening: EdgeFeature = {
     enabled: thickeningSides.length > 0,
-    size: Math.max(40, Math.round(thickeningSizes[0] ?? 40)),
+    size: Math.max(1, Math.round(thickeningSizes[0] ?? 40)),
     sides: [...new Set(thickeningSides)],
+    sideSizes: thickeningSideSizes,
+    sideLengths: thickeningSideLengths,
   };
   const fold: EdgeFeature = {
     enabled: foldSides.length > 0,
-    size: Math.max(100, Math.round(foldSizes[0] ?? 100)),
+    size: Math.max(1, Math.round(foldSizes[0] ?? 100)),
     sides: [...new Set(foldSides)],
+    sideSizes: foldSideSizes,
+    sideLengths: foldSideLengths,
   };
   return { thickening, fold, edgeProfiles };
 }
@@ -1007,6 +1472,109 @@ function jointsFromLines(lines: string[], start: number, end: number) {
     jointVertical: /стик[^.]{0,40}вертик|вертик[^.]{0,40}стик|vertical[^.]{0,40}joint/iu.test(block),
     jointHorizontal: /стик[^.]{0,40}горизонт|горизонт[^.]{0,40}стик|horizontal[^.]{0,40}joint/iu.test(block),
   };
+}
+
+function isPointInsideApprovalPolygon(point: Point, polygon: Point[]) {
+  let inside = false;
+  for (let index = 0, previousIndex = polygon.length - 1; index < polygon.length; previousIndex = index, index += 1) {
+    const current = polygon[index];
+    const previous = polygon[previousIndex];
+    const crosses = (current.y > point.y) !== (previous.y > point.y);
+    if (crosses) {
+      const x = ((previous.x - current.x) * (point.y - current.y)) / Math.max(0.0001, previous.y - current.y) + current.x;
+      if (point.x < x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function clipApprovalJointToPolygon(joint: ApprovalImportJoint, polygon: Point[]): ApprovalImportJoint | undefined {
+  if (polygon.length < 3) return undefined;
+  const dx = joint.end.x - joint.start.x;
+  const dy = joint.end.y - joint.start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 2) return undefined;
+  const values = [0, 1];
+  const cross = (ax: number, ay: number, bx: number, by: number) => ax * by - ay * bx;
+  polygon.forEach((edgeStart, index) => {
+    const edgeEnd = polygon[(index + 1) % polygon.length];
+    const ex = edgeEnd.x - edgeStart.x;
+    const ey = edgeEnd.y - edgeStart.y;
+    const denominator = cross(dx, dy, ex, ey);
+    if (Math.abs(denominator) < 0.001) return;
+    const sx = edgeStart.x - joint.start.x;
+    const sy = edgeStart.y - joint.start.y;
+    const t = cross(sx, sy, ex, ey) / denominator;
+    const u = cross(sx, sy, dx, dy) / denominator;
+    if (t >= -0.001 && t <= 1.001 && u >= -0.001 && u <= 1.001) values.push(Math.max(0, Math.min(1, t)));
+  });
+  const sorted = [...new Set(values.map((value) => Math.round(value * 10000) / 10000))].sort((a, b) => a - b);
+  let best: { startT: number; endT: number; length: number } | undefined;
+  for (let index = 0; index < sorted.length - 1; index += 1) {
+    const startT = sorted[index];
+    const endT = sorted[index + 1];
+    if (endT - startT < 0.001) continue;
+    const midT = (startT + endT) / 2;
+    const mid = { x: joint.start.x + dx * midT, y: joint.start.y + dy * midT };
+    if (!isPointInsideApprovalPolygon(mid, polygon)) continue;
+    const segmentLength = (endT - startT) * length;
+    if (!best || segmentLength > best.length) best = { startT, endT, length: segmentLength };
+  }
+  if (!best || best.length < 12) return undefined;
+  return {
+    ...joint,
+    start: { x: joint.start.x + dx * best.startT, y: joint.start.y + dy * best.startT },
+    end: { x: joint.start.x + dx * best.endT, y: joint.start.y + dy * best.endT },
+  };
+}
+
+function approvalDetectedJoints(
+  productNumber: number,
+  joints: ReturnType<typeof jointsFromLines>,
+  drawingGeometry: ReturnType<typeof scaleApprovalDrawingGeometry> | undefined,
+): ApprovalImportJoint[] {
+  if (!drawingGeometry?.customPoints?.length) return [];
+  const result: ApprovalImportJoint[] = (drawingGeometry.jointLines ?? []).map((joint, index) => ({
+    ...joint,
+    id: joint.id || `approval_${productNumber}_joint_detected_${index + 1}`,
+    source: 'detected',
+  }));
+  if (joints.jointVertical) {
+    const x = drawingGeometry.width / 2;
+    result.push({
+      id: `approval_${productNumber}_joint_vertical`,
+      type: 'vertical',
+      start: { x, y: 0 },
+      end: { x, y: drawingGeometry.height },
+      source: 'detected',
+    });
+  }
+  if (joints.jointHorizontal) {
+    const y = drawingGeometry.height / 2;
+    result.push({
+      id: `approval_${productNumber}_joint_horizontal`,
+      type: 'horizontal',
+      start: { x: 0, y },
+      end: { x: drawingGeometry.width, y },
+      source: 'detected',
+    });
+  }
+  const clipped = result
+    .map((joint) => clipApprovalJointToPolygon(joint, drawingGeometry.customPoints))
+    .filter(Boolean) as ApprovalImportJoint[];
+  const seen = new Set<string>();
+  return clipped.filter((joint) => {
+    const key = [
+      joint.type,
+      Math.round(joint.start.x / 5),
+      Math.round(joint.start.y / 5),
+      Math.round(joint.end.x / 5),
+      Math.round(joint.end.y / 5),
+    ].join(':');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function materialDefaultThickness(material?: MaterialType) {
@@ -1050,6 +1618,233 @@ function layoutItems(items: Omit<ApprovalImportItem, 'sourceX' | 'sourceY'>[]): 
   });
 }
 
+function emptyApprovalFeature(size: number): EdgeFeature {
+  return { enabled: false, size, sides: [] };
+}
+
+function productNameLooksLeg(value: string) {
+  return /нога|опор|leg|support/u.test(value.toLocaleLowerCase('uk-UA'));
+}
+
+function rectangleApprovalPoints(width: number, height: number): Point[] {
+  return [
+    { x: 0, y: 0 },
+    { x: width, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height },
+  ];
+}
+
+function generatedLegItemFromRow(
+  parentProduct: { number: number; name: string },
+  row: ApprovalSpecRow,
+  index: number,
+): Omit<ApprovalImportItem, 'sourceX' | 'sourceY'> | undefined {
+  const width = Math.round(row.width);
+  const height = Math.round(row.height);
+  if (width < 80 || height < 80) return undefined;
+  const side = normalizeSourceSide(row.side);
+  const points = rectangleApprovalPoints(width, height);
+  const dimensions = uniqueDimensionLabels([
+    dimensionLabel('A', width, `specification leg ${side}`),
+    dimensionLabel('C', width, `specification leg ${side}`),
+    dimensionLabel('B', height, `specification leg ${side}`),
+    dimensionLabel('D', height, `specification leg ${side}`),
+  ]);
+  return {
+    id: `approval_${parentProduct.number}_leg_${side || index + 1}`,
+    sourceProductNumber: parentProduct.number * 1000 + index + 1,
+    name: `Нога по стороні ${side || '?'} (${parentProduct.name})`,
+    type: TYPE_COUNTERTOP,
+    shape: SHAPE_RECT,
+    width,
+    height,
+    innerHorizontal: undefined,
+    innerVertical: undefined,
+    innerCutWidth: undefined,
+    innerCutDepth: undefined,
+    innerCutOffset: undefined,
+    customPoints: points,
+    customHoles: [],
+    sideSegments: buildApprovalSideSegments(points, SHAPE_RECT),
+    sourcePreview: undefined,
+    area: (width * height) / 1_000_000,
+    quantity: 1,
+    jointVertical: undefined,
+    jointHorizontal: undefined,
+    sizeSource: 'none',
+    pipelineVersion: APPROVAL_IMPORT_PIPELINE_VERSION,
+    geometrySource: 'spec-generated',
+    shapeMode: 'customContour',
+    dimensionsSource: 'spec-table',
+    specSource: 'table',
+    thickening: emptyApprovalFeature(40),
+    fold: emptyApprovalFeature(100),
+    edgeProfiles: {},
+    dimensions,
+    warnings: ['Ногу створено з рядка специфікації, бо окремого креслення виробу не знайдено.'],
+    importStatus: 'OK',
+    debug: {
+      sourceSize: { width, height, source: 'none' },
+      drawing: undefined,
+      sourcePage: undefined,
+      sourceImageRegion: undefined,
+      mappedSides: ['A', 'B', 'C', 'D'],
+    },
+    rows: [row],
+  };
+}
+
+function sourceSideOrientation(side: string) {
+  const normalized = normalizeSourceSide(side);
+  if (/^[ACEGI]$/u.test(normalized)) return 'horizontal' as const;
+  if (/^[BDFH]$/u.test(normalized)) return 'vertical' as const;
+  return undefined;
+}
+
+function supplementDimensionsFromSpecRows(
+  drawingDimensions: ApprovalDimensionLabel[],
+  rows: ApprovalSpecRow[],
+) {
+  const dimensions = [...drawingDimensions];
+  const hasDrawingDimensions = drawingDimensions.some((dimension) => !dimension.source.startsWith('specification'));
+  const existingSides = new Set(dimensions.map((dimension) => normalizeSourceSide(dimension.side)));
+  const addDimension = (side: string, value: number, source: string) => {
+    if (!/^[A-I]$/u.test(side) || existingSides.has(side)) return;
+    const rounded = Math.round(value);
+    if (!Number.isFinite(rounded) || rounded < 80 || rounded > 8000) return;
+    dimensions.push({ side, value: rounded, source });
+    existingSides.add(side);
+  };
+  rows.forEach((row) => {
+    if (isWallPanelRow(row)) return;
+    if (isApprovalLegRow(row)) return;
+    if (!isEdgeRow(row) && !isFoldOrThickening(row)) return;
+    const side = normalizeSourceSide(row.side);
+    const value = Math.round(row.width);
+    addDimension(side, value, `specification fallback: ${side}=${value} мм`);
+  });
+  if (hasDrawingDimensions) return dimensions;
+  const bySide = dimensions.reduce<Record<string, number>>((result, dimension) => {
+    result[dimension.side] = Math.max(result[dimension.side] ?? 0, dimension.value);
+    return result;
+  }, {});
+  const derivedSource = (side: string, value: number) => `specification derived fallback: ${side}=${Math.round(value)} мм`;
+  if (bySide.C && bySide.D && bySide.E && bySide.F) {
+    addDimension('A', bySide.E + bySide.C + bySide.D, derivedSource('A', bySide.E + bySide.C + bySide.D));
+    addDimension('B', bySide.D + bySide.F, derivedSource('B', bySide.D + bySide.F));
+    addDimension('G', bySide.D, derivedSource('G', bySide.D));
+    addDimension('H', bySide.C, derivedSource('H', bySide.C));
+    addDimension('I', bySide.F, derivedSource('I', bySide.F));
+  } else if (bySide.B && bySide.C && bySide.D && bySide.E) {
+    addDimension('A', bySide.C + bySide.E, derivedSource('A', bySide.C + bySide.E));
+    addDimension('F', bySide.D + bySide.B, derivedSource('F', bySide.D + bySide.B));
+  } else if (bySide.D && bySide.E && bySide.F) {
+    const inferredC = Math.max(bySide.D, bySide.F);
+    addDimension('C', inferredC, derivedSource('C', inferredC));
+    addDimension('A', bySide.E + inferredC, derivedSource('A', bySide.E + inferredC));
+    addDimension('B', bySide.D + bySide.F, derivedSource('B', bySide.D + bySide.F));
+  }
+  return dimensions;
+}
+
+function dimensionsSourceFor(drawingDimensions: ApprovalDimensionLabel[], dimensions: ApprovalDimensionLabel[]): ApprovalDimensionsSource {
+  const specCount = dimensions.filter((dimension) => dimension.source.startsWith('specification')).length;
+  const hasOcr = dimensions.some((dimension) => dimension.source.startsWith('drawing-ocr'))
+    || drawingDimensions.some((dimension) => dimension.source.startsWith('drawing-ocr'));
+  const hasDrawingText = dimensions.some((dimension) => (
+    !dimension.source.startsWith('specification')
+    && !dimension.source.startsWith('drawing-ocr')
+  )) || drawingDimensions.some((dimension) => (
+    !dimension.source.startsWith('specification')
+    && !dimension.source.startsWith('drawing-ocr')
+  ));
+  if (hasDrawingText && hasOcr && specCount) return 'drawing-labels+drawing-ocr+spec-table';
+  if (hasDrawingText && hasOcr) return 'drawing-labels+drawing-ocr';
+  if (hasOcr && specCount) return 'drawing-ocr+spec-table';
+  if (hasOcr) return 'drawing-ocr';
+  if (hasDrawingText && specCount) return 'drawing-labels+spec-table';
+  if (hasDrawingText) return 'drawing-labels';
+  if (specCount) return 'spec-table';
+  return 'none';
+}
+
+function completeOppositeDimensionsFromLabels(
+  dimensions: ApprovalDimensionLabel[],
+  shape: DetailShape,
+) {
+  if (![SHAPE_RECT, SHAPE_CIRCLE, SHAPE_ELLIPSE].includes(shape)) return dimensions;
+  const bySide = dimensions.reduce<Record<string, ApprovalDimensionLabel | undefined>>((result, dimension) => {
+    result[normalizeSourceSide(dimension.side)] = dimension;
+    return result;
+  }, {});
+  const result = [...dimensions];
+  const addOpposite = (target: string, source: string) => {
+    if (bySide[target] || !bySide[source]) return;
+    const sourceDimension = bySide[source];
+    if (!sourceDimension || sourceDimension.source.startsWith('specification') || sourceDimension.source.startsWith('drawing contour side')) return;
+    const dimension = dimensionLabel(target, sourceDimension.value, `opposite side from ${source}`);
+    if (!dimension) return;
+    result.push(dimension);
+    bySide[target] = dimension;
+  };
+  addOpposite('C', 'A');
+  addOpposite('A', 'C');
+  addOpposite('B', 'D');
+  addOpposite('D', 'B');
+  if (shape === SHAPE_CIRCLE) {
+    const diameter = bySide.A?.value ?? bySide.B?.value ?? bySide.C?.value ?? bySide.D?.value;
+    if (diameter) {
+      ['A', 'B', 'C', 'D'].forEach((side) => {
+        if (!bySide[side]) {
+          const dimension = dimensionLabel(side, diameter, 'circle diameter from drawing label');
+          if (dimension) {
+            result.push(dimension);
+            bySide[side] = dimension;
+          }
+        }
+      });
+    }
+  }
+  return uniqueDimensionLabelsBySide(result);
+}
+
+function supplementDimensionsFromGeometry(
+  dimensions: ApprovalDimensionLabel[],
+  drawingGeometry: ReturnType<typeof scaleApprovalDrawingGeometry> | undefined,
+  shape: DetailShape,
+  options: { allowContourDimensions?: boolean } = {},
+) {
+  if (!options.allowContourDimensions) return dimensions;
+  if (!drawingGeometry) return dimensions;
+  const existingSides = new Set(dimensions.map((dimension) => normalizeSourceSide(dimension.side)));
+  const result = [...dimensions];
+  const addDimension = (side: string, value: number, source: string) => {
+    const normalizedSide = normalizeSourceSide(side);
+    const rounded = Math.round(value);
+    if (!/^[A-I]$/u.test(normalizedSide) || existingSides.has(normalizedSide)) return;
+    if (!Number.isFinite(rounded) || rounded < 80 || rounded > 8000) return;
+    result.push({ side: normalizedSide, value: rounded, source });
+    existingSides.add(normalizedSide);
+  };
+  if (shape === SHAPE_CIRCLE || shape === SHAPE_ELLIPSE) {
+    addDimension('A', drawingGeometry.width, 'drawing contour side: A');
+    addDimension('B', drawingGeometry.height, 'drawing contour side: B');
+    addDimension('C', drawingGeometry.width, 'drawing contour side: C');
+    addDimension('D', drawingGeometry.height, 'drawing contour side: D');
+    return result;
+  }
+  Object.entries(drawingGeometry.sideSegments ?? {}).forEach(([side, segment]) => {
+    addDimension(side, segmentLength(segment), `drawing contour side: ${side}`);
+  });
+  return result.sort((first, second) => first.side.localeCompare(second.side));
+}
+
+function dimensionsHaveHorizontalAndVertical(dimensions: ApprovalDimensionLabel[]) {
+  return dimensions.some((dimension) => sourceSideOrientation(dimension.side) === 'horizontal')
+    && dimensions.some((dimension) => sourceSideOrientation(dimension.side) === 'vertical');
+}
+
 function drawingSizeFromDimensionLabels(drawing: ApprovalDrawingGeometry | undefined, dimensions: ApprovalDimensionLabel[]) {
   if (!drawing?.points.length || !dimensions.length || drawing.width <= 0 || drawing.height <= 0) return undefined;
   const values = [...new Set(dimensions.map((dimension) => Math.round(dimension.value)).filter((value) => value >= 80 && value <= 8000))]
@@ -1057,20 +1852,32 @@ function drawingSizeFromDimensionLabels(drawing: ApprovalDrawingGeometry | undef
   if (!values.length) return undefined;
 
   const aspect = drawing.width / drawing.height;
+  const horizontalValues = dimensions
+    .filter((dimension) => sourceSideOrientation(dimension.side) === 'horizontal')
+    .map((dimension) => Math.round(dimension.value))
+    .filter((value) => value >= 80 && value <= 8000);
+  const verticalValues = dimensions
+    .filter((dimension) => sourceSideOrientation(dimension.side) === 'vertical')
+    .map((dimension) => Math.round(dimension.value))
+    .filter((value) => value >= 80 && value <= 8000);
+  const horizontal = horizontalValues.length ? Math.max(...horizontalValues) : undefined;
+  const vertical = verticalValues.length ? Math.max(...verticalValues) : undefined;
+  if (horizontal && vertical) return { width: horizontal, height: vertical, source: 'drawing' as const };
+  if (horizontal) return { width: horizontal, height: Math.max(1, Math.round(horizontal / aspect)), source: 'drawing' as const };
+  if (vertical) return { width: Math.max(1, Math.round(vertical * aspect)), height: vertical, source: 'drawing' as const };
+
   const chooseClosest = (target: number, forbidden?: number) => values
     .filter((value) => value !== forbidden)
     .sort((first, second) => Math.abs(first - target) - Math.abs(second - target))[0];
 
   if (aspect >= 1) {
     const width = values[0];
-    const height = chooseClosest(width / aspect, width);
-    if (!height) return undefined;
+    const height = chooseClosest(width / aspect, width) ?? Math.max(1, Math.round(width / aspect));
     return { width, height, source: 'drawing' as const };
   }
 
   const height = values[0];
-  const width = chooseClosest(height * aspect, height);
-  if (!width) return undefined;
+  const width = chooseClosest(height * aspect, height) ?? Math.max(1, Math.round(height * aspect));
   return { width, height, source: 'drawing' as const };
 }
 
@@ -1108,6 +1915,12 @@ function drawingForProduct(
   if (exact) {
     usedIndexes.add(exact.index);
     return exact.drawing;
+  }
+  const unnumbered = indexed.filter((entry) => !entry.drawing.sourceProductNumber);
+  const nextAvailable = unnumbered.find((entry) => entry.drawing.sourcePage && entry.drawing.sourceBounds);
+  if (nextAvailable) {
+    usedIndexes.add(nextAvailable.index);
+    return nextAvailable.drawing;
   }
   return undefined;
 }
@@ -1170,8 +1983,86 @@ function segmentLength(segment: { start: Point; end: Point }) {
   return Math.hypot(segment.end.x - segment.start.x, segment.end.y - segment.start.y);
 }
 
+const APPROVAL_SIDE_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+function removeCollinearApprovalPoints(points: Point[], tolerance = 0.75) {
+  if (points.length <= 3) return points;
+  return points.filter((point, index, list) => {
+    const previous = list[(index + list.length - 1) % list.length];
+    const next = list[(index + 1) % list.length];
+    const duplicate = Math.hypot(point.x - previous.x, point.y - previous.y) <= tolerance;
+    const cross = (point.x - previous.x) * (next.y - point.y) - (point.y - previous.y) * (next.x - point.x);
+    return !duplicate && Math.abs(cross) > tolerance;
+  });
+}
+
+function rotateApprovalPointsToTopLeft(points: Point[]) {
+  if (points.length < 2) return points;
+  const topY = Math.min(...points.map((point) => point.y));
+  const topTolerance = Math.max(3, (Math.max(...points.map((point) => point.y)) - topY) * 0.02);
+  const topIndexes = points
+    .map((point, index) => ({ point, index }))
+    .filter(({ point }) => Math.abs(point.y - topY) <= topTolerance)
+    .sort((first, second) => first.point.x - second.point.x);
+  const startIndex = (topIndexes[0] ?? points
+    .map((point, index) => ({ point, index }))
+    .sort((first, second) => first.point.y - second.point.y || first.point.x - second.point.x)[0]).index;
+  const rotated = [...points.slice(startIndex), ...points.slice(0, startIndex)];
+  const next = rotated[1];
+  const previous = rotated[rotated.length - 1];
+  const nextScore = (next.x - rotated[0].x) - Math.abs(next.y - rotated[0].y) * 0.25;
+  const previousScore = (previous.x - rotated[0].x) - Math.abs(previous.y - rotated[0].y) * 0.25;
+  return nextScore >= previousScore ? rotated : [rotated[0], ...rotated.slice(1).reverse()];
+}
+
+function sequentialApprovalSideSegments(points: Point[]) {
+  const cleaned = rotateApprovalPointsToTopLeft(removeCollinearApprovalPoints(points));
+  if (cleaned.length < 4) return undefined;
+  const bounds = cleaned.reduce((result, point) => ({
+    minX: Math.min(result.minX, point.x),
+    minY: Math.min(result.minY, point.y),
+    maxX: Math.max(result.maxX, point.x),
+    maxY: Math.max(result.maxY, point.y),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+  const minSide = Math.max(18, Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * 0.04);
+  const result: Record<string, { start: Point; end: Point }> = {};
+  cleaned.forEach((point, index) => {
+    const next = cleaned[(index + 1) % cleaned.length];
+    const length = Math.hypot(next.x - point.x, next.y - point.y);
+    if (length < minSide) return;
+    const label = APPROVAL_SIDE_LABELS[Object.keys(result).length];
+    if (!label) return;
+    result[label] = { start: point, end: next };
+  });
+  return Object.keys(result).length ? result : undefined;
+}
+
 function buildApprovalSideSegments(points: Point[], shape: DetailShape) {
   if (points.length < 4) return undefined;
+  const bounds = points.reduce((result, point) => ({
+    minX: Math.min(result.minX, point.x),
+    minY: Math.min(result.minY, point.y),
+    maxX: Math.max(result.maxX, point.x),
+    maxY: Math.max(result.maxY, point.y),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+  if (shape === SHAPE_CIRCLE || shape === SHAPE_ELLIPSE) {
+    return {
+      A: { start: { x: bounds.minX, y: bounds.minY }, end: { x: bounds.maxX, y: bounds.minY } },
+      B: { start: { x: bounds.maxX, y: bounds.minY }, end: { x: bounds.maxX, y: bounds.maxY } },
+      C: { start: { x: bounds.maxX, y: bounds.maxY }, end: { x: bounds.minX, y: bounds.maxY } },
+      D: { start: { x: bounds.minX, y: bounds.maxY }, end: { x: bounds.minX, y: bounds.minY } },
+    };
+  }
+  if (shape === SHAPE_RECT) {
+    return {
+      A: { start: { x: bounds.minX, y: bounds.minY }, end: { x: bounds.maxX, y: bounds.minY } },
+      B: { start: { x: bounds.maxX, y: bounds.minY }, end: { x: bounds.maxX, y: bounds.maxY } },
+      C: { start: { x: bounds.maxX, y: bounds.maxY }, end: { x: bounds.minX, y: bounds.maxY } },
+      D: { start: { x: bounds.minX, y: bounds.maxY }, end: { x: bounds.minX, y: bounds.minY } },
+    };
+  }
+  const sequential = sequentialApprovalSideSegments(points);
+  if (sequential) return sequential;
   const edges = points.map((point, index) => {
     const next = points[(index + 1) % points.length];
     const segment = { start: point, end: next };
@@ -1187,12 +2078,6 @@ function buildApprovalSideSegments(points: Point[], shape: DetailShape) {
   const horizontal = edges.filter((edge) => edge.horizontal);
   const vertical = edges.filter((edge) => edge.vertical);
   if (!horizontal.length || !vertical.length) return undefined;
-  const bounds = points.reduce((result, point) => ({
-    minX: Math.min(result.minX, point.x),
-    minY: Math.min(result.minY, point.y),
-    maxX: Math.max(result.maxX, point.x),
-    maxY: Math.max(result.maxY, point.y),
-  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
   const pick = (items: typeof edges, score: (item: typeof edges[number]) => number) => (
     [...items].sort((a, b) => score(a) - score(b) || b.length - a.length)[0]
   );
@@ -1252,19 +2137,237 @@ function buildApprovalSideSegments(points: Point[], shape: DetailShape) {
   return Object.keys(result).length ? result : undefined;
 }
 
-/** Traces the largest closed outline from a product drawing image embedded in the approval PDF. */
-function traceApprovalDrawingImage(image: { width: number; height: number; data: Uint8ClampedArray | Uint8Array }): ApprovalDrawingGeometry | undefined {
+function darkNeighborCount(mask: Uint8Array, width: number, height: number, x: number, y: number, radius: number) {
+  let count = 0;
+  for (let yy = Math.max(0, y - radius); yy <= Math.min(height - 1, y + radius); yy += 1) {
+    for (let xx = Math.max(0, x - radius); xx <= Math.min(width - 1, x + radius); xx += 1) {
+      count += mask[yy * width + xx] ? 1 : 0;
+    }
+  }
+  return count;
+}
+
+function removeSmallDarkArtifacts(mask: Uint8Array, width: number, height: number) {
+  const total = width * height;
+  const labels = new Uint8Array(total);
+  const result = new Uint8Array(total);
+  for (let start = 0; start < total; start += 1) {
+    if (!mask[start] || labels[start]) continue;
+    const stack = [start];
+    const pixels: number[] = [];
+    labels[start] = 1;
+    let minX = width;
+    let minY = height;
+    let maxX = 0;
+    let maxY = 0;
+    while (stack.length) {
+      const index = stack.pop() as number;
+      const x = index % width;
+      const y = Math.floor(index / width);
+      pixels.push(index);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      const neighbors = [
+        x > 0 ? index - 1 : -1,
+        x < width - 1 ? index + 1 : -1,
+        y > 0 ? index - width : -1,
+        y < height - 1 ? index + width : -1,
+      ];
+      neighbors.forEach((neighbor) => {
+        if (neighbor < 0 || labels[neighbor] || !mask[neighbor]) return;
+        labels[neighbor] = 1;
+        stack.push(neighbor);
+      });
+    }
+    const spanX = maxX - minX + 1;
+    const spanY = maxY - minY + 1;
+    const likelyContour = pixels.length >= 70 || Math.max(spanX, spanY) >= 34 || (spanX >= 14 && spanY >= 14);
+    if (!likelyContour) continue;
+    pixels.forEach((index) => {
+      result[index] = 1;
+    });
+  }
+  return result;
+}
+
+function approvalStructuralDarkMask(raw: Uint8Array, width: number, height: number) {
+  const total = width * height;
+  const structural = new Uint8Array(total);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      if (!raw[index]) continue;
+      const count3 = darkNeighborCount(raw, width, height, x, y, 1);
+      const count5 = darkNeighborCount(raw, width, height, x, y, 2);
+      if (count3 >= 5 || count5 >= 11) structural[index] = 1;
+    }
+  }
+  return removeSmallDarkArtifacts(structural, width, height);
+}
+
+function detectApprovalRasterJointLines(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  bounds: { minX: number; minY: number; maxX: number; maxY: number },
+): ApprovalImportJoint[] {
+  const localWidth = Math.max(1, bounds.maxX - bounds.minX + 1);
+  const localHeight = Math.max(1, bounds.maxY - bounds.minY + 1);
+  const darkAt = (x: number, y: number) => {
+    const globalX = bounds.minX + x;
+    const globalY = bounds.minY + y;
+    return globalX >= 0 && globalX < width && globalY >= 0 && globalY < height && mask[globalY * width + globalX] === 1;
+  };
+  const minVerticalSpan = Math.max(60, localHeight * 0.32);
+  const minHorizontalSpan = Math.max(60, localWidth * 0.32);
+  const candidates: ApprovalImportJoint[] = [];
+
+  const verticalColumns: Array<{ x: number; minY: number; maxY: number; count: number }> = [];
+  for (let x = 1; x < localWidth - 1; x += 1) {
+    let count = 0;
+    let minY = localHeight;
+    let maxY = 0;
+    for (let y = 1; y < localHeight - 1; y += 1) {
+      if (!darkAt(x, y)) continue;
+      count += 1;
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    const span = maxY - minY;
+    if (span >= minVerticalSpan && count >= span * 0.08 && count <= span * 0.72) {
+      verticalColumns.push({ x, minY, maxY, count });
+    }
+  }
+  const horizontalRows: Array<{ y: number; minX: number; maxX: number; count: number }> = [];
+  for (let y = 1; y < localHeight - 1; y += 1) {
+    let count = 0;
+    let minX = localWidth;
+    let maxX = 0;
+    for (let x = 1; x < localWidth - 1; x += 1) {
+      if (!darkAt(x, y)) continue;
+      count += 1;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+    }
+    const span = maxX - minX;
+    if (span >= minHorizontalSpan && count >= span * 0.08 && count <= span * 0.72) {
+      horizontalRows.push({ y, minX, maxX, count });
+    }
+  }
+  const addGroupedVertical = () => {
+    let group: typeof verticalColumns = [];
+    const flush = () => {
+      if (!group.length) return;
+      const x = Math.round(group.reduce((sum, entry) => sum + entry.x * entry.count, 0) / Math.max(1, group.reduce((sum, entry) => sum + entry.count, 0)));
+      const minY = Math.min(...group.map((entry) => entry.minY));
+      const maxY = Math.max(...group.map((entry) => entry.maxY));
+      if (maxY - minY >= minVerticalSpan) {
+        candidates.push({
+          id: `detected_joint_vertical_${candidates.length + 1}`,
+          type: 'vertical',
+          start: { x, y: minY },
+          end: { x, y: maxY },
+          source: 'detected',
+        });
+      }
+      group = [];
+    };
+    verticalColumns.forEach((entry) => {
+      if (group.length && entry.x - group[group.length - 1].x > 4) flush();
+      group.push(entry);
+    });
+    flush();
+  };
+  const addGroupedHorizontal = () => {
+    let group: typeof horizontalRows = [];
+    const flush = () => {
+      if (!group.length) return;
+      const y = Math.round(group.reduce((sum, entry) => sum + entry.y * entry.count, 0) / Math.max(1, group.reduce((sum, entry) => sum + entry.count, 0)));
+      const minX = Math.min(...group.map((entry) => entry.minX));
+      const maxX = Math.max(...group.map((entry) => entry.maxX));
+      if (maxX - minX >= minHorizontalSpan) {
+        candidates.push({
+          id: `detected_joint_horizontal_${candidates.length + 1}`,
+          type: 'horizontal',
+          start: { x: minX, y },
+          end: { x: maxX, y },
+          source: 'detected',
+        });
+      }
+      group = [];
+    };
+    horizontalRows.forEach((entry) => {
+      if (group.length && entry.y - group[group.length - 1].y > 4) flush();
+      group.push(entry);
+    });
+    flush();
+  };
+  addGroupedVertical();
+  addGroupedHorizontal();
+
+  type DiagonalBin = { count: number; minX: number; maxX: number; minY: number; maxY: number };
+  const addDiagonalCandidates = (kind: 'falling' | 'rising') => {
+    const bins = new Map<number, DiagonalBin>();
+    for (let y = 1; y < localHeight - 1; y += 1) {
+      for (let x = 1; x < localWidth - 1; x += 1) {
+        if (!darkAt(x, y)) continue;
+        const key = Math.round((kind === 'falling' ? y - x : y + x) / 4);
+        const current = bins.get(key) ?? { count: 0, minX: localWidth, maxX: 0, minY: localHeight, maxY: 0 };
+        current.count += 1;
+        current.minX = Math.min(current.minX, x);
+        current.maxX = Math.max(current.maxX, x);
+        current.minY = Math.min(current.minY, y);
+        current.maxY = Math.max(current.maxY, y);
+        bins.set(key, current);
+      }
+    }
+    [...bins.values()]
+      .map((entry) => ({
+        ...entry,
+        length: Math.hypot(entry.maxX - entry.minX, entry.maxY - entry.minY),
+      }))
+      .filter((entry) => (
+        entry.length >= Math.max(80, Math.min(localWidth, localHeight) * 0.32)
+        && Math.abs((entry.maxX - entry.minX) - (entry.maxY - entry.minY)) <= entry.length * 0.32
+        && entry.count >= entry.length * 0.06
+        && entry.count <= entry.length * 1.2
+      ))
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 1)
+      .forEach((entry) => {
+        candidates.push({
+          id: `detected_joint_diagonal_${candidates.length + 1}`,
+          type: 'diagonal45',
+          start: kind === 'falling' ? { x: entry.minX, y: entry.minY } : { x: entry.minX, y: entry.maxY },
+          end: kind === 'falling' ? { x: entry.maxX, y: entry.maxY } : { x: entry.maxX, y: entry.minY },
+          source: 'detected',
+        });
+      });
+  };
+  addDiagonalCandidates('falling');
+  addDiagonalCandidates('rising');
+
+  return candidates
+    .filter((joint) => Math.hypot(joint.end.x - joint.start.x, joint.end.y - joint.start.y) >= 40)
+    .slice(0, 4);
+}
+
+/** Traces closed product outlines from a drawing page image embedded in the approval PDF. */
+function traceApprovalDrawingImage(image: { width: number; height: number; data: Uint8ClampedArray | Uint8Array }): ApprovalDrawingGeometry[] {
   const { width, height, data } = image;
   const total = width * height;
   const channels = Math.max(1, Math.round(data.length / total));
-  const darkRaw = new Uint8Array(total);
+  const allDark = new Uint8Array(total);
   for (let index = 0; index < total; index += 1) {
     const offset = index * channels;
     const red = data[offset] ?? 255;
     const green = data[offset + 1] ?? red;
     const blue = data[offset + 2] ?? red;
-    if (red + green + blue < 420) darkRaw[index] = 1;
+    if (red + green + blue < 420) allDark[index] = 1;
   }
+  const darkRaw = approvalStructuralDarkMask(allDark, width, height);
 
   const dark = new Uint8Array(total);
   for (let y = 0; y < height; y += 1) {
@@ -1343,8 +2446,11 @@ function traceApprovalDrawingImage(image: { width: number; height: number; data:
     if (area >= 400) components.push({ id, area, minX, minY, maxX, maxY });
   }
 
-  const largest = components.sort((a, b) => b.area - a.area)[0];
-  if (!largest || largest.area < 2_000 || largest.maxX - largest.minX < 20 || largest.maxY - largest.minY < 20) return undefined;
+  const candidates = components
+    .filter((component) => component.area >= 2_000)
+    .filter((component) => component.maxX - component.minX >= 40 && component.maxY - component.minY >= 20)
+    .sort((a, b) => a.minY - b.minY || a.minX - b.minX);
+  if (!candidates.length) return [];
 
   const traceLoop = (componentId: number) => {
     const edgeMap = new Map<string, Point[]>();
@@ -1384,7 +2490,7 @@ function traceApprovalDrawingImage(image: { width: number; height: number; data:
     return loops.sort((a, b) => b.length - a.length)[0];
   };
 
-  const localLoop = (loop: Point[], bounds: typeof largest) => {
+  const localLoop = (loop: Point[], bounds: typeof candidates[number]) => {
     const reduced = simplifyApprovalPolyline([...loop, loop[0]], 2.5).slice(0, -1);
     return reduced.map((point) => ({
       x: point.x - bounds.minX,
@@ -1392,45 +2498,48 @@ function traceApprovalDrawingImage(image: { width: number; height: number; data:
     }));
   };
 
-  const outerLoop = traceLoop(largest.id);
-  if (!outerLoop?.length) return undefined;
-  const holes = components
-    .filter((component) => component.id !== largest.id && component.area >= 300 && component.area < largest.area * 0.55)
-    .filter((component) => (
-      component.minX > largest.minX
-      && component.maxX < largest.maxX
-      && component.minY > largest.minY
-      && component.maxY < largest.maxY
-    ))
-    .map((component) => traceLoop(component.id))
-    .filter(Boolean)
-    .map((loop) => orientPolygon(localLoop(loop as Point[], largest), false));
-  const points = orientPolygon(localLoop(outerLoop, largest), true);
-  const holeArea = holes.reduce((sum, hole) => sum + polygonArea(hole), 0);
-  const tracedWidth = Math.max(1, largest.maxX - largest.minX);
-  const tracedHeight = Math.max(1, largest.maxY - largest.minY);
-
-  return {
-    points,
-    holes,
-    width: tracedWidth,
-    height: tracedHeight,
-    area: Math.max(1, polygonArea(points) - holeArea),
-    sourceBounds: {
-      minX: largest.minX,
-      minY: largest.minY,
-      maxX: largest.maxX,
-      maxY: largest.maxY,
-    },
-  };
+  return candidates.flatMap((candidate) => {
+    const outerLoop = traceLoop(candidate.id);
+    if (!outerLoop?.length) return [];
+    const holes = components
+      .filter((component) => component.id !== candidate.id && component.area >= 300 && component.area < candidate.area * 0.55)
+      .filter((component) => (
+        component.minX > candidate.minX
+        && component.maxX < candidate.maxX
+        && component.minY > candidate.minY
+        && component.maxY < candidate.maxY
+      ))
+      .map((component) => traceLoop(component.id))
+      .filter(Boolean)
+      .map((loop) => orientPolygon(localLoop(loop as Point[], candidate), false));
+    const points = orientPolygon(localLoop(outerLoop, candidate), true);
+    const holeArea = holes.reduce((sum, hole) => sum + polygonArea(hole), 0);
+    const tracedWidth = Math.max(1, candidate.maxX - candidate.minX);
+    const tracedHeight = Math.max(1, candidate.maxY - candidate.minY);
+    return [{
+      points,
+      holes,
+      jointLines: detectApprovalRasterJointLines(darkRaw, width, height, candidate),
+      width: tracedWidth,
+      height: tracedHeight,
+      area: Math.max(1, polygonArea(points) - holeArea),
+      sourceBounds: {
+        minX: candidate.minX,
+        minY: candidate.minY,
+        maxX: candidate.maxX,
+        maxY: candidate.maxY,
+      },
+    }];
+  });
 }
 
 function approvalRasterCropDataUrl(
   image: { width: number; height: number; data: Uint8ClampedArray | Uint8Array },
   bounds: { minX: number; minY: number; maxX: number; maxY: number },
+  options: { marginRatio?: number; preprocessForOcr?: boolean; scale?: number } = {},
 ) {
   if (typeof document === 'undefined') return undefined;
-  const margin = Math.round(Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * 0.18);
+  const margin = Math.round(Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * (options.marginRatio ?? 0.18));
   const crop = {
     minX: Math.max(0, bounds.minX - margin),
     minY: Math.max(0, bounds.minY - margin),
@@ -1453,13 +2562,35 @@ function approvalRasterCropDataUrl(
       const red = image.data[sourceIndex] ?? 255;
       const green = image.data[sourceIndex + 1] ?? red;
       const blue = image.data[sourceIndex + 2] ?? red;
-      imageData.data[targetIndex] = red;
-      imageData.data[targetIndex + 1] = green;
-      imageData.data[targetIndex + 2] = blue;
+      if (options.preprocessForOcr) {
+        const gray = red * 0.299 + green * 0.587 + blue * 0.114;
+        const value = gray < 218 ? 0 : 255;
+        imageData.data[targetIndex] = value;
+        imageData.data[targetIndex + 1] = value;
+        imageData.data[targetIndex + 2] = value;
+      } else {
+        imageData.data[targetIndex] = red;
+        imageData.data[targetIndex + 1] = green;
+        imageData.data[targetIndex + 2] = blue;
+      }
       imageData.data[targetIndex + 3] = channels >= 4 ? image.data[sourceIndex + 3] ?? 255 : 255;
     }
   }
   context.putImageData(imageData, 0, 0);
+  const scale = Math.max(1, Math.min(4, Math.round(options.scale ?? 1)));
+  if (scale > 1) {
+    const scaledCanvas = document.createElement('canvas');
+    scaledCanvas.width = cropWidth * scale;
+    scaledCanvas.height = cropHeight * scale;
+    const scaledContext = scaledCanvas.getContext('2d');
+    if (!scaledContext) return undefined;
+    scaledContext.imageSmoothingEnabled = false;
+    scaledContext.drawImage(canvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+    return {
+      image: scaledCanvas.toDataURL('image/png'),
+      bounds: crop,
+    };
+  }
   return {
     image: canvas.toDataURL('image/png'),
     bounds: crop,
@@ -1523,6 +2654,169 @@ async function approvalRasterFromPdfImageObject(image: unknown): Promise<{ width
   return undefined;
 }
 
+function normalizeApprovalGeometryToSize(points: Point[], holes: Point[][], width: number, height: number, jointLines: ApprovalImportJoint[] = []) {
+  if (!points.length) return { customPoints: points, customHoles: holes, customJoints: jointLines };
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  const scaleX = width / Math.max(1, maxX - minX);
+  const scaleY = height / Math.max(1, maxY - minY);
+  const normalize = (point: Point) => ({
+    x: (point.x - minX) * scaleX,
+    y: (point.y - minY) * scaleY,
+  });
+  return {
+    customPoints: points.map(normalize),
+    customHoles: holes.map((hole) => hole.map(normalize)),
+    customJoints: jointLines.map((joint) => ({
+      ...joint,
+      start: normalize(joint.start),
+      end: normalize(joint.end),
+    })),
+  };
+}
+
+function snapApprovalGeometryToDimensions(points: Point[], holes: Point[][], width: number, height: number, dimensions: ApprovalDimensionLabel[] = []) {
+  const xTargets = new Set([0, width]);
+  const yTargets = new Set([0, height]);
+  dimensions.forEach((dimension) => {
+    const value = Math.round(dimension.value);
+    if (value > 0 && value < width) {
+      xTargets.add(value);
+      xTargets.add(width - value);
+    }
+    if (value > 0 && value < height) {
+      yTargets.add(value);
+      yTargets.add(height - value);
+    }
+  });
+  const snapValue = (value: number, targets: Set<number>) => {
+    const target = [...targets].sort((first, second) => Math.abs(first - value) - Math.abs(second - value))[0];
+    return target !== undefined && Math.abs(target - value) <= 24 ? target : value;
+  };
+  const snapPoint = (point: Point) => ({
+    x: snapValue(point.x, xTargets),
+    y: snapValue(point.y, yTargets),
+  });
+  const removeCollinear = (items: Point[]) => {
+    if (items.length <= 3) return items;
+    return items.filter((point, index, list) => {
+      const previous = list[(index + list.length - 1) % list.length];
+      const next = list[(index + 1) % list.length];
+      const duplicate = Math.hypot(point.x - previous.x, point.y - previous.y) <= 0.5;
+      const cross = (point.x - previous.x) * (next.y - point.y) - (point.y - previous.y) * (next.x - point.x);
+      return !duplicate && Math.abs(cross) > 0.5;
+    });
+  };
+  return {
+    customPoints: removeCollinear(points.map(snapPoint)),
+    customHoles: holes.map((hole) => removeCollinear(hole.map(snapPoint))),
+  };
+}
+
+function straightenApprovalOrthogonalContour(points: Point[]) {
+  if (points.length < 4 || points.length > 16) return points;
+  const edges = points.map((point, index) => {
+    const next = points[(index + 1) % points.length];
+    const dx = next.x - point.x;
+    const dy = next.y - point.y;
+    const length = Math.hypot(dx, dy);
+    const vertical = length > 12 && Math.abs(dx) <= Math.max(10, Math.abs(dy) * 0.12);
+    const horizontal = length > 12 && Math.abs(dy) <= Math.max(10, Math.abs(dx) * 0.12);
+    return { start: point, end: next, length, vertical, horizontal };
+  });
+  const longEdges = edges.filter((edge) => edge.length > 24);
+  if (!longEdges.length) return points;
+  const axisRatio = longEdges.filter((edge) => edge.vertical || edge.horizontal).length / longEdges.length;
+  if (axisRatio < 0.75) return points;
+  const cluster = (values: number[], tolerance: number) => {
+    const clusters: number[][] = [];
+    [...values].sort((a, b) => a - b).forEach((value) => {
+      const last = clusters[clusters.length - 1];
+      const center = last ? last.reduce((sum, item) => sum + item, 0) / last.length : 0;
+      if (!last || Math.abs(value - center) > tolerance) clusters.push([value]);
+      else last.push(value);
+    });
+    return clusters.map((items) => items.reduce((sum, item) => sum + item, 0) / items.length);
+  };
+  const tolerance = 24;
+  const xTargets = cluster(edges.filter((edge) => edge.vertical).flatMap((edge) => [edge.start.x, edge.end.x]), tolerance);
+  const yTargets = cluster(edges.filter((edge) => edge.horizontal).flatMap((edge) => [edge.start.y, edge.end.y]), tolerance);
+  const snap = (value: number, targets: number[]) => {
+    const target = [...targets].sort((first, second) => Math.abs(first - value) - Math.abs(second - value))[0];
+    return target !== undefined && Math.abs(target - value) <= tolerance ? target : value;
+  };
+  return points.map((point) => ({
+    x: snap(point.x, xTargets),
+    y: snap(point.y, yTargets),
+  }));
+}
+
+function pointDistanceToSegment(point: Point, start: Point, end: Point) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+  return Math.hypot(point.x - (start.x + dx * t), point.y - (start.y + dy * t));
+}
+
+function removeApprovalTextArtifactsFromContour(points: Point[], width: number, height: number, shape: DetailShape) {
+  if (shape === SHAPE_CIRCLE || shape === SHAPE_ELLIPSE || points.length <= 4) return points;
+  const smallEdge = Math.max(18, Math.min(90, Math.min(width, height) * 0.16));
+  let current = points;
+  for (let pass = 0; pass < 6; pass += 1) {
+    let changed = false;
+    const next = current.filter((point, index, list) => {
+      if (list.length <= 4) return true;
+      const previous = list[(index + list.length - 1) % list.length];
+      const following = list[(index + 1) % list.length];
+      const previousLength = Math.hypot(point.x - previous.x, point.y - previous.y);
+      const nextLength = Math.hypot(point.x - following.x, point.y - following.y);
+      const bridgeLength = Math.hypot(following.x - previous.x, following.y - previous.y);
+      const deviation = pointDistanceToSegment(point, previous, following);
+      const tinyDent = previousLength <= smallEdge
+        && nextLength <= smallEdge
+        && bridgeLength <= smallEdge * 1.9
+        && deviation <= smallEdge * 0.85;
+      if (tinyDent) changed = true;
+      return !tinyDent;
+    });
+    current = next;
+    if (!changed) break;
+  }
+  return current;
+}
+
+function approvalDrawingLooksRound(drawing: ApprovalDrawingGeometry | undefined) {
+  if (!drawing?.points.length || drawing.points.length < 8) return false;
+  const boxArea = Math.max(1, drawing.width * drawing.height);
+  const fillRatio = polygonArea(drawing.points) / boxArea;
+  const axisAlignedEdges = drawing.points.filter((point, index) => {
+    const next = drawing.points[(index + 1) % drawing.points.length];
+    return Math.abs(point.x - next.x) <= 1 || Math.abs(point.y - next.y) <= 1;
+  }).length;
+  return fillRatio > 0.58 && fillRatio < 0.9 && axisAlignedEdges <= drawing.points.length * 0.35;
+}
+
+function inferApprovalDrawingShape(
+  drawing: ApprovalDrawingGeometry | undefined,
+  dimensions: ApprovalDimensionLabel[],
+  rows: ApprovalSpecRow[],
+): DetailShape {
+  if (approvalDrawingLooksRound(drawing)) {
+    const aspect = drawing ? Math.max(drawing.width, drawing.height) / Math.max(1, Math.min(drawing.width, drawing.height)) : 1;
+    return aspect < 1.12 ? SHAPE_CIRCLE : SHAPE_ELLIPSE;
+  }
+  const sides = new Set([
+    ...dimensions.map((dimension) => dimension.side),
+    ...rows.map((row) => row.side),
+  ].map((side) => side.toUpperCase()));
+  if (['G', 'H', 'I'].some((side) => sides.has(side))) return SHAPE_U;
+  if (['E', 'F'].some((side) => sides.has(side))) return SHAPE_L;
+  return SHAPE_RECT;
+}
+
 /** Scales a traced approval drawing contour while preserving its PDF proportions. */
 function scaleApprovalDrawingGeometry(
   drawing: ApprovalDrawingGeometry | undefined,
@@ -1531,6 +2825,7 @@ function scaleApprovalDrawingGeometry(
   area: number,
   shape: DetailShape,
   preferTargetSize = true,
+  dimensions: ApprovalDimensionLabel[] = [],
 ) {
   if (!drawing?.points.length) return undefined;
   const sourcePreviewForScale = (scaleX: number, scaleY: number) => (
@@ -1547,14 +2842,24 @@ function scaleApprovalDrawingGeometry(
   if (preferTargetSize && width >= 80 && height >= 80 && drawing.width > 0 && drawing.height > 0) {
     const scaleX = width / drawing.width;
     const scaleY = height / drawing.height;
-    const customPoints = drawing.points.map((point) => ({ x: point.x * scaleX, y: point.y * scaleY }));
-    const customHoles = drawing.holes.map((hole) => hole.map((point) => ({ x: point.x * scaleX, y: point.y * scaleY })));
+    const scaledPoints = drawing.points.map((point) => ({ x: point.x * scaleX, y: point.y * scaleY }));
+    const scaledHoles = drawing.holes.map((hole) => hole.map((point) => ({ x: point.x * scaleX, y: point.y * scaleY })));
+    const scaledJoints = (drawing.jointLines ?? []).map((joint) => ({
+      ...joint,
+      start: { x: joint.start.x * scaleX, y: joint.start.y * scaleY },
+      end: { x: joint.end.x * scaleX, y: joint.end.y * scaleY },
+    }));
+    const targetWidth = Math.max(1, Math.round(width));
+    const targetHeight = Math.max(1, Math.round(height));
+    const normalized = normalizeApprovalGeometryToSize(scaledPoints, scaledHoles, targetWidth, targetHeight, scaledJoints);
+    const cleanedPoints = straightenApprovalOrthogonalContour(removeApprovalTextArtifactsFromContour(normalized.customPoints, targetWidth, targetHeight, shape));
     return {
-      width: Math.max(1, Math.round(width)),
-      height: Math.max(1, Math.round(height)),
-      customPoints,
-      customHoles,
-      sideSegments: buildApprovalSideSegments(customPoints, shape),
+      width: targetWidth,
+      height: targetHeight,
+      customPoints: cleanedPoints,
+      customHoles: normalized.customHoles,
+      jointLines: normalized.customJoints,
+      sideSegments: buildApprovalSideSegments(cleanedPoints, shape),
       sourcePreview: sourcePreviewForScale(scaleX, scaleY),
     };
   }
@@ -1567,14 +2872,24 @@ function scaleApprovalDrawingGeometry(
     const scaleY = height > 0 ? height / drawing.height : 0;
     scale = scaleX && scaleY ? Math.min(scaleX, scaleY) : scaleX || scaleY || 1;
   }
-  const customPoints = drawing.points.map((point) => ({ x: point.x * scale, y: point.y * scale }));
-  const customHoles = drawing.holes.map((hole) => hole.map((point) => ({ x: point.x * scale, y: point.y * scale })));
+  const scaledPoints = drawing.points.map((point) => ({ x: point.x * scale, y: point.y * scale }));
+  const scaledHoles = drawing.holes.map((hole) => hole.map((point) => ({ x: point.x * scale, y: point.y * scale })));
+  const scaledJoints = (drawing.jointLines ?? []).map((joint) => ({
+    ...joint,
+    start: { x: joint.start.x * scale, y: joint.start.y * scale },
+    end: { x: joint.end.x * scale, y: joint.end.y * scale },
+  }));
+  const targetWidth = Math.max(1, Math.round(drawing.width * scale));
+  const targetHeight = Math.max(1, Math.round(drawing.height * scale));
+  const normalized = normalizeApprovalGeometryToSize(scaledPoints, scaledHoles, targetWidth, targetHeight, scaledJoints);
+  const cleanedPoints = straightenApprovalOrthogonalContour(removeApprovalTextArtifactsFromContour(normalized.customPoints, targetWidth, targetHeight, shape));
   return {
-    width: Math.max(1, Math.round(drawing.width * scale)),
-    height: Math.max(1, Math.round(drawing.height * scale)),
-    customPoints,
-    customHoles,
-    sideSegments: buildApprovalSideSegments(customPoints, shape),
+    width: targetWidth,
+    height: targetHeight,
+    customPoints: cleanedPoints,
+    customHoles: normalized.customHoles,
+    jointLines: normalized.customJoints,
+    sideSegments: buildApprovalSideSegments(cleanedPoints, shape),
     sourcePreview: sourcePreviewForScale(scale, scale),
   };
 }
@@ -1625,8 +2940,15 @@ function validateApprovalItem(input: {
     );
     const mismatch = Math.abs(actualArea - declaredArea) / declaredArea;
     if (mismatch > 0.35) {
-      warnings.push(`Площа геометрії відрізняється від площі в бланку на ${Math.round(mismatch * 100)}%.`);
-      status = status === 'Error' ? status : 'Needs review';
+      const multiplicity = declaredArea / Math.max(1, actualArea);
+      const roundedMultiplicity = Math.round(multiplicity);
+      const looksLikeRepeatedPartArea = roundedMultiplicity >= 2
+        && roundedMultiplicity <= 8
+        && Math.abs(multiplicity - roundedMultiplicity) <= 0.08;
+      if (!looksLikeRepeatedPartArea) {
+        warnings.push(`Площа геометрії відрізняється від площі в бланку на ${Math.round(mismatch * 100)}%.`);
+        status = status === 'Error' ? status : 'Needs review';
+      }
     }
   }
   const sideSegments = input.drawingGeometry?.sideSegments;
@@ -1663,6 +2985,20 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
       } : undefined;
     })
     .filter(Boolean) as Array<{ index: number; number: number; name: string; area: number }>;
+  lines.forEach((line, index) => {
+    const number = linkedWallPanelProductNumber(line);
+    if (!number || products.some((product) => product.number === number)) return;
+    const side = normalizeSourceSide(line.match(/стороні\s+([A-IАВСЕІ])/iu)?.[1]
+      ?? line.match(/СЃС‚РѕСЂРѕРЅС–\s+([A-IРђР’РЎР•Р†])/iu)?.[1]
+      ?? '');
+    products.push({
+      index,
+      number,
+      name: `Стінова панель по стороні ${side || '?'}`,
+      area: 0,
+    });
+  });
+  products.sort((first, second) => first.index - second.index);
   const specIndexes = lines
     .map((line, index) => {
       const match = line.match(/^Специфікація виробу\s*№\s*(\d+)/iu);
@@ -1674,9 +3010,10 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
   const previewWarnings: string[] = [];
   const debug: string[] = [];
   const usedDrawingIndexes = new Set<number>();
-  const items = products.map((product) => {
+  const items = products.flatMap((product) => {
     const spec = specIndexes.find((item) => item.number === product.number + 1);
     const nextProductIndex = Math.min(...products.filter((item) => item.index > product.index).map((item) => item.index), lines.length);
+    const nextProduct = products.find((item) => item.index === nextProductIndex);
     const specEndCandidates = spec
       ? [
         ...products.filter((item) => item.index > spec.index).map((item) => item.index),
@@ -1686,34 +3023,67 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
       : [];
     const rows = spec ? parseSpecRows(lines, spec.index, Math.min(...specEndCandidates)) : [];
     allRows.push(...rows);
-    const parsedDimensions = parseDimensionLabels(lines, product.index, spec?.index ?? nextProductIndex);
+    const linkedPanelSpecNumber = product.number >= 100 ? Math.floor(product.number / 100) : 0;
+    const linkedPanelSide = product.number >= 100 ? String.fromCharCode((product.number % 100) + 64) : '';
+    const linkedPanelSpec = linkedPanelSpecNumber
+      ? specIndexes.find((item) => item.number === linkedPanelSpecNumber)
+      : undefined;
+    const linkedPanelRows = linkedPanelSpec
+      ? parseSpecRows(lines, linkedPanelSpec.index, Math.min(
+        ...[
+          ...products.filter((item) => item.index > linkedPanelSpec.index).map((item) => item.index),
+          ...specIndexes.filter((item) => item.index > linkedPanelSpec.index).map((item) => item.index),
+          lines.length,
+        ],
+      ))
+      : [];
+    const linkedPanelRow = linkedPanelRows.find((row) => row.side === linkedPanelSide && isWallPanelRow(row));
+    const linkedPanelDimensions = linkedPanelRow
+      ? uniqueDimensionLabels([
+        dimensionLabel('A', linkedPanelRow.width, `specification linked wall panel ${linkedPanelSide}`),
+        dimensionLabel('C', linkedPanelRow.width, `specification linked wall panel ${linkedPanelSide}`),
+        dimensionLabel('B', linkedPanelRow.height, `specification linked wall panel ${linkedPanelSide}`),
+        dimensionLabel('D', linkedPanelRow.height, `specification linked wall panel ${linkedPanelSide}`),
+      ])
+      : [];
     const type = inferDetailType(product.name);
     const drawing = drawingForProduct(drawings, product.number, usedDrawingIndexes);
+    const drawingTextDimensions = drawing?.sourceDimensions ?? [];
+    const parsedDimensions = uniqueDimensionLabelsBySide([
+      ...drawingTextDimensions,
+      ...parseDimensionLabels(lines, product.index, spec?.index ?? nextProductIndex),
+      ...linkedPanelDimensions,
+    ]);
     const missingPdfDrawing = !drawing?.points.length;
     const visualOnly = rows.length === 0;
-    const shape = SHAPE_RECT;
-    const size = drawingSizeFromDimensionLabels(drawing, parsedDimensions);
+    let dimensions = supplementDimensionsFromSpecRows(parsedDimensions, rows);
+    const shape = inferApprovalDrawingShape(drawing, dimensions, rows);
+    dimensions = completeOppositeDimensionsFromLabels(dimensions, shape);
+    const labelSize = drawingSizeFromDimensionLabels(drawing, dimensions);
+    const labelSizeReliable = parsedDimensions.length > 0 || dimensionsHaveHorizontalAndVertical(dimensions);
+    const reviewSize = !labelSizeReliable && drawing?.points.length
+      ? visualSizeFromDrawing(drawing, dimensions, rows, product.area, type, shape)
+      : undefined;
+    const size = labelSizeReliable ? labelSize : reviewSize;
+    const needsDimensionReview = Boolean(reviewSize && !labelSizeReliable);
     const features = featuresFromRows(rows, shape);
     const joints = jointsFromLines(lines, product.index, spec?.index ?? nextProductIndex);
     const drawingGeometry = size
-      ? scaleApprovalDrawingGeometry(drawing, size.width, size.height, product.area, shape, true)
+      ? scaleApprovalDrawingGeometry(drawing, size.width, size.height, product.area, shape, true, dimensions)
       : undefined;
-    const dimensions = parsedDimensions;
+    const detectedJoints = approvalDetectedJoints(product.number, joints, drawingGeometry);
+    dimensions = supplementDimensionsFromGeometry(dimensions, drawingGeometry, shape, { allowContourDimensions: false });
     const hasReliableDrawingRegion = Boolean(drawing?.sourcePage && drawing?.sourceBounds);
     const hasFinalContour = Boolean(drawingGeometry?.customPoints?.length);
     const blockedReason = !hasReliableDrawingRegion
       ? 'No product drawing region was matched to this product.'
-      : !dimensions.length
-      ? 'No drawing dimension labels were extracted for this product.'
       : !hasFinalContour
       ? 'No real contour was extracted from the product drawing.'
       : null;
     const drawingExtractionFailed = Boolean(blockedReason);
     const geometrySource: ApprovalGeometrySource = hasFinalContour ? 'image-contour' : 'none';
     const shapeMode: ApprovalShapeMode = hasFinalContour ? 'customContour' : 'none';
-    const dimensionsSource: ApprovalDimensionsSource = dimensions.length
-      ? 'drawing-labels'
-      : 'none';
+    const dimensionsSource = dimensionsSourceFor(parsedDimensions, dimensions);
     const itemWidth = drawingGeometry?.width ?? 0;
     const itemHeight = drawingGeometry?.height ?? 0;
     const validation = validateApprovalItem({
@@ -1734,6 +3104,10 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
     const itemWarnings = [
       ...(drawingExtractionFailed ? [`Geometry not extracted. ${blockedReason}`] : []),
       ...(missingPdfDrawing ? ['Geometry extraction failed. No fallback shape was created.'] : []),
+      ...(needsDimensionReview ? [
+        'Потрібно уточнити розміри: контур знайдено, але частину текстових розмірів біля креслення не вдалося надійно прочитати.',
+        ...(reviewSize?.warnings ?? []),
+      ] : []),
       ...visualWarnings,
       ...validation.warnings,
     ];
@@ -1743,6 +3117,8 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
       ? 'Error'
       : missingPdfDrawing
       ? 'Error'
+      : needsDimensionReview
+      ? 'Needs review'
       : validation.importStatus;
     if (importStatus !== 'OK') previewWarnings.push(`${product.name}: ${itemWarnings.join(' ')}`);
     debug.push(JSON.stringify({
@@ -1760,7 +3136,7 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
       } : undefined,
       warnings: itemWarnings,
     }));
-    return {
+    const mainItem: Omit<ApprovalImportItem, 'sourceX' | 'sourceY'> = {
       id: `approval_${product.number}`,
       sourceProductNumber: product.number,
       name: product.name,
@@ -1798,9 +3174,18 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
         mappedSides: drawingGeometry?.sideSegments ? Object.keys(drawingGeometry.sideSegments) : [],
       },
       rows,
+      joints: detectedJoints,
       ...joints,
       ...features,
     };
+    const hasExplicitLegProduct = Boolean(nextProduct && productNameLooksLeg(nextProduct.name));
+    const generatedLegItems = hasExplicitLegProduct
+      ? []
+      : rows
+        .filter(isApprovalLegRow)
+        .map((row, rowIndex) => generatedLegItemFromRow(product, row, rowIndex))
+        .filter(Boolean) as Array<Omit<ApprovalImportItem, 'sourceX' | 'sourceY'>>;
+    return [mainItem, ...generatedLegItems];
   });
   const thickness = inferThickness(explicitThickness, allRows, material);
   const laidOutItems = layoutItems(items);
@@ -1826,6 +3211,8 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
         label: dimension.side,
         valueMm: dimension.value,
         rawText: dimension.source,
+        confidence: dimension.confidence,
+        sourceBox: dimension.sourceBox,
       })),
       detectedSpecificationRows: item.rows.map((row) => ({
         side: row.side,
@@ -1838,7 +3225,7 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
         source: item.geometrySource,
         outerContourPointsMm: item.customPoints ?? [],
         holesMm: item.customHoles ?? [],
-        jointsMm: [],
+        jointsMm: item.joints?.map((joint) => [joint.start, joint.end]) ?? [],
         boundingBoxMm: { width: item.width, height: item.height },
       },
       finalDetail: {
@@ -1850,7 +3237,7 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
         heightMm: item.height,
         contourPoints: item.customPoints ?? [],
         holes: item.customHoles ?? [],
-        joints: [],
+        joints: item.joints?.map((joint) => [joint.start, joint.end]) ?? [],
       },
       validation: {
         status: item.importStatus,
@@ -1859,11 +3246,14 @@ export function parseApprovalText(text: string, fileName: string, drawings: Appr
       dimensionsSource: item.dimensionsSource,
       shapeMode: item.shapeMode,
       contourPointsCount: item.customPoints?.length ?? 0,
-      finalImportAllowed: item.importStatus !== 'Error'
+      finalImportAllowed: item.geometrySource === 'spec-generated'
+        ? item.importStatus !== 'Error'
+          && item.shapeMode === 'customContour'
+          && Boolean(item.customPoints?.length)
+        : item.importStatus !== 'Error'
         && item.geometrySource !== 'none'
         && item.shapeMode === 'customContour'
         && Boolean(item.customPoints?.length)
-        && item.dimensions.length > 0
         && Boolean(item.debug.sourcePage)
         && Boolean(item.debug.sourceImageRegion),
       blockedReason: item.importStatus === 'Error'
@@ -1912,12 +3302,77 @@ function productNumbersFromPageText(pageText: string) {
   return numbers;
 }
 
+function generatedLinkedWallPanelNumber(parentNumber: number, side: string) {
+  const normalizedSide = normalizeSourceSide(side);
+  const sideIndex = Math.max(1, normalizedSide.charCodeAt(0) - 64);
+  return parentNumber * 100 + sideIndex;
+}
+
+function linkedWallPanelProductNumber(text: string) {
+  const normalized = normalizeText(text);
+  const match = normalized.match(/Виріб\s+"?Стінова\s+панель"?\s+по\s+стороні\s+([A-IАВСЕІ])[^№#]*(?:№|#)\s*(\d+)/iu)
+    ?? normalized.match(/Р’РёСЂС–Р±\s+"?РЎС‚С–РЅРѕРІР°\s+РїР°РЅРµР»СЊ"?\s+РїРѕ\s+СЃС‚РѕСЂРѕРЅС–\s+([A-IРђР’РЎР•Р†])[^в„–#]*(?:в„–|#)\s*(\d+)/iu);
+  if (!match) return undefined;
+  return generatedLinkedWallPanelNumber(Number(match[2]), match[1]);
+}
+
+function productAnchorsFromTextItems(
+  items: Array<{ str?: string; transform?: unknown }>,
+  pageNumber: number,
+  pageHeight: number,
+) {
+  const anchors: ApprovalProductAnchor[] = [];
+  items.forEach((item) => {
+    const text = normalizeText(item.str ?? '');
+    if (!text) return;
+    const transform = Array.isArray(item.transform) ? item.transform : [];
+    const y = Number(transform[5]);
+    if (!Number.isFinite(y)) return;
+    const topRatio = Math.max(0, Math.min(1, (pageHeight - y) / Math.max(1, pageHeight)));
+    const numberedMatch = text.match(/Виріб\s*№\s*(\d+)/iu)
+      ?? text.match(/Р’РёСЂС–Р±\s*(?:в„–|№)\s*(\d+)/iu);
+    const number = numberedMatch ? Number(numberedMatch[1]) : linkedWallPanelProductNumber(text);
+    if (!Number.isFinite(number) || !number) return;
+    anchors.push({
+      number,
+      pageNumber,
+      topRatio,
+      globalTop: pageNumber + topRatio,
+    });
+  });
+  return anchors;
+}
+
+function assignDrawingsToPreviousProductAnchors(drawings: ApprovalDrawingGeometry[], anchors: ApprovalProductAnchor[]) {
+  const orderedAnchors = [...anchors].sort((first, second) => first.globalTop - second.globalTop);
+  const orderedAnchorNumbers = orderedAnchors
+    .map((anchor) => anchor.number)
+    .filter((number, index, list) => list.indexOf(number) === index);
+  drawings.forEach((drawing) => {
+    const orderedNumber = orderedAnchorNumbers[drawings.indexOf(drawing)];
+    if (orderedNumber) {
+      drawing.sourceProductNumber = orderedNumber;
+      return;
+    }
+    if (!drawing.sourcePage) return;
+    const globalTop = drawing.sourcePage + (drawing.sourcePageTopRatio ?? 0);
+    const previousAnchor = [...orderedAnchors]
+      .filter((anchor) => anchor.globalTop <= globalTop + 0.015)
+      .sort((first, second) => second.globalTop - first.globalTop)[0];
+    if (previousAnchor) drawing.sourceProductNumber = previousAnchor.number;
+  });
+}
+
 /** Reads PDF text and product drawing images; small edge-profile images are intentionally ignored. */
 async function extractPdfData(file: File) {
+  console.warn('[APPROVAL_DEBUG] Reading file arrayBuffer');
   const data = new Uint8Array(await file.arrayBuffer());
+  console.warn('[APPROVAL_DEBUG] getDocument');
   const pdf = await pdfjsLib.getDocument({ data }).promise;
+  console.warn(`[APPROVAL_DEBUG] PDF loaded, ${pdf.numPages} pages`);
   const pages: string[] = [];
   const drawings: ApprovalDrawingGeometry[] = [];
+  const productAnchors: ApprovalProductAnchor[] = [];
   const diagnostics = {
     fileName: file.name,
     pageCount: pdf.numPages,
@@ -1926,6 +3381,8 @@ async function extractPdfData(file: File) {
     rasterCount: 0,
     traceCount: 0,
     imageSamples: [] as Array<Record<string, unknown>>,
+    drawingAssignments: [] as Array<Record<string, unknown>>,
+    ocrSamples: [] as Array<Record<string, unknown>>,
   };
   const ops = pdfjsLib.OPS as unknown as Record<string, number | undefined>;
   const imageOps = new Set([
@@ -1934,13 +3391,21 @@ async function extractPdfData(file: File) {
     ops.paintInlineImageXObject,
   ].filter((value): value is number => typeof value === 'number'));
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    console.warn(`[APPROVAL_DEBUG] Reading page ${pageNumber}`);
     const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
     const content = await page.getTextContent();
     const pageText = content.items.map((item) => ('str' in item ? item.str : '')).join('\n');
     const pageProductNumbers = productNumbersFromPageText(pageText);
-    let pageDrawingIndex = 0;
+    productAnchors.push(...productAnchorsFromTextItems(
+      content.items as Array<{ str?: string; transform?: unknown }>,
+      pageNumber,
+      viewport.height,
+    ));
     pages.push(pageText);
+    console.warn(`[APPROVAL_DEBUG] Getting operator list for page ${pageNumber}`);
     const operators = await page.getOperatorList();
+    console.warn(`[APPROVAL_DEBUG] Found ${operators.fnArray.length} operators`);
     for (let index = 0; index < operators.fnArray.length; index += 1) {
       if (!imageOps.has(operators.fnArray[index])) continue;
       diagnostics.imageOpCount += 1;
@@ -1989,32 +3454,78 @@ async function extractPdfData(file: File) {
           bitmapHeight: bitmapSample?.height,
         });
       }
+      console.warn(`[APPROVAL_DEBUG] Rendering raster for image op at index ${index}`);
       const raster = await approvalRasterFromPdfImageObject(image);
       if (!raster?.width || !raster.height || !raster.data) continue;
       if (raster.width < 700 || raster.height < 280) continue;
+      const positionedTextItems = positionedTextItemsForRaster(
+        content.items as Array<{ str?: string; transform?: unknown; width?: number; height?: number }>,
+        pageNumber,
+        { width: viewport.width, height: viewport.height },
+        { width: raster.width, height: raster.height },
+      );
       diagnostics.largeImageOpCount += 1;
       diagnostics.rasterCount += 1;
-      const geometry = traceApprovalDrawingImage({ width: raster.width, height: raster.height, data: raster.data });
-      if (geometry) {
+      console.warn(`[APPROVAL_DEBUG] Tracing geometry for ${raster.width}x${raster.height} raster`);
+      const geometries = traceApprovalDrawingImage({ width: raster.width, height: raster.height, data: raster.data });
+      console.warn(`[APPROVAL_DEBUG] Found ${geometries.length} geometries`);
+      for (const geometry of geometries) {
         diagnostics.traceCount += 1;
         geometry.sourcePage = pageNumber;
         geometry.sourceProductNumber = pageProductNumbers.length === 1
           ? pageProductNumbers[0]
-          : pageProductNumbers[pageDrawingIndex];
-        pageDrawingIndex += 1;
+          : undefined;
+        geometry.sourcePageTopRatio = geometry.sourceBounds.minY / Math.max(1, raster.height);
         const preview = approvalRasterCropDataUrl({ width: raster.width, height: raster.height, data: raster.data }, geometry.sourceBounds);
         if (preview) {
           geometry.sourceImage = preview.image;
           geometry.sourceImageBounds = preview.bounds;
         }
+        const textDimensions = extractDimensionsNearDrawingText(positionedTextItems, geometry);
+        const ocrResult = await extractDimensionsNearDrawingOcr(
+          { width: raster.width, height: raster.height, data: raster.data },
+          geometry,
+          textDimensions,
+        );
+        geometry.sourceDimensions = uniqueDimensionLabelsBySide([
+          ...textDimensions,
+          ...ocrResult.dimensions,
+        ]);
+        geometry.sourceDimensionsOcrStatus = ocrResult.status;
+        geometry.sourceDimensionsOcrText = ocrResult.text;
+        geometry.sourceDimensionsOcrError = ocrResult.error;
+        if (diagnostics.ocrSamples.length < 24) {
+          diagnostics.ocrSamples.push({
+            pageNumber,
+            status: ocrResult.status,
+            dimensions: ocrResult.dimensions.map((dimension) => ({
+              side: dimension.side,
+              value: dimension.value,
+              source: dimension.source,
+              confidence: dimension.confidence,
+              sourceBox: dimension.sourceBox,
+            })),
+            text: ocrResult.text?.slice(0, 500),
+            error: ocrResult.error,
+          });
+        }
         drawings.push(geometry);
       }
     }
   }
-  console.warn('[APPROVAL_IMPORT_V2_PDF_DATA]', {
-    ...diagnostics,
-    drawingCount: drawings.length,
-  });
+  assignDrawingsToPreviousProductAnchors(drawings, productAnchors);
+  diagnostics.drawingAssignments = drawings.map((drawing) => ({
+    productNumber: drawing.sourceProductNumber,
+    page: drawing.sourcePage,
+    topRatio: drawing.sourcePageTopRatio,
+    x: drawing.sourceBounds.minX,
+    y: drawing.sourceBounds.minY,
+    width: drawing.sourceBounds.maxX - drawing.sourceBounds.minX,
+    height: drawing.sourceBounds.maxY - drawing.sourceBounds.minY,
+    sourceDimensions: drawing.sourceDimensions,
+    sourceDimensionsOcrStatus: drawing.sourceDimensionsOcrStatus,
+    sourceDimensionsOcrError: drawing.sourceDimensionsOcrError,
+  }));
   return { text: pages.join('\n'), drawings, diagnostics };
 }
 
@@ -2054,10 +3565,6 @@ export async function parseApprovalFile(file: File): Promise<ApprovalImportPrevi
 }
 
 export async function importApprovalFormPdf(file: File): Promise<ApprovalImportPreview> {
-  console.warn('[APPROVAL_IMPORT_V2_REACHED]', {
-    fileName: file.name,
-    timestamp: new Date().toISOString(),
-  });
   const { text, drawings, diagnostics } = await extractPdfData(file);
   const preview = parseApprovalText(text, file.name, drawings);
   if (preview.pipelineVersion !== APPROVAL_IMPORT_PIPELINE_VERSION) {

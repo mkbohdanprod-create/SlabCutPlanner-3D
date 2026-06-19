@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ApprovalImportItem, ApprovalImportPreview } from '../../../utils/approvalImport';
-import type { DxfPoint } from '../../../parsers/dxf';
+import { dxfSvgPath, type DxfPoint } from '../../../parsers/dxf';
 
 export function approvalItemPoints(item: ApprovalImportItem): DxfPoint[] {
   if (item.customPoints?.length) return item.customPoints;

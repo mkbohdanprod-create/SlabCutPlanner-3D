@@ -6,7 +6,7 @@ import { calcStatus, loadWithoutPacking } from '../projectHelpers';
 import { persist, STORAGE_KEY } from '../persistence';
 import { triggerPackingAsync } from './packingSlice';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
-import { createEmptyProject } from '../../domain/defaults';
+import { createEmptyProject, defaultCommercialQuoteSettings } from '../../domain/defaults';
 import { partNameForLabel } from '../projectHelpers';
 
 function finalizeProjectState(state: ProjectState, refreshConflicts = true) {
@@ -408,7 +408,20 @@ export const createProjectSlice: StateCreator<
   },
 
   importProject: (project) => {
-    const next = loadWithoutPacking(project);
+    const safeProject = {
+      ...project,
+      commercialQuote: {
+        ...defaultCommercialQuoteSettings,
+        ...(project.commercialQuote ?? {}),
+        edgePrices: {
+          ...defaultCommercialQuoteSettings.edgePrices,
+          ...(project.commercialQuote?.edgePrices ?? {}),
+        },
+        manualLines: project.commercialQuote?.manualLines ?? [],
+        lineOverrides: project.commercialQuote?.lineOverrides ?? {},
+      },
+    };
+    const next = loadWithoutPacking(safeProject);
     set((state) => {
       state.project = next.project;
       state.parts = next.parts;

@@ -97,6 +97,7 @@ export function FormsPanel() {
   const dxfInputRef = useRef<HTMLInputElement | null>(null);
   const approvalInputRef = useRef<HTMLInputElement | null>(null);
   const [approvalPreview, setApprovalPreview] = useState<ApprovalImportPreview | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
   const [approvalDxfContext, setApprovalDxfContext] = useState<ApprovalImportPreview | null>(null);
   const [modalPosition, setModalPosition] = useState<{ x: number; y: number } | null>(null);
   const [modalDrag, setModalDrag] = useState<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
@@ -344,7 +345,9 @@ export function FormsPanel() {
       if (!response.ok) throw new Error(`fixture ${fixtureFileName} is not available (${response.status})`);
       const blob = await response.blob();
       const file = new File([blob], fixtureFileName, { type: 'application/pdf' });
+      setIsImporting(true);
       const parsed = await parseApprovalFile(file);
+      setIsImporting(false);
       if (!parsed.items.length) {
         setError('У бланку погодження не знайдено таблиць виробів для імпорту.');
         return;
@@ -352,7 +355,9 @@ export function FormsPanel() {
       setError('');
       setApprovalPreview(parsed);
     } catch (reason) {
-      setError(`Не вдалося прочитати тестовий бланк погодження: ${reason instanceof Error ? reason.message : 'невідома помилка'}`);
+      setIsImporting(false);
+      console.error('[APPROVAL_IMPORT_ERROR]', reason);
+      setError(`Не вдалося прочитати тестовий бланк погодження: ${reason instanceof Error ? reason.message : String(reason)}`);
     }
   };
 
@@ -365,7 +370,9 @@ export function FormsPanel() {
         fileName: file.name,
         timestamp: new Date().toISOString(),
       });
+      setIsImporting(true);
       const parsed = await parseApprovalFile(file);
+      setIsImporting(false);
       if (!parsed.items.length) {
         setError('У бланку погодження не знайдено таблиць виробів для імпорту.');
         return;
@@ -373,7 +380,9 @@ export function FormsPanel() {
       setError('');
       setApprovalPreview(parsed);
     } catch (reason) {
-      setError(`Не вдалося прочитати бланк погодження: ${reason instanceof Error ? reason.message : 'невідома помилка'}`);
+      setIsImporting(false);
+      console.error('[APPROVAL_IMPORT_ERROR]', reason);
+      setError(`Не вдалося прочитати бланк погодження: ${reason instanceof Error ? reason.message : String(reason)}`);
     }
   };
 
@@ -1068,10 +1077,13 @@ export function FormsPanel() {
           <h3>Деталі</h3>
           <button type="button" className="primary-action detail-open-button" onClick={() => { clearEditDetail(); setDetail(createDraft()); setDetailOpen(true); }}>Додати деталь</button>
           <button type="button" onClick={() => dxfInputRef.current?.click()}>Імпортувати DXF</button>
-          <button type="button" onClick={() => approvalInputRef.current?.click()}>Імпортувати бланк погодження</button>
+          <button type="button" disabled={isImporting} onClick={() => approvalInputRef.current?.click()}>
+            {isImporting ? 'Обробка бланку (OCR)...' : 'Імпортувати бланк погодження'}
+          </button>
           <button type="button" onClick={() => setAllowancesOpen(true)}>Припуски</button>
           <input ref={dxfInputRef} type="file" accept=".dxf,.dwg" hidden onChange={onDxfFile} />
           <input ref={approvalInputRef} type="file" accept=".pdf,.xlsx,.xls,.docx" hidden onChange={onApprovalFile} />
+          {!detailOpen && error && <div className="error-box" style={{ marginTop: '1rem' }}>{error}</div>}
         </div>
       </div>
 

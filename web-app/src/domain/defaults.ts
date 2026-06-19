@@ -1,4 +1,4 @@
-import type { Project, ReferenceData } from './types';
+import type { Project, ReferenceData, CommercialQuoteSettings } from './types';
 
 export const referenceData: ReferenceData = {
   materials: ['Керамограніт', 'Кварцит', 'Натуральний камінь', 'Акрил', 'Компакт-плита'],
@@ -31,6 +31,36 @@ export const DEFAULT_ALLOWANCES = {
   applyToImports: false,
 };
 
+export const defaultCommercialQuoteSettings: CommercialQuoteSettings = {
+  materialMode: 'slab',
+  currency: 'UAH',
+  slabPrice: 0,
+  squareMeterPrice: 0,
+  sawCutPricePerM: 0,
+  waterjetCutPricePerM: 0,
+  edgePrices: {
+    chamfer_2x2: 0,
+    chamfer_2x2_top_bottom: 0,
+    r2_top: 0,
+    r2_top_bottom: 0,
+    chamfer_45_r2: 0,
+    chamfered_edge: 0,
+    half_bullnose: 0,
+    full_bullnose: 0,
+    sharknose: 0,
+    polished_straight: 0,
+    straight_edge: 0,
+  },
+  gluePricingMode: 'linear',
+  gluePricePerM: 0,
+  gluePricePerElement: 0,
+  manualLines: [],
+  lineOverrides: {},
+  adjustmentType: 'discount',
+  adjustmentPercent: 0,
+  includeInCuttingPdf: false,
+};
+
 export function createEmptyProject(): Project {
   return {
     id: uid('project'),
@@ -52,5 +82,6 @@ export function createEmptyProject(): Project {
     versions: [{ id: uid('version'), timestamp: new Date().toISOString(), note: 'Створено проєкт' }],
     updatedAt: new Date().toISOString(),
     allowances: { ...DEFAULT_ALLOWANCES },
+    commercialQuote: defaultCommercialQuoteSettings,
   };
 }
