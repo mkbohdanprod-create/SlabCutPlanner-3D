@@ -11,6 +11,10 @@ old_*.tsx
 compile_errors.txt
 OLD catting/
 Рефактор/
+Рефактор1/
+importfunctions/
+інструкції 3D/
+Audit_*.md
 Architecture_Audit.md
 web-app/git_log*.txt
 web-app/*_old.ts
