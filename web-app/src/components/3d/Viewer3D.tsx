@@ -77,7 +77,7 @@ function calculateCustomTextureMatrix(
   ];
 }
 
-function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, originOffset, localTransform, baseX, baseY }: { placement: Placement, part: DetailPart, slab?: SlabInstance, parts: DetailPart[], isSelected: boolean, onSelect: () => void, originOffset: [number, number, number], localTransform?: {x: number, y: number, z: number, rx: number, ry: number, rz: number, hidden?: boolean} | null, baseX: number, baseY: number }) {
+function TexturedPart({ placement, part, slab, parts, isSelected, isHovered, onSelect, originOffset, localTransform, baseX, baseY }: { placement: Placement, part: DetailPart, slab?: SlabInstance, parts: DetailPart[], isSelected: boolean, isHovered?: boolean, onSelect: () => void, originOffset: [number, number, number], localTransform?: {x: number, y: number, z: number, rx: number, ry: number, rz: number, hidden?: boolean} | null, baseX: number, baseY: number }) {
   if (localTransform?.hidden) return null;
   const s = 0.001;
   const thickness = slab?.thickness ? slab.thickness * s : 0.02;
@@ -286,21 +286,21 @@ function TexturedPart({ placement, part, slab, parts, isSelected, onSelect, orig
             attach="material-0"
             map={clonedTexture} 
             roughness={0.1} 
-            emissive={isSelected ? new THREE.Color(0x3b82f6) : new THREE.Color(0x000000)}
-            emissiveIntensity={isSelected ? 0.3 : 0}
+            emissive={isSelected ? new THREE.Color(0x3b82f6) : (isHovered ? new THREE.Color(0x60a5fa) : new THREE.Color(0x000000))}
+            emissiveIntensity={isSelected ? 0.3 : (isHovered ? 0.15 : 0)}
           />
           <meshStandardMaterial 
             attach="material-1"
             map={sideClone || clonedTexture} 
             roughness={0.1} 
-            emissive={isSelected ? new THREE.Color(0x3b82f6) : new THREE.Color(0x000000)}
-            emissiveIntensity={isSelected ? 0.3 : 0}
+            emissive={isSelected ? new THREE.Color(0x3b82f6) : (isHovered ? new THREE.Color(0x60a5fa) : new THREE.Color(0x000000))}
+            emissiveIntensity={isSelected ? 0.3 : (isHovered ? 0.15 : 0)}
           />
         </>
       ) : (
         <>
-          <meshStandardMaterial attach="material-0" color="#f8fafc" roughness={0.1} />
-          <meshStandardMaterial attach="material-1" color="#e2e8f0" roughness={0.1} />
+          <meshStandardMaterial attach="material-0" color="#f8fafc" roughness={0.1} emissive={isSelected ? new THREE.Color(0x3b82f6) : (isHovered ? new THREE.Color(0x60a5fa) : new THREE.Color(0x000000))} emissiveIntensity={isSelected ? 0.3 : (isHovered ? 0.15 : 0)} />
+          <meshStandardMaterial attach="material-1" color="#e2e8f0" roughness={0.1} emissive={isSelected ? new THREE.Color(0x3b82f6) : (isHovered ? new THREE.Color(0x60a5fa) : new THREE.Color(0x000000))} emissiveIntensity={isSelected ? 0.3 : (isHovered ? 0.15 : 0)} />
         </>
       )}
     </mesh>
@@ -384,8 +384,9 @@ function getSinkPartTransform(part: DetailPart, detail: Detail | undefined, thic
   return null;
 }
 
-function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, selectedId, onSelect, isSink }: { mainPlacement: Placement, mainPart: DetailPart, foldPlacements: Placement[], parts: DetailPart[], slabs: SlabInstance[], selectedId: string | null, onSelect: (id: string) => void, isSink?: boolean }) {
+function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, selectedId, onSelect, setIsDragging, isSink }: { mainPlacement: Placement, mainPart: DetailPart, foldPlacements: Placement[], parts: DetailPart[], slabs: SlabInstance[], selectedId: string | null, onSelect: (id: string) => void, setIsDragging: (d: boolean) => void, isSink?: boolean }) {
   const [group, setGroup] = useState<THREE.Group | null>(null);
+  const [hovered, setHovered] = useState(false);
   const is3dAssemblyMode = useUIStore(s => s.is3dAssemblyMode);
   const transformMode = useUIStore(s => s.transformMode);
   const updatePlacement3dTransform = useProjectStore(s => s.updatePlacement3dTransform);
@@ -426,7 +427,7 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
   };
 
   const content = (
-    <group position={position} rotation={rotation} ref={setGroup}>
+    <group position={position} rotation={rotation} ref={setGroup} onPointerOver={(e) => { e.stopPropagation(); setHovered(true); }} onPointerOut={() => setHovered(false)}>
       <Suspense fallback={null}>
         <TexturedPart 
           placement={mainPlacement} 
@@ -434,6 +435,7 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
           slab={mainSlab} 
           parts={parts} 
           isSelected={isSelected}
+          isHovered={hovered && !isSelected}
           onSelect={select}
           originOffset={originOffset}
           localTransform={isSink ? getSinkPartTransform(mainPart, detail, thickness) : null}
@@ -452,6 +454,7 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
                slab={fSlab} 
                parts={parts} 
                isSelected={isSelected}
+               isHovered={hovered && !isSelected}
                onSelect={select}
                originOffset={originOffset}
                localTransform={isSink ? getSinkPartTransform(fPart, detail, thickness) : null}
@@ -469,7 +472,8 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
       {group && (
         <TransformControls 
           object={group}
-          mode={transformMode} 
+          mode={transformMode}
+          onDraggingChanged={(e) => setIsDragging(!!e?.value)} 
           onMouseUp={handleDragEnd} 
           size={0.6}
           enabled={is3dAssemblyMode && isSelected}
@@ -537,6 +541,8 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
   const selectedId = useUIStore(s => s.selectedId3d);
   const setSelectedId = useUIStore(s => s.setSelectedId3d);
   const contentRef = React.useRef<THREE.Group | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const groups = useMemo(() => {
      return buildAssemblyGroups(parts, project.placements, is3dGroupingEnabled);
@@ -570,6 +576,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
                     slabs={project.slabs}
                     selectedId={selectedId}
                     onSelect={setSelectedId}
+                    setIsDragging={setIsDragging}
                     isSink={group.isSink}
                   />
                 );
@@ -583,7 +590,14 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
             <meshStandardMaterial color="#c8c8c8" />
           </mesh>
           <axesHelper args={[50]} position={[0, -0.49, 0]} />
-          <OrbitControls makeDefault minPolarAngle={0} maxPolarAngle={Math.PI / 2.1} />
+          <OrbitControls 
+            makeDefault 
+            minPolarAngle={0} 
+            maxPolarAngle={Math.PI / 2.1} 
+            enabled={!isDragging}
+            mouseButtons={{ LEFT: THREE.MOUSE.NONE, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN }}
+            touches={{ ONE: THREE.TOUCH.NONE, TWO: THREE.TOUCH.DOLLY_ROTATE }}
+          />
           {isCaptureMode && <CaptureController onCaptureReady={onCaptureReady} contentRef={contentRef} />}
       </Canvas>
       <div className="absolute top-4 left-4 text-white text-sm bg-black/50 px-3 py-1 rounded flex items-center gap-4 z-10">
@@ -597,7 +611,38 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
           />
           Показувати контури
         </label>
+        <button 
+          onClick={() => setShowHelp(true)} 
+          className="ml-2 px-2 py-0.5 bg-blue-600 hover:bg-blue-500 rounded text-xs font-semibold pointer-events-auto"
+        >
+          [?] Інструкція
+        </button>
       </div>
+
+      {showHelp && (
+        <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 max-w-md w-full text-slate-200">
+            <h3 className="text-xl font-bold text-white mb-4">Управління 3D збіркою</h3>
+            <ul className="space-y-3 mb-6 text-sm">
+              <li><strong className="text-blue-400">Ліва кнопка миші:</strong> Виділення та перетягування деталей. Камера при цьому <b>не обертається</b>.</li>
+              <li><strong className="text-blue-400">Середня кнопка (коліщатко):</strong> Обертання камери (Orbit).</li>
+              <li><strong className="text-blue-400">Права кнопка миші:</strong> Переміщення камери (Pan).</li>
+              <li><strong className="text-blue-400">Скролл коліщатка:</strong> Наближення / віддалення (Zoom).</li>
+              <li className="pt-2 border-t border-slate-700 mt-2"><strong className="text-slate-300">Тачпад (Ноутбук):</strong></li>
+              <li>Два пальці: Обертання камери.</li>
+              <li>Щипок двома пальцями: Наближення (Zoom).</li>
+            </ul>
+            <div className="flex justify-end">
+              <button 
+                onClick={() => setShowHelp(false)} 
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded font-medium text-white transition-colors"
+              >
+                Зрозуміло
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
