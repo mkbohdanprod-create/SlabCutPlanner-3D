@@ -15,8 +15,7 @@
 
 import type { ApprovalImportItem, ApprovalDimensionLabel } from '../../../utils/approvalImport';
 import type { EdgeProfileSelection, EdgeFeature } from '../../../domain/types';
-import { EdgeProfileDesigner } from '../editors/EdgeProfileDesigner';
-import { FeatureDesigner } from '../editors/FeatureDesigner';
+import { EdgeProcessingDesigner } from '../editors/EdgeProcessingDesigner';
 import { Field } from '../utils/sharedInputs';
 
 // Сторони деталі: спершу з sideSegments (авторитетне джерело),
@@ -108,28 +107,13 @@ export function ApprovalItemEditors({
         </div>
       </div>
 
-      <EdgeProfileDesigner
-        title="Кромки"
-        profiles={item.edgeProfiles as EdgeProfileSelection}
+      <EdgeProcessingDesigner
+        edgeProfiles={item.edgeProfiles as EdgeProfileSelection}
+        thickening={item.thickening as EdgeFeature}
+        fold={item.fold as EdgeFeature}
         sides={sideList}
-        blockedSides={[...featureSides]}
-        onChange={onEdgeChange}
-      />
-
-      <FeatureDesigner
-        title="Потовщення"
-        feature={item.thickening as EdgeFeature}
-        sides={sideList}
-        linkedSides={[...edgeSides]}
-        onChange={onFeatureChange('thickening')}
-      />
-
-      <FeatureDesigner
-        title="Підворот"
-        feature={item.fold as EdgeFeature}
-        sides={sideList}
-        linkedSides={[...edgeSides]}
-        onChange={onFeatureChange('fold')}
+        blockedEdgeSides={[...featureSides]}
+        onChange={onPatch}
       />
     </div>
   );

@@ -229,19 +229,28 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .joint-checks { position: absolute; right: 22px; bottom: 28px; z-index: 4; display: flex; flex-direction: column; gap: 8px; width: 180px; }
 .joint-checks label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; font-size: 13px; color: var(--text-secondary); }
 .joint-checks input { width: auto; }
-.feature-designer { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; align-items: end; }
-.feature-designer h3 { grid-column: 1 / -1; }
-.feature-side-controls { display: flex; flex-direction: column; gap: 8px; }
-.side-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip.linked { outline: 2px solid rgba(34,134,93,.42); outline-offset: 1px; }
-.feature-toggle-all { display: inline-flex; align-items: center; gap: 8px; margin: 0; min-height: 36px; color: #23415a; font-size: 13px; font-weight: 700; }
-.feature-toggle-all input { width: 18px; height: 18px; margin: 0; }
-.edge-profile-designer { grid-template-columns: 160px minmax(0, 1fr); align-items: start; }
-.edge-profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
-.edge-profile-row { display: grid; grid-template-columns: 38px 54px minmax(0, 1fr); gap: 8px; align-items: center; }
-.edge-profile-side { justify-content: center; min-width: 34px; }
-.edge-profile-row select { min-width: 0; }
-.edge-profile-icon { width: 54px; height: 32px; display: block; }
+.edge-processing-designer { border: 1px solid #cad8e3; border-radius: 4px; background: #f8fbff; padding: 14px; margin-bottom: 12px; }
+.edge-processing-designer h3 { margin: 0 0 14px; font-size: 15px; color: #162635; }
+.edge-processing-global-sizes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.edge-processing-table-wrapper { overflow-x: auto; }
+.edge-processing-table { width: 100%; border-collapse: separate; border-spacing: 0 4px; }
+.edge-processing-table th { text-align: left; padding: 0 8px 8px; font-size: 13px; color: #516d82; font-weight: 600; border-bottom: 1px solid #cad8e3; }
+.edge-processing-table td { padding: 6px 8px; background: #ffffff; border-top: 1px solid #e1e9f0; border-bottom: 1px solid #e1e9f0; }
+.edge-processing-table tr td:first-child { border-left: 1px solid #e1e9f0; border-radius: 4px 0 0 4px; }
+.edge-processing-table tr td:last-child { border-right: 1px solid #e1e9f0; border-radius: 0 4px 4px 0; }
+.ep-side-col { width: 60px; text-align: center !important; }
+.ep-chip { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; background: #edf4f9; color: #162635; font-weight: 700; border-radius: 4px; font-size: 14px; }
+.ep-edge-col { min-width: 220px; }
+.ep-feature-col { width: 120px; text-align: center !important; }
+.ep-toggle-all { display: inline-flex; align-items: center; gap: 6px; margin: 0; cursor: pointer; user-select: none; }
+.ep-toggle-all input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
+.ep-edge-select-wrapper { display: flex; align-items: center; gap: 8px; }
+.ep-edge-select-wrapper select { flex: 1; min-width: 0; margin: 0; }
+.edge-profile-icon { width: 54px; height: 32px; display: block; flex-shrink: 0; }
+.ep-checkbox-wrapper { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; cursor: pointer; }
+.ep-checkbox-wrapper input { width: 20px; height: 20px; margin: 0; cursor: pointer; }
+.ep-checkbox-wrapper.linked { opacity: 0.5; cursor: not-allowed; }
+.ep-checkbox-wrapper.linked input { outline: 2px solid rgba(34,134,93,.42); outline-offset: 1px; }
 .detail-modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding-top: 2px; }
 .pdf-modal { width: min(920px, calc(100vw - 28px)); }
 .dxf-modal { position: relative; width: min(1460px, calc(100vw - 28px)); height: min(860px, calc(100vh - 28px)); min-width: min(840px, calc(100vw - 28px)); min-height: min(540px, calc(100vh - 28px)); display: flex; flex-direction: column; overflow: hidden; }

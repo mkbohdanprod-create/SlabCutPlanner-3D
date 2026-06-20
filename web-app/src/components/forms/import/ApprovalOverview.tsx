@@ -8,11 +8,17 @@ export function approvalItemPoints(item: ApprovalImportItem): DxfPoint[] {
 }
 
 export function approvalItemHasExtractedGeometry(item: ApprovalImportItem) {
+  // Деталі з таблиці-специфікації: НЕ вимагати sourcePage/sourceImageRegion.
+  if (item.geometrySource === 'spec-generated') {
+    return item.importStatus !== 'Error'
+      && item.shapeMode === 'customContour'
+      && Boolean(item.customPoints?.length);
+  }
+  // Деталі з контуром із креслення:
   return item.importStatus !== 'Error'
     && item.geometrySource !== 'none'
     && item.shapeMode === 'customContour'
     && Boolean(item.customPoints?.length)
-    && item.dimensions.length > 0
     && Boolean(item.debug.sourcePage)
     && Boolean(item.debug.sourceImageRegion);
 }

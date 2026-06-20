@@ -82,8 +82,7 @@ import { EllipseDesigner } from '../forms/shapes/EllipseDesigner';
 import { LDesigner } from '../forms/shapes/LDesigner';
 import { UDesigner } from '../forms/shapes/UDesigner';
 import { SinkDesigner } from '../forms/shapes/SinkDesigner';
-import { FeatureDesigner } from '../forms/editors/FeatureDesigner';
-import { EdgeProfileDesigner, EdgeProfileIcon } from '../forms/editors/EdgeProfileDesigner';
+import { EdgeProcessingDesigner } from '../forms/editors/EdgeProcessingDesigner';
 import { DxfOverview, DXF_ROLE_LABELS, DxfPreviewShape } from '../forms/import/DxfOverview';
 import { approvalItemHasExtractedGeometry, approvalPreviewDebugDumpFromState, approvalPreviewDebugSummary, ApprovalItemCrop } from '../forms/import/ApprovalOverview';
 import {
@@ -1390,18 +1389,17 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
               : <DesignerCanvas detail={detail} updateDetail={updateDetail} language={language} />}
 
             {showEdges && (
-              <>
-                <FeatureDesigner title="Потовщення" feature={detail.thickening} linkedSides={isImportedDetailEdit ? linkedImportedThickeningSides : []} sides={sides} onChange={(value) => updateDetail({ thickening: value })} />
-                <FeatureDesigner title="Підворот" feature={detail.fold} linkedSides={isImportedDetailEdit ? linkedImportedFoldSides : []} sides={sides} onChange={(value) => updateDetail({ fold: value })} />
-              </>
+              <EdgeProcessingDesigner
+                edgeProfiles={detail.edgeProfiles}
+                thickening={detail.thickening}
+                fold={detail.fold}
+                sides={sides}
+                blockedEdgeSides={isImportedDetailEdit ? [...linkedImportedThickeningSides, ...linkedImportedFoldSides] : []}
+                linkedThickeningSides={isImportedDetailEdit ? linkedImportedThickeningSides : []}
+                linkedFoldSides={isImportedDetailEdit ? linkedImportedFoldSides : []}
+                onChange={(patch) => updateDetail(patch)}
+              />
             )}
-            <EdgeProfileDesigner
-              title="Кромка"
-              profiles={detail.edgeProfiles}
-              sides={sides}
-              blockedSides={isImportedDetailEdit ? [...linkedImportedThickeningSides, ...linkedImportedFoldSides] : []}
-              onChange={(value) => updateDetail({ edgeProfiles: value })}
-            />
 
             {error && <div className="error-box">{error}</div>}
 
