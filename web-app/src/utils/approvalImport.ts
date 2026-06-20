@@ -226,7 +226,8 @@ function normalizeLines(text: string) {
 
 function parseNumber(value = '') {
   const normalized = value
-    .replace(/\s+(?=\d{3}\b)/g, '')
+    .replace(/\u00a0/g, '')
+    .replace(/\s+/g, '')
     .replace(/[^\d,.-]/g, '')
     .replace(',', '.');
   const number = Number(normalized);
@@ -761,157 +762,35 @@ function snapApprovalVisualDimension(value: number) {
   return roundToMillimeters(value, 10);
 }
 
-function areaFallbackSizeFromDrawing(drawing: ApprovalDrawingGeometry, area: number, maxAreaDivisor = 1) {
-  const naturalDimensionScore = (value: number) => {
-    if (value % 100 === 0) return 0;
-    if (value % 50 === 0) return 0.04;
-    if (value % 10 === 0) return 0.08;
-    if (value % 5 === 0) return 0.16;
-    return 0.34;
-  };
-  const areaConsistentCandidate = (candidateArea: number) => {
-    const targetMm2 = candidateArea * 1_000_000;
-    const aspect = drawing.width / Math.max(1, drawing.height);
-    if (!Number.isFinite(targetMm2) || targetMm2 <= 0 || !Number.isFinite(aspect) || aspect <= 0) return undefined;
-    const naturalHeight = Math.sqrt(targetMm2 / aspect);
-    const minHeight = Math.max(80, Math.floor(naturalHeight * 0.65));
-    const maxHeight = Math.min(6000, Math.ceil(naturalHeight * 1.35));
-    let best: { width: number; height: number; score: number } | undefined;
-    const scoreCandidate = (width: number, height: number) => {
-      if (width < 80 || width > 10000 || height < 80 || height > 6000) return undefined;
-      const areaScore = Math.abs(width * height - targetMm2) / targetMm2;
-      const aspectScore = Math.abs((width / height) - aspect) / Math.max(0.1, aspect);
-      const naturalScore = (naturalDimensionScore(width) + naturalDimensionScore(height)) * 0.02;
-      return areaScore * 2.5 + aspectScore * 0.85 + naturalScore;
-    };
-    const consider = (width: number, height: number, relaxed = false) => {
-      const score = scoreCandidate(width, height);
-      if (score === undefined) return;
-      if (!best || score < best.score || (relaxed && score <= best.score + 0.08)) {
-        best = { width, height, score };
-      }
-    };
-    for (let height = minHeight; height <= maxHeight; height += 1) {
-      consider(Math.max(1, Math.round(targetMm2 / height)), height);
-    }
-    const snappedHeights = new Set<number>();
-    if (best) {
-      snappedHeights.add(best.height);
-      snappedHeights.add(roundToMillimeters(best.height, 5));
-      snappedHeights.add(roundToMillimeters(best.height, 10));
-      if (Math.abs(best.height - 600) <= 12) snappedHeights.add(600);
-      if (maxAreaDivisor > 1 && drawing.height > drawing.width && best.height >= 520 && best.height <= 680) snappedHeights.add(600);
-    }
-    snappedHeights.forEach((height) => {
-      const isPanelHeightSnap = maxAreaDivisor > 1 && drawing.height > drawing.width && height === 600;
-      if (!best || (!isPanelHeightSnap && Math.abs(height - best.height) > 12)) return;
-      const rawWidth = targetMm2 / height;
-      consider(Math.round(rawWidth), height, true);
-      if (height <= 100) consider(roundToMillimeters(rawWidth, 5), height, true);
-    });
-    return best;
-  };
-  const candidateForArea = (candidateArea: number) => {
-    const areaCandidate = areaConsistentCandidate(candidateArea);
-    if (areaCandidate && areaCandidate.score < 0.8) {
-      return { width: areaCandidate.width, height: areaCandidate.height };
-    }
-    const scale = Math.sqrt((candidateArea * 1_000_000) / Math.max(1, drawing.area));
-    let width = Math.max(1, Math.round(drawing.width * scale));
-    let height = Math.max(1, Math.round(drawing.height * scale));
-    const snappedHeight = snapApprovalVisualDimension(height);
-    if (snappedHeight && Math.abs(snappedHeight - height) <= 5) {
-      height = snappedHeight;
-      width = Math.max(1, Math.round((candidateArea * 1_000_000) / height));
-    } else {
-      const snappedWidth = snapApprovalVisualDimension(width);
-      if (snappedWidth && Math.abs(snappedWidth - width) <= 5) {
-        width = snappedWidth;
-        height = Math.max(1, Math.round((candidateArea * 1_000_000) / width));
-      }
-    }
-    return { width, height };
-  };
-  const candidateScore = (candidate: { width: number; height: number; score?: number }, divisor: number) => {
-    const panelHeightScore = maxAreaDivisor > 1 && drawing.height > drawing.width
-      ? Math.abs(candidate.height - 600) / 600 * 0.35
-      : 0;
-    return (candidate.score ?? 0)
-      + panelHeightScore
-      + (divisor - 1) * 0.04;
-  };
-  if (maxAreaDivisor > 1) {
-    const candidates = Array.from({ length: maxAreaDivisor }, (_, index) => {
-      const divisor = index + 1;
-      const candidate = candidateForArea(area / divisor);
-      return { ...candidate, divisor, score: candidateScore(candidate, divisor) };
-    }).filter((candidate) => candidate.width >= 80 && candidate.height >= 80);
-    const best = candidates.sort((first, second) => first.score - second.score)[0];
-    if (best) return { width: best.width, height: best.height };
-  }
-  return candidateForArea(area);
-}
-
-/** Provides a non-destructive size for products whose drawing dimensions are not extractable as PDF text. */
 function fallbackSizeFromArea(area: number, type: DetailType) {
-  if (area <= 0) return { width: 600, height: 600 };
-  const squareMillimeters = area * 1_000_000;
-  const ratio = type === TYPE_WALL_PANEL || type === TYPE_FACADE ? 1.8 : 2.2;
-  const width = Math.max(180, Math.sqrt(squareMillimeters * ratio));
-  const height = Math.max(120, squareMillimeters / width);
-  return {
-    width: roundToMillimeters(width, 10),
-    height: roundToMillimeters(height, 10),
-  };
+  return { width: 0, height: 0 };
 }
 
-/** Chooses real side lengths from specification rows and avoids using element thickness as detail size. */
+/** Chooses real side lengths from specification rows. If no lengths, returns 0. */
 function detailSizeFromRows(rows: ApprovalSpecRow[], area: number, type: DetailType) {
   const lengths = rows
     .map((row) => row.width)
     .filter((value) => value >= 80)
     .sort((a, b) => b - a);
   const unique = lengths.filter((value, index) => index === 0 || Math.abs(value - lengths[index - 1]) > 2);
-  if (!unique.length) return { ...fallbackSizeFromArea(area, type), source: 'area-fallback' as const };
-
-  if (area > 0 && unique.length === 1) {
-    const otherSide = (area * 1_000_000) / unique[0];
+  
+  if (unique.length >= 2) {
     return {
       width: Math.max(100, Math.round(unique[0])),
-      height: Math.max(100, roundToMillimeters(otherSide, 10)),
+      height: Math.max(100, Math.round(unique[1])),
       source: 'specification' as const,
     };
   }
 
-  if (area > 0 && unique.length > 1) {
-    const target = area * 1_000_000;
-    let bestPair = [unique[0], unique[1]];
-    let bestScore = Number.POSITIVE_INFINITY;
-    unique.forEach((first, firstIndex) => {
-      unique.slice(firstIndex + 1).forEach((second) => {
-        const product = first * second;
-        const score = product >= target ? (product - target) / target : (target - product) / target + 0.25;
-        if (score < bestScore) {
-          bestScore = score;
-          bestPair = [first, second];
-        }
-      });
-    });
-    if (bestPair[0] * bestPair[1] < target * 0.5) {
-      return { ...fallbackSizeFromArea(area, type), source: 'area-fallback' as const };
-    }
+  if (unique.length === 1) {
     return {
-      width: Math.max(100, Math.round(bestPair[0])),
-      height: Math.max(100, Math.round(bestPair[1])),
+      width: Math.max(100, Math.round(unique[0])),
+      height: 0,
       source: 'specification' as const,
     };
   }
 
-  return {
-    width: Math.max(100, Math.round(unique[0] ?? 600)),
-    height: Math.max(100, Math.round(unique[1] ?? unique[0] ?? 600)),
-    source: 'specification' as const,
-  };
+  return { width: 0, height: 0, source: 'none' as const };
 }
 
 function sourceSideLengths(rows: ApprovalSpecRow[], dimensions: ApprovalDimensionLabel[] = []) {
@@ -932,25 +811,22 @@ function circleSizeFromArea(area: number) {
 
 function detailGeometryFromRows(rows: ApprovalSpecRow[], area: number, type: DetailType, shape: DetailShape, dimensions: ApprovalDimensionLabel[] = []) {
   const lengths = sourceSideLengths(rows, dimensions);
-  const targetArea = area > 0 ? area * 1_000_000 : 0;
 
   if (shape === SHAPE_CIRCLE) {
-    const diameter = Math.max(lengths.A ?? 0, lengths.B ?? 0, lengths.C ?? 0, lengths.D ?? 0, circleSizeFromArea(area));
-    return { width: Math.round(diameter), height: Math.round(diameter), source: targetArea ? 'specification' as const : 'area-fallback' as const };
+    const diameter = Math.max(lengths.A ?? 0, lengths.B ?? 0, lengths.C ?? 0, lengths.D ?? 0);
+    return { width: Math.round(diameter), height: Math.round(diameter), source: diameter > 0 ? 'specification' as const : 'none' as const };
   }
 
   if (shape === SHAPE_ELLIPSE) {
     const known = Object.values(lengths).filter((value) => value >= 80).sort((a, b) => b - a);
     if (known.length >= 2) return { width: Math.round(known[0]), height: Math.round(known[1]), source: 'specification' as const };
-    return { ...fallbackSizeFromArea(area, type), source: 'area-fallback' as const };
+    return { width: 0, height: 0, source: 'none' as const };
   }
 
   if (shape === SHAPE_RECT) {
     const horizontal = Math.max(lengths.A ?? 0, lengths.C ?? 0);
     const vertical = Math.max(lengths.B ?? 0, lengths.D ?? 0);
     if (horizontal && vertical) return { width: Math.round(horizontal), height: Math.round(vertical), source: 'specification' as const };
-    if (horizontal && targetArea) return { width: Math.round(horizontal), height: Math.max(100, roundToMillimeters(targetArea / horizontal, 10)), source: 'specification' as const };
-    if (vertical && targetArea) return { width: Math.max(100, roundToMillimeters(targetArea / vertical, 10)), height: Math.round(vertical), source: 'specification' as const };
     return detailSizeFromRows(rows, area, type);
   }
 
@@ -968,22 +844,6 @@ function detailGeometryFromRows(rows: ApprovalSpecRow[], area: number, type: Det
     if (!innerHorizontal && top && bottom) innerHorizontal = top - bottom;
     if (!innerVertical && right && left) innerVertical = right - left;
     if (!left && right && innerVertical) left = right - innerVertical;
-
-    if (targetArea && innerHorizontal && innerVertical && left && !bottom) {
-      bottom = (targetArea - innerHorizontal * left) / (innerVertical + left);
-    }
-    if (targetArea && bottom && innerHorizontal && innerVertical && !left) {
-      left = (targetArea - bottom * innerVertical) / (bottom + innerHorizontal);
-    }
-    if (targetArea && bottom && innerHorizontal && left && !innerVertical) {
-      innerVertical = (targetArea - innerHorizontal * left) / bottom - left;
-    }
-    if (targetArea && bottom && innerVertical && left && !innerHorizontal) {
-      innerHorizontal = (targetArea - bottom * (innerVertical + left)) / left;
-    }
-
-    if (!right && innerVertical && left) right = innerVertical + left;
-    if (!top && bottom && innerHorizontal) top = bottom + innerHorizontal;
 
     if (top && right) {
       return {
@@ -1032,71 +892,13 @@ function visualSizeFromDrawing(
   type: DetailType,
   shape: DetailShape,
 ) {
-  const targetArea = area > 0 ? area * 1_000_000 : 0;
-  const drawingAspect = drawing?.width && drawing.height ? drawing.width / drawing.height : 0;
-  const drawingAreaFactor = drawing?.width && drawing.height && drawing.area
-    ? drawing.area / (drawing.width * drawing.height)
-    : 1;
-  const pushUnique = (values: number[], value: number) => {
-    const rounded = Math.round(value);
-    if (!Number.isFinite(rounded) || rounded < 80 || rounded > 8000) return;
-    if (!values.some((item) => Math.abs(item - rounded) <= 2)) values.push(rounded);
-  };
   const known = dimensions
     .map((dimension) => dimension.value)
     .filter((value) => value >= 80)
     .sort((a, b) => b - a);
-  const rowValues = rows.map((row) => row.width).filter((value) => value >= 80);
-  const rowCandidate = visualRowSizeCandidate(rows, shape, drawing, area);
-  if (rowCandidate) {
-    return {
-      width: Math.round(rowCandidate.width),
-      height: Math.round(rowCandidate.height),
-      source: 'specification' as const,
-      warnings: [] as string[],
-    };
-  }
-  const unique: number[] = [];
-  known.forEach((value) => pushUnique(unique, value));
-  rowValues.forEach((value) => pushUnique(unique, value));
-  for (let first = 0; first < rowValues.length; first += 1) {
-    for (let second = first + 1; second < rowValues.length; second += 1) {
-      pushUnique(unique, rowValues[first] + rowValues[second]);
-      for (let third = second + 1; third < rowValues.length; third += 1) {
-        pushUnique(unique, rowValues[first] + rowValues[second] + rowValues[third]);
-      }
-    }
-  }
-  if (targetArea) {
-    [...unique].forEach((value) => {
-      pushUnique(unique, targetArea / value);
-      if (drawingAreaFactor > 0.2 && drawingAreaFactor < 1.1) pushUnique(unique, targetArea / Math.max(1, value * drawingAreaFactor));
-    });
-  }
+  const unique = known.filter((value, index) => index === 0 || Math.abs(value - known[index - 1]) > 2);
+
   if (unique.length >= 2) {
-    if (targetArea && drawingAspect) {
-      let best = { width: unique[0], height: unique[1], score: Number.POSITIVE_INFINITY };
-      unique.forEach((first) => {
-        unique.forEach((second) => {
-          if (first === second) return;
-          const width = Math.max(first, second);
-          const height = Math.min(first, second);
-          const visualArea = drawing?.area && drawing.width && drawing.height
-            ? drawing.area * (width / drawing.width) * (height / drawing.height)
-            : width * height;
-          const areaScore = Math.abs(visualArea - targetArea) / targetArea;
-          const aspectScore = Math.abs((width / height) - drawingAspect) / Math.max(0.1, drawingAspect) * 0.18;
-          const score = areaScore + aspectScore;
-          if (score < best.score) best = { width, height, score };
-        });
-      });
-      return {
-        width: Math.round(best.width),
-        height: Math.round(best.height),
-        source: 'specification' as const,
-        warnings: best.score > 0.25 ? ['Масштаб схеми підібрано за числовими кандидатами таблиці/площі; перевірте габарити вручну.'] : [] as string[],
-      };
-    }
     return {
       width: Math.round(unique[0]),
       height: Math.round(unique[1]),
@@ -1104,27 +906,20 @@ function visualSizeFromDrawing(
       warnings: [] as string[],
     };
   }
-  if (unique.length === 1 && area > 0) {
+  if (unique.length === 1) {
     return {
       width: Math.round(unique[0]),
-      height: Math.max(1, roundToMillimeters((area * 1_000_000) / unique[0], 10)),
+      height: 0,
       source: 'specification' as const,
-      warnings: ['Знайдено тільки один підписаний розмір; другий габарит розраховано з площі виробу.'],
+      warnings: ['Знайдено тільки один підписаний розмір; другий габарит невідомий.'],
     };
   }
-  if (drawing && area > 0 && drawing.width > 0 && drawing.height > 0) {
-    const fallback = areaFallbackSizeFromDrawing(drawing, area);
-    return {
-      width: fallback.width,
-      height: fallback.height,
-      source: 'area-fallback' as const,
-      warnings: ['Не знайдено текстових розмірів біля схеми; контур масштабовано за площею виробу та потребує перевірки.'],
-    };
-  }
+  
   return {
-    ...fallbackSizeFromArea(area, type),
-    source: 'area-fallback' as const,
-    warnings: ['Не знайдено схеми або підписаних розмірів; розмір визначено приблизно.'],
+    width: 0,
+    height: 0,
+    source: 'none' as const,
+    warnings: ['Не знайдено схеми або підписаних розмірів; заповніть габарити вручну.'],
   };
 }
 

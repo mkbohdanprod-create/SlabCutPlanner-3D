@@ -1,5 +1,6 @@
 import { ChangeEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { referenceData, uid } from '../../domain/defaults';
+import { Loader2, Play, ChevronDown } from 'lucide-react';
 import type { CutAllowances, DetailPart, DefectZone, EdgeProfileSelection, ManualDimension, MaterialType, Placement, Point, SlabInstance, UiLanguage } from '../../domain/types';
 import { t, translateStaticUiText } from '../../i18n';
 import { normalizeRotation, placementPolygon, pointString, polygonBounds, rotatedLocalPoints, rotatedPoints, rotatedSize, translatePoints } from '../../lib/project';
@@ -44,7 +45,10 @@ export function SlabBoard() {
     deleteManualDimension,
     clearManualDimensionsForSlab,
     updateSlab,
+    isPacking,
     runPacking,
+    packingMode,
+    setPackingMode,
     addDetail,
     startEditDetail,
     deleteDetail,
@@ -59,6 +63,10 @@ export function SlabBoard() {
     togglePlacementLock,
     setPlacementLocks,
     pushMovementSnapshot,
+    selectedDetailId,
+    setSelectedDetailId,
+    selectedPlacementIds,
+    setSelectedPlacementIds,
   } = useProjectStore();
   const { viewMode, setViewMode } = useUIStore();
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -75,7 +83,6 @@ export function SlabBoard() {
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const [showDimensions, setShowDimensions] = useState(true);
   const [magnifierOpen, setMagnifierOpen] = useState(false);
-  const [selectedPlacementIds, setSelectedPlacementIds] = useState<string[]>([]);
   const [selectedManualDimensionId, setSelectedManualDimensionId] = useState<string | undefined>(undefined);
   const [expandedLabelPartId, setExpandedLabelPartId] = useState<string | undefined>(undefined);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenu | null>(null);
@@ -112,7 +119,6 @@ export function SlabBoard() {
   const openSlabEditor = useCallback((slabId: string) => {
     const slab = project.slabs.find((item) => item.id === slabId);
     if (!slab) return;
-    setSelectedSlabId(slabId);
     setSlabEditor({
       id: slabId,
       draft: {
@@ -126,8 +132,8 @@ export function SlabBoard() {
         serialNumber: slab.serialNumber,
       },
     });
-    setContextMenu(null);
-  }, [project.slabs, setSelectedSlabId]);
+    setSelectedSlabId(slabId);
+  }, [project.slabs, selectedSlabId, setSelectedSlabId]);
 
   const updateSlabEditorDraft = (patch: Partial<SlabEditorDraft>) => {
     setSlabEditor((current) => current ? { ...current, draft: { ...current.draft, ...patch } } : current);
@@ -409,6 +415,7 @@ export function SlabBoard() {
       return;
     }
     setSelectedManualDimensionId(undefined);
+    if (selectedDetailId) setSelectedDetailId(undefined);
     const target = event.target as Element;
     if (target.closest('.part-group, .defect-shape, .detail-label-popover')) return;
     const point = clientToSlabPoint(slab.id, event.clientX, event.clientY);
@@ -422,7 +429,7 @@ export function SlabBoard() {
       currentX: point.x,
       currentY: point.y,
     });
-  }, [addManualDimensionPoint, bufferDragPartId, clientToSlabPoint, dimensionDraft, drag, setSelectedSlabId]);
+  }, [addManualDimensionPoint, bufferDragPartId, clientToSlabPoint, dimensionDraft, drag, setSelectedSlabId, selectedDetailId, setSelectedDetailId]);
 
   const openSlabContextMenu = useCallback((slab: SlabInstance, event: ReactMouseEvent<SVGGElement>) => {
     const target = event.target as Element;
@@ -443,6 +450,7 @@ export function SlabBoard() {
     const localPoint = clientToSlabPoint(slab.id, event.clientX, event.clientY);
     setSelectedSlabId(slab.id);
     setSelectedManualDimensionId(undefined);
+    setSelectedDetailId(part.detailId);
     const groupIds = selectedPlacementIds.includes(placement.id) ? selectedPlacementIds : [placement.id];
     setSelectedPlacementIds(groupIds);
     setAngleEditor(null);
@@ -799,36 +807,109 @@ export function SlabBoard() {
     && contextAssemblyPlacementIds.every((id) => project.placements.find((placement) => placement.id === id)?.manualLocked);
   const language = project.uiLanguage ?? 'uk';
   const ui = (value: string) => translateStaticUiText(language, value);
+  const textureSelectionEnabled = project.textureSelectionEnabled;
+  const updateProjectHeader = useProjectStore((s) => s.updateProjectHeader);
 
   return (
     <section className="panel canvas-panel">
-      <div className="toolbar">
-        <div className="segmented">
-          <button className={viewMode === 'technical' ? 'active' : ''} onClick={() => setViewMode('technical')}>{t(language, 'technical')}</button>
-          <button className={viewMode === 'photo' ? 'active' : ''} onClick={() => setViewMode('photo')}>{t(language, 'photoSurface')}</button>
-          <button className={viewMode === 'texture' ? 'active' : ''} onClick={() => setViewMode('texture')}>{t(language, 'textureMode')}</button>
-          <button className={showDimensions ? 'active' : ''} onClick={() => setShowDimensions((value) => !value)}>{t(language, 'dimensions')}</button>
-          <button
-            disabled={!activeSlabId || !activeSlabManualDimensionCount}
-            onClick={() => {
-              if (!activeSlabId) return;
-              clearManualDimensionsForSlab(activeSlabId);
-              setSelectedManualDimensionId(undefined);
-            }}
-          >
-            {t(language, 'clearManualDimensions')}
-          </button>
-          <button
-            disabled={!selectedManualDimensionId}
-            onClick={() => {
-              if (!selectedManualDimensionId) return;
-              deleteManualDimension(selectedManualDimensionId);
-              setSelectedManualDimensionId(undefined);
-            }}
-          >
-            {t(language, 'deleteManualDimension')}
-          </button>
-          <button className={magnifierOpen ? 'active' : ''} onClick={() => setMagnifierOpen((value) => !value)}>{t(language, 'magnifier')}</button>
+      <div className="toolbar flex items-center w-full">
+        <div className="flex flex-wrap gap-4 items-center flex-1">
+          <div className="segmented">
+            <button className={viewMode === 'technical' ? 'active' : ''} onClick={() => setViewMode('technical')}>{t(language, 'technical')}</button>
+            <button className={viewMode === 'photo' ? 'active' : ''} onClick={() => setViewMode('photo')}>{t(language, 'photoSurface')}</button>
+            <button className={viewMode === 'texture' ? 'active' : ''} onClick={() => setViewMode('texture')}>{t(language, 'textureMode')}</button>
+            <button className={showDimensions ? 'active' : ''} onClick={() => setShowDimensions((value) => !value)}>{t(language, 'dimensions')}</button>
+          </div>
+
+          <div className="segmented">
+            <button className={textureSelectionEnabled ? 'active' : ''} onClick={() => updateProjectHeader({ textureSelectionEnabled: !textureSelectionEnabled })}>{ui('Підбір текстури')}</button>
+            <button className={magnifierOpen ? 'active' : ''} onClick={() => setMagnifierOpen((value) => !value)}>{t(language, 'magnifier')}</button>
+          </div>
+
+          <div className="segmented">
+            <button
+              disabled={!activeSlabId || !activeSlabManualDimensionCount}
+              onClick={() => {
+                if (!activeSlabId) return;
+                clearManualDimensionsForSlab(activeSlabId);
+                setSelectedManualDimensionId(undefined);
+              }}
+            >
+              {t(language, 'clearManualDimensions')}
+            </button>
+            <button
+              disabled={!selectedManualDimensionId}
+              onClick={() => {
+                if (!selectedManualDimensionId) return;
+                deleteManualDimension(selectedManualDimensionId);
+                setSelectedManualDimensionId(undefined);
+              }}
+            >
+              {t(language, 'deleteManualDimension')}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center ml-4">
+          <div className="segmented">
+            <button 
+              className={packingMode === 'economy' ? 'active' : ''} 
+              disabled={isPacking}
+              onClick={() => {
+                if (isPacking) return;
+                useUIStore.getState().showConfirm({
+                  title: 'Автоматичний розкрій',
+                  message: 'Увага! При запуску автоматичного розкрою всі деталі, які ви переміщали, змінять свої позиції на слебах. Продовжити?',
+                  confirmText: 'Розкроїти',
+                  onConfirm: () => {
+                    setPackingMode('economy');
+                    runPacking('economy');
+                  }
+                });
+              }}
+            >
+              {isPacking && packingMode === 'economy' && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5 inline-block" />}
+              Економний
+            </button>
+            <button 
+              className={packingMode === 'optimal' ? 'active' : ''} 
+              disabled={isPacking}
+              onClick={() => {
+                if (isPacking) return;
+                useUIStore.getState().showConfirm({
+                  title: 'Автоматичний розкрій',
+                  message: 'Увага! При запуску автоматичного розкрою всі деталі, які ви переміщали, змінять свої позиції на слебах. Продовжити?',
+                  confirmText: 'Розкроїти',
+                  onConfirm: () => {
+                    setPackingMode('optimal');
+                    runPacking('optimal');
+                  }
+                });
+              }}
+            >
+              {isPacking && packingMode === 'optimal' && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5 inline-block" />}
+              Оптимальний
+            </button>
+            <button 
+              className={packingMode === 'full_texture' ? 'active' : ''} 
+              disabled={isPacking}
+              onClick={() => {
+                if (isPacking) return;
+                useUIStore.getState().showConfirm({
+                  title: 'Автоматичний розкрій',
+                  message: 'Увага! При запуску автоматичного розкрою всі деталі, які ви переміщали, змінять свої позиції на слебах. Продовжити?',
+                  confirmText: 'Розкроїти',
+                  onConfirm: () => {
+                    setPackingMode('full_texture');
+                    runPacking('full_texture');
+                  }
+                });
+              }}
+            >
+              {isPacking && packingMode === 'full_texture' && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5 inline-block" />}
+              Повна текстура
+            </button>
+          </div>
         </div>
       </div>
       <div ref={slabShellRef} className="slab-scroll-shell" style={slabShellHeight ? { height: `${slabShellHeight}px` } : undefined}>
@@ -852,8 +933,9 @@ export function SlabBoard() {
                 const label = fitLabel(displayName, showDimensions ? part.dimsLabel : '', (bounds.maxX - bounds.minX) * scale, (bounds.maxY - bounds.minY) * scale, part.isMain ? undefined : part.edgeSide);
                 const elementText = elementLabel(part);
                 const elementFontSize = elementText ? Math.max(7, Math.min(10, Math.min((bounds.maxX - bounds.minX) * scale, (bounds.maxY - bounds.minY) * scale) / 3.2)) : 0;
+                const isSelected = selectedPlacementIds.includes(placement.id) || part.detailId === selectedDetailId;
                 return (
-                  <g key={placement.id} className={`part-group${selectedPlacementIds.includes(placement.id) ? ' selected' : ''}${placement.conflict || placement.outOfBounds ? ' conflicted' : ''}${drag?.type === 'placement' && drag.id === placement.id ? ' dragging-source' : ''}`} onDoubleClick={(event) => {
+                  <g key={placement.id} className={`part-group${isSelected ? ' selected' : ''}${placement.conflict || placement.outOfBounds ? ' conflicted' : ''}${drag?.type === 'placement' && drag.id === placement.id ? ' dragging-source' : ''}`} onDoubleClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
                     const groupIds = selectedPlacementIds.includes(placement.id) ? selectedPlacementIds : [placement.id];
@@ -873,6 +955,7 @@ export function SlabBoard() {
                     e.preventDefault();
                     e.stopPropagation();
                     setSelectedManualDimensionId(undefined);
+                    setSelectedDetailId(part.detailId);
                     if (e.ctrlKey) {
                       setSelectedPlacementIds((ids) => ids.includes(placement.id)
                         ? ids.filter((id) => id !== placement.id)

@@ -30,6 +30,8 @@ export interface ProjectSlice {
   addSlab: (slab: SlabInstance) => void;
   updateSlab: (slabId: string, patch: Partial<SlabInstance>) => void;
   deleteSlab: (slabId: string) => void;
+  addManualDimension: (dimension: import('../../domain/types').ManualDimension) => void;
+  deleteManualDimension: (dimensionId: string) => void;
   clearManualDimensionsForSlab: (slabId: string) => void;
   addDetail: (detail: Detail) => void;
   addDetails: (details: Detail[]) => void;
@@ -166,7 +168,28 @@ export const createProjectSlice: StateCreator<
       if (state.project.manualDimensions) {
         state.project.manualDimensions = state.project.manualDimensions.filter(d => d.slabId !== slabId);
       }
-      state.project.updatedAt = new Date().toISOString();
+      finalizeProjectState(state, false);
+    });
+    persist(get().project, get().currentDbProjectId);
+  },
+
+  addManualDimension: (dimension) => {
+    set((state) => {
+      if (!state.project.manualDimensions) {
+        state.project.manualDimensions = [];
+      }
+      state.project.manualDimensions.push(dimension);
+      finalizeProjectState(state, false);
+    });
+    persist(get().project, get().currentDbProjectId);
+  },
+
+  deleteManualDimension: (dimensionId) => {
+    set((state) => {
+      if (state.project.manualDimensions) {
+        state.project.manualDimensions = state.project.manualDimensions.filter(d => d.id !== dimensionId);
+      }
+      finalizeProjectState(state, false);
     });
     persist(get().project, get().currentDbProjectId);
   },

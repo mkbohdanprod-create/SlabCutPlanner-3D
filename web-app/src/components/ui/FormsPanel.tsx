@@ -85,9 +85,19 @@ import { SinkDesigner } from '../forms/shapes/SinkDesigner';
 import { FeatureDesigner } from '../forms/editors/FeatureDesigner';
 import { EdgeProfileDesigner, EdgeProfileIcon } from '../forms/editors/EdgeProfileDesigner';
 import { DxfOverview, DXF_ROLE_LABELS, DxfPreviewShape } from '../forms/import/DxfOverview';
-import { ApprovalOverview, approvalItemPoints, approvalItemHasExtractedGeometry, approvalPreviewDebugDumpFromState, approvalPreviewDebugSummary, ApprovalItemCrop } from '../forms/import/ApprovalOverview';
+import { approvalItemHasExtractedGeometry, approvalPreviewDebugDumpFromState, approvalPreviewDebugSummary, ApprovalItemCrop } from '../forms/import/ApprovalOverview';
+import {
+  approvalItemPoints,
+  approvalItemToDxfContour,
+  approvalFeatureOverlaysForItem,
+  approvalEdgeOverlaysForItem,
+  approvalJointOverlaysForItem,
+} from '../forms/import/approvalCanvasUtils';
+import type { DxfOverviewOverlay } from '../forms/import/DxfOverview';
 import { DimInput, QuantityInput, ShapeIcon, Field } from '../forms/utils/sharedInputs';
-export function FormsPanel() {
+import { splitApprovalItemByJoint } from '../../engines/approvalSplit';
+import { ApprovalItemEditors } from '../forms/import/ApprovalItemEditors';
+export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   const { addSlab, addDetail, addDetails, updateDetailRecord, updateAllowances, updateProjectHeader, project, editingDetailId, clearEditDetail } = useProjectStore();
   const language = project.uiLanguage ?? 'uk';
   const ui = (value: string) => translateStaticUiText(language, value);
@@ -97,6 +107,7 @@ export function FormsPanel() {
   const dxfInputRef = useRef<HTMLInputElement | null>(null);
   const approvalInputRef = useRef<HTMLInputElement | null>(null);
   const [approvalPreview, setApprovalPreview] = useState<ApprovalImportPreview | null>(null);
+  const [approvalSplitItemIds, setApprovalSplitItemIds] = useState<string[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [approvalDxfContext, setApprovalDxfContext] = useState<ApprovalImportPreview | null>(null);
   const [modalPosition, setModalPosition] = useState<{ x: number; y: number } | null>(null);
@@ -119,6 +130,14 @@ export function FormsPanel() {
   const [dxfZoom, setDxfZoom] = useState(1);
   const [dxfNotice, setDxfNotice] = useState('');
   const dxfOverviewScrollRef = useRef<HTMLDivElement | null>(null);
+  const [approvalSelectedItemIds, setApprovalSelectedItemIds] = useState<string[]>([]);
+  const [approvalBlockMode, setApprovalBlockMode] = useState(false);
+  const [approvalBlockDraft, setApprovalBlockDraft] = useState<DxfBlockDraft | null>(null);
+  const [approvalPreviewDrag, setApprovalPreviewDrag] = useState<DxfPreviewDrag | null>(null);
+  const [approvalOverviewPanDrag, setApprovalOverviewPanDrag] = useState<DxfModalResize | null>(null);
+  const [approvalZoom, setApprovalZoom] = useState(1);
+  const [approvalPreviewCanvasSize, setApprovalPreviewCanvasSize] = useState({ width: 1, height: 1 });
+  const approvalOverviewScrollRef = useRef<HTMLDivElement | null>(null);
   const [slab, setSlab] = useState({
     width: 3200,
     height: 1600,
@@ -502,18 +521,45 @@ export function FormsPanel() {
         decor: approvalPreview.decor || current.decor,
       }));
     }
-    const imported = importableItems.map((item) => ({
-      id: uid('detail'),
-      type: item.type,
-      shape: item.shape,
-      quantity: item.quantity,
-      thickness: approvalPreview.thickness || detail.thickness,
-      label: item.name,
-      thickening: item.thickening,
-      fold: item.fold,
-      edgeProfiles: item.edgeProfiles,
-      geometry: approvalItemGeometry(item),
-    } satisfies Detail));
+
+    // P1.2 — розбиття позначених деталей по стику (no-op, якщо нічого не позначено)
+    const importedItems = importableItems.flatMap((item) => (
+      approvalSplitItemIds.includes(item.id) ? splitApprovalItemByJoint(item) : [item]
+    ));
+
+    // P1.1 — групування: спільний origin для деталей одного виробу
+    const approvalGroupKey = (item: ApprovalImportItem) =>
+      `Бланк ${approvalPreview.orderNumber || approvalPreview.fileName} виріб ${item.sourceProductNumber}`;
+    const approvalGroupOrigins = new Map<string, { x: number; y: number }>();
+    importedItems.forEach((item) => {
+      const key = approvalGroupKey(item);
+      const origin = approvalGroupOrigins.get(key);
+      approvalGroupOrigins.set(key, {
+        x: Math.min(origin?.x ?? Infinity, item.sourceX),
+        y: Math.min(origin?.y ?? Infinity, item.sourceY),
+      });
+    });
+
+    const imported = importedItems.map((item) => {
+      const groupKey = approvalGroupKey(item);
+      const groupOrigin = approvalGroupOrigins.get(groupKey) ?? { x: item.sourceX, y: item.sourceY };
+      return {
+        id: uid('detail'),
+        type: item.type,
+        shape: item.shape,
+        quantity: item.quantity,
+        thickness: approvalPreview.thickness || detail.thickness,
+        label: item.name,
+        thickening: item.thickening,
+        fold: item.fold,
+        edgeProfiles: item.edgeProfiles,
+        importGroupId: groupKey,
+        importOffsetX: item.sourceX - groupOrigin.x,
+        importOffsetY: item.sourceY - groupOrigin.y,
+        geometry: approvalItemGeometry(item),
+      } satisfies Detail;
+    });
+
     addDetails(imported);
     closeApprovalPreview();
   };
@@ -1050,42 +1096,194 @@ export function FormsPanel() {
     setDxfBlockDraft(null);
     setDxfBlockMode(false);
   };
+  const approvalPreviewContours = useMemo(() => approvalPreview?.items.filter(approvalItemHasExtractedGeometry).map(approvalItemToDxfContour) ?? [], [approvalPreview]);
+  const approvalPreviewOverlays = useMemo(() => {
+    if (!approvalPreview) return [];
+    const items = approvalPreview.items.filter(approvalItemHasExtractedGeometry);
+    return [
+      ...items.flatMap(approvalFeatureOverlaysForItem),
+      ...items.flatMap(approvalEdgeOverlaysForItem),
+      ...items.flatMap(approvalJointOverlaysForItem),
+    ];
+  }, [approvalPreview]);
+
+  useEffect(() => {
+    if (!approvalOverviewScrollRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setApprovalPreviewCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+      }
+    });
+    observer.observe(approvalOverviewScrollRef.current);
+    return () => observer.disconnect();
+  }, [approvalPreview]);
+
+  useEffect(() => {
+    if (!approvalOverviewPanDrag || !approvalOverviewScrollRef.current) return;
+    const viewport = approvalOverviewScrollRef.current;
+    const onMove = (event: globalThis.MouseEvent) => {
+      viewport.scrollLeft = approvalOverviewPanDrag.originX - (event.clientX - approvalOverviewPanDrag.startX);
+      viewport.scrollTop = approvalOverviewPanDrag.originY - (event.clientY - approvalOverviewPanDrag.startY);
+    };
+    const onUp = () => setApprovalOverviewPanDrag(null);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [approvalOverviewPanDrag]);
+
+  const beginApprovalPreviewPan = (event: React.MouseEvent<SVGSVGElement>) => {
+    const viewport = approvalOverviewScrollRef.current;
+    if (!viewport) return;
+    setApprovalOverviewPanDrag({
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: viewport.scrollLeft,
+      originY: viewport.scrollTop,
+      originWidth: 0,
+      originHeight: 0,
+    });
+  };
+
+  const onApprovalOverviewWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    const viewport = approvalOverviewScrollRef.current;
+    if (!viewport) return;
+    const rect = viewport.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const step = 0.15;
+    const rawNextZoom = event.deltaY < 0 ? approvalZoom * (1 + step) : approvalZoom / (1 + step);
+    const nextZoom = Math.max(0.1, Math.min(5, rawNextZoom));
+    const ratio = nextZoom / approvalZoom;
+    const nextLeft = (viewport.scrollLeft + pointerX) * ratio - pointerX;
+    const nextTop = (viewport.scrollTop + pointerY) * ratio - pointerY;
+    setApprovalZoom(nextZoom);
+    requestAnimationFrame(() => {
+      viewport.scrollLeft = nextLeft;
+      viewport.scrollTop = nextTop;
+    });
+  };
+
+  const beginApprovalPreviewDrag = (contour: DxfPreviewContour, point: DxfPoint, additive: boolean) => {
+    const selected = approvalSelectedItemIds.includes(contour.id)
+      ? approvalSelectedItemIds
+      : additive ? [...approvalSelectedItemIds, contour.id] : [contour.id];
+    const selectedSet = new Set(selected);
+    setApprovalSelectedItemIds(selected);
+    setApprovalPreviewDrag({
+      startX: point.x,
+      startY: point.y,
+      contourIds: selected,
+      origins: Object.fromEntries((approvalPreview?.items ?? [])
+        .filter((item) => selectedSet.has(item.id))
+        .map((item) => [item.id, { x: item.sourceX, y: item.sourceY }])),
+    });
+  };
+
+  const moveApprovalPreviewSelection = (point: DxfPoint) => {
+    if (!approvalPreviewDrag) return;
+    const dx = point.x - approvalPreviewDrag.startX;
+    const dy = point.y - approvalPreviewDrag.startY;
+    setApprovalPreview((prev) => prev ? {
+      ...prev,
+      items: prev.items.map((item) => {
+        const origin = approvalPreviewDrag.origins[item.id];
+        return origin ? { ...item, sourceX: origin.x + dx, sourceY: origin.y + dy } : item;
+      })
+    } : null);
+  };
+
+  const finishApprovalPreviewDrag = () => {
+    setApprovalPreviewDrag(null);
+  };
+
+  const rotateApprovalPreviewSelection = (contour: DxfPreviewContour) => {
+    const selectedSet = new Set(approvalSelectedItemIds.includes(contour.id) ? approvalSelectedItemIds : [contour.id]);
+    const selectedContours = approvalPreviewContours.filter(c => selectedSet.has(c.id));
+    if (!selectedContours.length) return;
+    const bounds = dxfSelectionBounds(approvalPreviewContours, Array.from(selectedSet));
+    if (!bounds) return;
+    const center = { x: bounds.minX + bounds.width / 2, y: bounds.minY + bounds.height / 2 };
+    setApprovalPreview((prev) => prev ? {
+      ...prev,
+      items: prev.items.map((item) => {
+        if (!selectedSet.has(item.id)) return item;
+        const c = approvalPreviewContours.find(c => c.id === item.id);
+        if (!c) return item;
+        const rotated = rotateDxfPreviewContour(c, center);
+        return {
+          ...item,
+          sourceX: Math.round(rotated.sourceX),
+          sourceY: Math.round(rotated.sourceY),
+          width: Math.round(rotated.width),
+          height: Math.round(rotated.height),
+          customPoints: rotated.points,
+          customHoles: rotated.holes,
+          sideSegments: rotated.sideSegments,
+        };
+      })
+    } : null);
+  };
+
+  const finishApprovalBlockSelection = () => {
+    if (!approvalBlockDraft) return;
+    const minX = Math.min(approvalBlockDraft.startX, approvalBlockDraft.currentX);
+    const minY = Math.min(approvalBlockDraft.startY, approvalBlockDraft.currentY);
+    const maxX = Math.max(approvalBlockDraft.startX, approvalBlockDraft.currentX);
+    const maxY = Math.max(approvalBlockDraft.startY, approvalBlockDraft.currentY);
+    const selected = approvalPreviewContours.filter((contour) => (
+      contour.sourceX >= minX
+      && contour.sourceY >= minY
+      && contour.sourceX + contour.width <= maxX
+      && contour.sourceY + contour.height <= maxY
+    ));
+    setApprovalSelectedItemIds(selected.map((contour) => contour.id));
+    setApprovalBlockDraft(null);
+    setApprovalBlockMode(false);
+  };
 
   return (
-    <section className="panel forms-panel">
-      <div className="subgrid two-col">
-        <div className="form-zone">
-          <h3>Додати слеб</h3>
-          <div className="preset-row">
-            {referenceData.slabSizes.map((s) => (
-              <button key={`${s.width}-${s.height}`} type="button" onClick={() => setSlab((p) => ({ ...p, width: s.width, height: s.height }))}>{s.width}×{s.height}</button>
-            ))}
+    <section className="panel forms-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {(!activeTab || activeTab === 'slabs') && (
+          <div className="form-zone" style={{ margin: 0 }}>
+            <h3>Додати слеб</h3>
+            <div className="preset-row">
+              {referenceData.slabSizes.map((s) => (
+                <button key={`${s.width}-${s.height}`} type="button" onClick={() => setSlab((p) => ({ ...p, width: s.width, height: s.height }))}>{s.width}×{s.height}</button>
+              ))}
+            </div>
+            <div className="form-grid compact">
+              <Field label="Серійний номер"><input value={slab.serialNumber} onChange={(e) => setSlab({ ...slab, serialNumber: e.target.value })} /></Field>
+              <Field label="Матеріал"><select value={slab.material} onChange={(e) => setSlab({ ...slab, material: e.target.value as MaterialType })}>{referenceData.materials.map((m) => <option key={m} value={m}>{ui(m)}</option>)}</select></Field>
+              <Field label="Ширина"><input type="number" value={slab.width} onChange={(e) => setSlab({ ...slab, width: Number(e.target.value) })} /></Field>
+              <Field label="Висота"><input type="number" value={slab.height} onChange={(e) => setSlab({ ...slab, height: Number(e.target.value) })} /></Field>
+              <Field label="Товщина"><input type="number" value={slab.thickness} onChange={(e) => setSlab({ ...slab, thickness: Number(e.target.value) })} /></Field>
+              <Field label="Мін. відступ"><input type="number" value={slab.minMargin} onChange={(e) => setSlab({ ...slab, minMargin: Number(e.target.value) })} /></Field>
+              <Field label="Декор"><input value={slab.decor} onChange={(e) => setSlab({ ...slab, decor: e.target.value })} /></Field>
+              <Field label="Коментар"><input value={slab.comment} onChange={(e) => setSlab({ ...slab, comment: e.target.value })} /></Field>
+            </div>
+            <button type="button" onClick={addSlabClick}>Додати слеб</button>
           </div>
-          <div className="form-grid compact">
-            <Field label="Серійний номер"><input value={slab.serialNumber} onChange={(e) => setSlab({ ...slab, serialNumber: e.target.value })} /></Field>
-            <Field label="Матеріал"><select value={slab.material} onChange={(e) => setSlab({ ...slab, material: e.target.value as MaterialType })}>{referenceData.materials.map((m) => <option key={m} value={m}>{ui(m)}</option>)}</select></Field>
-            <Field label="Ширина"><input type="number" value={slab.width} onChange={(e) => setSlab({ ...slab, width: Number(e.target.value) })} /></Field>
-            <Field label="Висота"><input type="number" value={slab.height} onChange={(e) => setSlab({ ...slab, height: Number(e.target.value) })} /></Field>
-            <Field label="Товщина"><input type="number" value={slab.thickness} onChange={(e) => setSlab({ ...slab, thickness: Number(e.target.value) })} /></Field>
-            <Field label="Мін. відступ"><input type="number" value={slab.minMargin} onChange={(e) => setSlab({ ...slab, minMargin: Number(e.target.value) })} /></Field>
-            <Field label="Декор"><input value={slab.decor} onChange={(e) => setSlab({ ...slab, decor: e.target.value })} /></Field>
-            <Field label="Коментар"><input value={slab.comment} onChange={(e) => setSlab({ ...slab, comment: e.target.value })} /></Field>
+        )}
+        {(!activeTab || activeTab === 'details') && (
+          <div className="detail-launcher form-zone" style={{ margin: 0 }}>
+            <h3>Деталі</h3>
+            <button type="button" className="primary-action detail-open-button" onClick={() => { clearEditDetail(); setDetail(createDraft()); setDetailOpen(true); }}>Додати деталь</button>
+            <button type="button" onClick={() => dxfInputRef.current?.click()}>Імпортувати DXF</button>
+            <button type="button" disabled={isImporting} onClick={() => approvalInputRef.current?.click()}>
+              {isImporting ? 'Обробка бланку (OCR)...' : 'Імпортувати бланк погодження'}
+            </button>
+            <button type="button" onClick={() => setAllowancesOpen(true)}>Припуски</button>
+            <input ref={dxfInputRef} type="file" accept=".dxf,.dwg" hidden onChange={onDxfFile} />
+            <input ref={approvalInputRef} type="file" accept=".pdf,.xlsx,.xls,.docx" hidden onChange={onApprovalFile} />
+            {!detailOpen && error && <div className="error-box" style={{ marginTop: '1rem' }}>{error}</div>}
           </div>
-          <button type="button" onClick={addSlabClick}>Додати слеб</button>
-        </div>
-        <div className="detail-launcher form-zone">
-          <h3>Деталі</h3>
-          <button type="button" className="primary-action detail-open-button" onClick={() => { clearEditDetail(); setDetail(createDraft()); setDetailOpen(true); }}>Додати деталь</button>
-          <button type="button" onClick={() => dxfInputRef.current?.click()}>Імпортувати DXF</button>
-          <button type="button" disabled={isImporting} onClick={() => approvalInputRef.current?.click()}>
-            {isImporting ? 'Обробка бланку (OCR)...' : 'Імпортувати бланк погодження'}
-          </button>
-          <button type="button" onClick={() => setAllowancesOpen(true)}>Припуски</button>
-          <input ref={dxfInputRef} type="file" accept=".dxf,.dwg" hidden onChange={onDxfFile} />
-          <input ref={approvalInputRef} type="file" accept=".pdf,.xlsx,.xls,.docx" hidden onChange={onApprovalFile} />
-          {!detailOpen && error && <div className="error-box" style={{ marginTop: '1rem' }}>{error}</div>}
-        </div>
-      </div>
+        )}
 
       {allowancesOpen && (
         <div className="modal-backdrop" role="presentation">
@@ -1246,16 +1444,59 @@ export function FormsPanel() {
               </Field>
             </div>
             <div className="dxf-tool-row approval-tool-row">
+              <button
+                type="button"
+                className="dxf-tool-button"
+                onClick={() => setApprovalSelectedItemIds(approvalPreview.items.filter(approvalItemHasExtractedGeometry).map(i => i.id))}
+              >
+                Виділити все
+              </button>
+              <button
+                type="button"
+                className="dxf-tool-button"
+                onClick={() => setApprovalSelectedItemIds([])}
+              >
+                Прибрати все
+              </button>
+              <button
+                type="button"
+                className={approvalBlockMode ? 'dxf-tool-button active' : 'dxf-tool-button'}
+                aria-pressed={approvalBlockMode}
+                onClick={() => {
+                  setApprovalBlockDraft(null);
+                  setApprovalSelectedItemIds([]);
+                  setApprovalBlockMode((current) => !current);
+                }}
+              >
+                Виділити блоком
+              </button>
+              <button
+                type="button"
+                className="dxf-tool-button"
+                disabled={!approvalSelectedItemIds.length}
+                onClick={() => {
+                  const selected = approvalPreviewContours.find((contour) => approvalSelectedItemIds.includes(contour.id));
+                  if (selected) rotateApprovalPreviewSelection(selected);
+                }}
+              >
+                Повернути 90°
+              </button>
+              <button
+                type="button"
+                className="dxf-tool-button"
+                onClick={() => {
+                  setApprovalZoom(1);
+                  if (approvalOverviewScrollRef.current) {
+                    approvalOverviewScrollRef.current.scrollLeft = 0;
+                    approvalOverviewScrollRef.current.scrollTop = 0;
+                  }
+                }}
+              >
+                Вписати всі
+              </button>
               <button type="button" className="dxf-tool-button" disabled={!approvalPreview.items.length} onClick={openApprovalBindingPreview}>
-                Прив'язка
+                Стикування
               </button>
-              <button type="button" className="dxf-tool-button" onClick={downloadApprovalDebugJson}>
-                Download import debug JSON
-              </button>
-              <button type="button" className="dxf-tool-button" onClick={copyApprovalDebugSummary}>
-                Copy actual UI debug summary
-              </button>
-              <span>Відкрити контури бланку у вікні прив’язок для ручного зв’язування деталей та елементів.</span>
             </div>
             {approvalPreview.warnings.length > 0 && (
               <div className="approval-warning-box">
@@ -1265,7 +1506,7 @@ export function FormsPanel() {
             <div className="approval-preview-workspace">
               <aside className="list-box approval-preview-list">
                 {approvalPreview.items.map((item) => (
-                  <div key={item.id} className={`list-item approval-preview-row ${approvalItemHasExtractedGeometry(item) ? '' : 'approval-preview-row-error'}`}>
+                  <div key={item.id} className={`list-item approval-preview-row ${(!approvalItemHasExtractedGeometry(item) || item.width === 0 || item.height === 0) ? 'approval-preview-row-error' : ''}`}>
                     <div className="approval-preview-item-head">
                       <strong>{item.name}</strong>
                       <span>
@@ -1292,16 +1533,31 @@ export function FormsPanel() {
                         </select>
                       </Field>
                       <Field label="Ширина">
-                        <input type="number" value={item.width} onChange={(event) => updateApprovalItem(item.id, { width: Number(event.target.value) })} />
+                        <input type="number" className={item.width === 0 ? 'error-input' : ''} value={item.width} onChange={(event) => updateApprovalItem(item.id, { width: Number(event.target.value) })} />
                       </Field>
                       <Field label="Висота">
-                        <input type="number" value={item.height} onChange={(event) => updateApprovalItem(item.id, { height: Number(event.target.value) })} />
+                        <input type="number" className={item.height === 0 ? 'error-input' : ''} value={item.height} onChange={(event) => updateApprovalItem(item.id, { height: Number(event.target.value) })} />
                       </Field>
                       <Field label="Кількість">
                         <input type="number" value={item.quantity} onChange={(event) => updateApprovalItem(item.id, { quantity: Number(event.target.value) })} />
                       </Field>
+                      {(item.joints?.length || item.jointVertical || item.jointHorizontal) ? (
+                        <label className="approval-split-check">
+                          <input
+                            type="checkbox"
+                            checked={approvalSplitItemIds.includes(item.id)}
+                            onChange={(event) => setApprovalSplitItemIds((current) => (
+                              event.target.checked
+                                ? [...new Set([...current, item.id])]
+                                : current.filter((id) => id !== item.id)
+                            ))}
+                          />
+                          <span>Розділити на окремі деталі</span>
+                        </label>
+                      ) : null}
                       <button type="button" className="danger-button" onClick={() => deleteApprovalItem(item.id)}>Видалити</button>
                     </div>
+                    <ApprovalItemEditors item={item} onPatch={(patch) => updateApprovalItem(item.id, patch)} />
                     <div className="approval-spec-summary">
                       {item.area ? <span>Площа з бланку: {item.area.toFixed(3)} м²</span> : null}
                       <span>pipeline: {item.pipelineVersion}</span>
@@ -1332,14 +1588,46 @@ export function FormsPanel() {
               <section className="dxf-overview-panel">
                 <h3>Схема імпорту з бланку</h3>
                 <p>Вироби створюються як звичайні деталі конструктора: кромки, потовщення та підвороти збережуться у записі деталі.</p>
-                <div className="approval-overview-scroll">
-                  <ApprovalOverview items={approvalPreview.items} />
+                <div ref={approvalOverviewScrollRef} className="approval-overview-scroll" onWheel={onApprovalOverviewWheel}>
+                  <DxfOverview
+                    contours={approvalPreviewContours}
+                    binding={null}
+                    blockMode={approvalBlockMode}
+                    blockDraft={approvalBlockDraft}
+                    selectedContourIds={approvalSelectedItemIds}
+                    overlays={approvalPreviewOverlays}
+                    canvasSize={approvalPreviewCanvasSize}
+                    lockCanvasToSize
+                    dragging={Boolean(approvalPreviewDrag)}
+                    zoom={approvalZoom}
+                    onContourClick={(contour) => setApprovalSelectedItemIds([contour.id])}
+                    onContourDragStart={beginApprovalPreviewDrag}
+                    onContourDoubleClick={rotateApprovalPreviewSelection}
+                    onCanvasDragMove={moveApprovalPreviewSelection}
+                    onCanvasDragFinish={finishApprovalPreviewDrag}
+                    onCanvasPanStart={beginApprovalPreviewPan}
+                    onClearSelection={() => setApprovalSelectedItemIds([])}
+                    onSideClick={() => undefined}
+                    onAnchorClick={() => undefined}
+                    onBlockStart={(point) => setApprovalBlockDraft({
+                      startX: point.x,
+                      startY: point.y,
+                      currentX: point.x,
+                      currentY: point.y,
+                    })}
+                    onBlockMove={(point) => setApprovalBlockDraft((current) => current ? {
+                      ...current,
+                      currentX: point.x,
+                      currentY: point.y,
+                    } : current)}
+                    onBlockFinish={finishApprovalBlockSelection}
+                  />
                 </div>
               </section>
             </div>
             <div className="detail-modal-footer">
               <button type="button" onClick={closeApprovalPreview}>Скасувати</button>
-              <button type="button" className="primary-action" disabled={!approvalPreview.items.some(approvalItemHasExtractedGeometry)} onClick={importApprovalPreview}>Імпортувати</button>
+              <button type="button" className="primary-action" disabled={approvalPreview.items.length === 0 || approvalPreview.items.some((item) => !approvalItemHasExtractedGeometry(item) || item.width === 0 || item.height === 0)} onClick={importApprovalPreview}>Імпортувати</button>
             </div>
           </div>
         </div>

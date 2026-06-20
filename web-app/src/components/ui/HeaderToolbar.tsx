@@ -1,143 +1,57 @@
 import React, { useState } from 'react';
-import { ChevronDown, Play, Trash2, Globe, Settings, Download, Loader2 } from 'lucide-react';
-import type { PackingMode } from '../../domain/types';
-import { languageOptions, packingModeLabel, t } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
-
-const packingModes: PackingMode[] = ['economy', 'optimal', 'full_texture'];
+import { useUIStore } from '../../store/useStore';
+import { Trash2, Loader2, Settings, HelpCircle, Wrench, Play, ChevronDown, Bug } from 'lucide-react';
+import { t } from '../../i18n';
 
 export function HeaderToolbar() {
-  const { 
-    project, 
-    packingMode, 
-    isPacking,
-    setPackingMode, 
-    setUiLanguage, 
-    updateProjectHeader, 
-    runPacking, 
-    clearCalculation 
-  } = useProjectStore();
-  
-  const [menuOpen, setMenuOpen] = useState(false);
-  const language = project.uiLanguage ?? 'uk';
-
-  const clearClick = () => {
-    if (window.confirm(t(language, 'confirmClear'))) {
-      clearCalculation();
-    }
-  };
+  const packingMode = useProjectStore((s) => s.packingMode);
+  const setPackingMode = useProjectStore((s) => s.setPackingMode);
+  const setIsHelpOpen = useUIStore((s) => s.setIsHelpOpen);
+  const isRecordingBug = useUIStore((s) => s.isRecordingBug);
+  const setIsBugReporterOpen = useUIStore((s) => s.setIsBugReporterOpen);
+  const setIsRecordingBug = useUIStore((s) => s.setIsRecordingBug);
 
   return (
-    <div className="flex items-center gap-4 flex-1 justify-end">
-      {/* Project Info */}
-      <div className="flex items-center gap-3 mr-auto ml-8">
-        <div className="flex flex-col">
-          <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{t(language, 'orderNumber')}</label>
-          <input 
-            className="w-32 bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={project.orderNumber || ''} 
-            onChange={(e) => updateProjectHeader({ orderNumber: e.target.value })} 
-            placeholder="№..."
-          />
-        </div>
-        <div className="flex flex-col">
-          <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{t(language, 'customer')}</label>
-          <input 
-            className="w-48 bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={project.customer || ''} 
-            onChange={(e) => updateProjectHeader({ customer: e.target.value })} 
-            placeholder="Ім'я..."
-          />
-        </div>
-        <label className="flex items-center gap-2 text-sm text-slate-700 ml-4 cursor-pointer hover:text-blue-600 transition-colors">
-          <input
-            type="checkbox"
-            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            checked={project.textureSelectionEnabled || false}
-            onChange={(e) => updateProjectHeader({ textureSelectionEnabled: e.target.checked })}
-          />
-          {t(language, 'textureSelection')}
-        </label>
-      </div>
+    <div className="flex items-center gap-1.5 flex-1 justify-end">
 
-      {/* Language */}
-      <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 relative">
-        <Globe className="w-4 h-4 text-slate-500" />
-        <select 
-          className="bg-transparent text-sm font-medium text-slate-700 focus:outline-none appearance-none pr-4 cursor-pointer"
-          data-i18n-skip="true" 
-          value={language} 
-          onChange={(event) => setUiLanguage(event.target.value as typeof language)}
-        >
-          {languageOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
-        <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 pointer-events-none" />
-      </div>
+      <button 
+        className="w-8 h-8 flex items-center justify-center !text-white !bg-[#0084ff] hover:!bg-[#006bce] rounded-sm transition-colors shadow-sm"
+        title="Налаштування"
+      >
+        <Settings className="w-[18px] h-[18px] stroke-[2.5]" />
+      </button>
 
-      {/* Action Buttons */}
-      <div className="flex items-center gap-2 ml-4">
+      <button 
+        onClick={() => setIsHelpOpen(true)}
+        className="w-8 h-8 flex items-center justify-center !text-white !bg-[#0084ff] hover:!bg-[#006bce] rounded-sm transition-colors shadow-sm"
+        title="Довідка"
+      >
+        <HelpCircle className="w-[18px] h-[18px] stroke-[2.5]" />
+      </button>
 
+      <button 
+        onClick={() => useUIStore.getState().setIsServiceOpen(true)}
+        className="w-8 h-8 flex items-center justify-center !text-white !bg-[#0084ff] hover:!bg-[#006bce] rounded-sm transition-colors shadow-sm"
+        title="Сервіс"
+      >
+        <Wrench className="w-[18px] h-[18px] stroke-[2.5]" />
+      </button>
 
-        <button 
-          className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors ml-2"
-          onClick={clearClick}
-          disabled={isPacking}
-        >
-          <Trash2 className="w-4 h-4" />
-          {t(language, 'clearCalculation')}
-        </button>
+      <button 
+        onClick={() => {
+          if (isRecordingBug) {
+            setIsBugReporterOpen(true);
+          } else {
+            setIsRecordingBug(true);
+          }
+        }}
+        className={`w-8 h-8 flex items-center justify-center rounded-sm transition-colors shadow-sm ${isRecordingBug ? 'bg-red-500 hover:bg-red-600 animate-pulse' : '!text-white !bg-[#0084ff] hover:!bg-[#006bce]'}`}
+        title={isRecordingBug ? "Зупинити запис та відправити" : "Повідомити про помилку (почати запис)"}
+      >
+        <Bug className="w-[18px] h-[18px] stroke-[2.5] text-white" />
+      </button>
 
-        <div className="relative flex items-center shadow-sm rounded-lg">
-          <button 
-            className={`flex items-center gap-2 px-4 py-1.5 text-sm font-bold text-white rounded-l-lg transition-colors ${
-              isPacking ? 'bg-slate-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
-            }`}
-            onClick={() => {
-              if (!isPacking) runPacking(packingMode);
-            }}
-            disabled={isPacking}
-          >
-            {isPacking ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Play className="w-4 h-4 fill-current" />
-            )}
-            {t(language, 'recalculate')}
-          </button>
-          <button 
-            className={`flex items-center px-2 py-1.5 text-white rounded-r-lg border-l transition-colors ${
-              isPacking ? 'bg-slate-500 border-slate-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-800 border-green-800'
-            }`}
-            onClick={() => {
-              if (!isPacking) setMenuOpen(!menuOpen);
-            }}
-            disabled={isPacking}
-          >
-            <ChevronDown className="w-4 h-4" />
-          </button>
-          
-          {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-slate-200 shadow-xl rounded-lg py-1 z-50">
-              {packingModes.map((mode) => (
-                <button
-                  key={mode}
-                  className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-                    mode === packingMode ? 'bg-green-50 text-green-700 font-medium' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                  onClick={() => {
-                    setPackingMode(mode);
-                    setMenuOpen(false);
-                  }}
-                >
-                  {packingModeLabel(language, mode)}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

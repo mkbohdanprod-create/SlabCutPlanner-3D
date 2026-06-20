@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Detail, Point, SlabInstance, UiLanguage } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
+import { Edit2, Trash, Check } from 'lucide-react';
 
 function pointsBoundsWithPadding(points: Point[]) {
   const xs = points.map((point) => point.x);
@@ -88,8 +89,8 @@ function DetailThumb({ detail }: { detail: Detail }) {
   );
 }
 
-export function ListsPanel() {
-  const { project, deleteSlab, deleteDetail, startEditDetail, setSelectedSlabId } = useProjectStore();
+export function ListsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
+  const { project, deleteSlab, deleteDetail, startEditDetail, selectedSlabId, setSelectedSlabId, selectedDetailId, setSelectedDetailId, setSelectedPlacementIds } = useProjectStore();
   const [openList, setOpenList] = useState<'slabs' | 'details' | null>(null);
   const language = project.uiLanguage ?? 'uk';
   const ui = (value: string) => translateStaticUiText(language, value);
@@ -105,46 +106,76 @@ export function ListsPanel() {
 
   return (
     <>
-      <section className="panel lists-panel">
-        <div>
-          <div className="list-title-row">
-            <h3>Список слебів</h3>
-            <button type="button" onClick={() => setOpenList('slabs')}>Відкрити</button>
-          </div>
-          <div className="list-box">
-            {project.slabs.length ? project.slabs.map((slab) => (
-              <div key={slab.id} className="list-item list-row">
-                <div>
-                  <strong>{slab.serialNumber}</strong>
-                  <span>{slab.width}×{slab.height} {ui('мм')}</span>
-                  <span>{ui(slab.material)} / {slab.decor || ui('без декору')}</span>
+      <section className="panel lists-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {(!activeTab || activeTab === 'slabs') && (
+          <div>
+            <div className="list-title-row">
+              <h3>Список слебів</h3>
+              <button type="button" onClick={() => setOpenList('slabs')}>Відкрити</button>
+            </div>
+            <div className="list-box">
+              {project.slabs.length ? project.slabs.map((slab) => {
+                const isSelected = selectedSlabId === slab.id;
+                return (
+                <div key={slab.id} 
+                     className={`list-item flex flex-col gap-3 p-3 cursor-pointer transition-colors border ${isSelected ? 'bg-blue-50/40 border-blue-200 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                     onClick={() => setSelectedSlabId(slab.id)}>
+                  <div className="w-full flex items-center justify-center py-3 bg-[#fcfdfd] rounded-[3px] border border-slate-100/80">
+                    <SlabThumb slab={slab} />
+                  </div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <strong className="truncate block text-[15px] font-bold text-[#1e2d3d] mb-1">{slab.serialNumber}</strong>
+                      <span className="truncate block text-[13px] text-[#536b7a] mb-0.5">{slab.width}×{slab.height} {ui('мм')}</span>
+                      <span className="truncate block text-[13px] text-[#536b7a]">{ui(slab.material)} / {slab.decor || ui('без декору')}</span>
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button className="delete-button w-9 h-9 flex items-center justify-center rounded-sm shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:brightness-95 transition-all" onClick={(e) => { e.stopPropagation(); deleteSlab(slab.id); }} title="Видалити">
+                        <Trash className="w-[17px] h-[17px] stroke-[2.2]" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <button className="delete-button" onClick={() => deleteSlab(slab.id)}>Видалити</button>
-              </div>
-            )) : <div className="list-item muted">Слебів ще немає</div>}
+              )}) : <div className="list-item muted">Слебів ще немає</div>}
+            </div>
           </div>
-        </div>
-        <div>
-          <div className="list-title-row">
-            <h3>Список усіх деталей</h3>
-            <button type="button" onClick={() => setOpenList('details')}>Відкрити</button>
-          </div>
-          <div className="list-box">
-            {listedDetails.length ? listedDetails.map((detail, index) => (
-              <div key={detail.id} className="list-item list-row">
-                <div>
-                  <strong>{detail.label || `${detail.type} ${index + 1}`}</strong>
-                  <span>{ui(detail.shape)} / {detailDims(detail, language)}</span>
-                  <span>{ui('Кількість')}: {detail.quantity}</span>
+        )}
+        {(!activeTab || activeTab === 'details') && (
+          <div>
+            <div className="list-title-row">
+              <h3>Список усіх деталей</h3>
+              <button type="button" onClick={() => setOpenList('details')}>Відкрити</button>
+            </div>
+            <div className="list-box">
+              {listedDetails.length ? listedDetails.map((detail, index) => {
+                const isSelected = selectedDetailId === detail.id;
+                return (
+                <div key={detail.id} 
+                     className={`list-item flex flex-col gap-3 p-3 cursor-pointer transition-colors border ${isSelected ? 'bg-blue-50/40 border-blue-200 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                     onClick={() => { setSelectedDetailId(detail.id); setSelectedPlacementIds([]); }}>
+                  <div className="w-full flex items-center justify-center py-3 bg-[#fcfdfd] rounded-[3px] border border-slate-100/80">
+                    <DetailThumb detail={detail} />
+                  </div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <strong className="truncate block text-[15px] font-bold text-[#1e2d3d] mb-1">{detail.label || `${detail.type} ${index + 1}`}</strong>
+                      <span className="truncate block text-[13px] text-[#536b7a] mb-0.5">{ui(detail.shape)} / {detailDims(detail, language)}</span>
+                      <span className="truncate block text-[13px] text-[#536b7a]">{ui('Кількість')}: {detail.quantity}</span>
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button className="w-9 h-9 flex items-center justify-center rounded-sm bg-white border border-slate-200 text-[#1e2d3d] shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:bg-slate-50 hover:border-slate-300 transition-colors" onClick={(e) => { e.stopPropagation(); editDetail(detail.id); }} title="Редагувати">
+                        <Edit2 className="w-[17px] h-[17px] stroke-[2.2]" />
+                      </button>
+                      <button className="delete-button w-9 h-9 flex items-center justify-center rounded-sm shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:brightness-95 transition-all" onClick={(e) => { e.stopPropagation(); deleteDetail(detail.id); }} title="Видалити">
+                        <Trash className="w-[17px] h-[17px] stroke-[2.2]" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div className="list-actions">
-                  <button onClick={() => editDetail(detail.id)}>Редагувати</button>
-                  <button className="delete-button" onClick={() => deleteDetail(detail.id)}>Видалити</button>
-                </div>
-              </div>
-            )) : <div className="list-item muted">Деталей ще немає</div>}
+              )}) : <div className="list-item muted">Деталей ще немає</div>}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       {openList && (
@@ -168,9 +199,13 @@ export function ListsPanel() {
                     <span>{ui(slab.material)} / {slab.decor || ui('без декору')}</span>
                     <span>{ui('Мін. відступ')}: {slab.minMargin} {ui('мм')}</span>
                   </div>
-                  <div className="list-actions">
-                    <button onClick={() => { setSelectedSlabId(slab.id); setOpenList(null); }}>Вибрати</button>
-                    <button className="delete-button" onClick={() => deleteSlab(slab.id)}>Видалити</button>
+                  <div className="list-actions flex-shrink-0">
+                    <button className="icon-button flex items-center justify-center" onClick={() => { setSelectedSlabId(slab.id); setOpenList(null); }} title="Вибрати">
+                      <Check className="w-[18px] h-[18px] stroke-[2.5]" />
+                    </button>
+                    <button className="delete-button icon-button flex items-center justify-center" onClick={() => deleteSlab(slab.id)} title="Видалити">
+                      <Trash className="w-[18px] h-[18px] stroke-[2.5]" />
+                    </button>
                   </div>
                 </div>
               )) : <div className="list-item muted">Слебів ще немає</div>)}
@@ -185,9 +220,13 @@ export function ListsPanel() {
                       <span>{ui('Кількість')}: {detail.quantity}</span>
                       {detail.importRole && <span>{ui('Роль')}: {detail.importRole}</span>}
                     </div>
-                    <div className="list-actions">
-                      <button onClick={() => editDetail(detail.id)}>Редагувати</button>
-                      <button className="delete-button" onClick={() => deleteDetail(detail.id)}>Видалити</button>
+                    <div className="list-actions flex-shrink-0">
+                      <button className="icon-button flex items-center justify-center" onClick={() => editDetail(detail.id)} title="Редагувати">
+                        <Edit2 className="w-[18px] h-[18px] stroke-[2.5]" />
+                      </button>
+                      <button className="delete-button icon-button flex items-center justify-center" onClick={() => deleteDetail(detail.id)} title="Видалити">
+                        <Trash className="w-[18px] h-[18px] stroke-[2.5]" />
+                      </button>
                     </div>
                   </div>
                 );

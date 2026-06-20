@@ -1,4 +1,5 @@
 import { CSSProperties, MouseEvent, Ref, WheelEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Detail, DetailPart, Rotation, SlabInstance, TextureFrame, TextureLayout } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { pointString, rotatePoint, rotatedLocalPoints, rotatedPoints, rotatedSize } from '../../lib/project';
@@ -11,6 +12,7 @@ import { Loader2 } from 'lucide-react';
 import { TextureScene } from './TextureScene';
 import type { FrameDraft, FrameDrag } from './TextureScene';
 import { svgPoint } from './TextureScene';
+import { useUIStore } from '../../store/useStore';
 
 import { getSourceX, getSourceY, getSourceRotation } from '../../engines/textureLayout';
 
@@ -76,12 +78,11 @@ export function TextureLayoutPanel() {
   const language = project.uiLanguage ?? 'uk';
   const ui = (value: string) => translateStaticUiText(language, value);
   const [drag, setDrag] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
-  const [previewMode, setPreviewMode] = useState<'2d' | '3d'>('2d');
+  const { isFloatingPreviewOpen: floatingPreviewOpen, setFloatingPreviewOpen, floatingPreviewMode: previewMode, setFloatingPreviewMode: setPreviewMode } = useUIStore();
   const [showElements, setShowElements] = useState(false);
   const [customScale, setCustomScale] = useState<number | null>(null);
   const [manualHeight, setManualHeight] = useState<number | null>(null);
   const [resizeDrag, setResizeDrag] = useState<{ startY: number; startHeight: number } | null>(null);
-  const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false);
   const [frameMode, setFrameMode] = useState(false);
   const [frameDraft, setFrameDraft] = useState<FrameDraft | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layoutId: string } | null>(null);
@@ -192,7 +193,7 @@ export function TextureLayoutPanel() {
     if (root) root.innerHTML = svgRef.current.outerHTML;
   }, [activeFrameId, items, scale, sceneViewBox, textureFrames, viewportHeight]);
 
-  if (!project.textureSelectionEnabled) return null;
+  if (!project.textureSelectionEnabled && useUIStore.getState().mainView !== 'texture') return null;
 
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (!event.shiftKey) return;
@@ -402,8 +403,10 @@ export function TextureLayoutPanel() {
     setContextMenu(null);
   };
 
+  const isFullScreen = useUIStore.getState().mainView === 'texture';
+
   return (
-    <section className="panel texture-panel">
+    <section className={`panel texture-panel ${isFullScreen ? 'h-full flex flex-col' : ''}`}>
       <div className="toolbar texture-toolbar">
         <div>
           <h3>{ui('Зона підбору текстури')}</h3>
@@ -434,14 +437,15 @@ export function TextureLayoutPanel() {
           <button onClick={openPreview}>{ui('Відкрити прев’ю')}</button>
         </div>
       </div>
-      <div className="texture-canvas-shell">
+      <div className={`texture-canvas-shell ${isFullScreen ? 'flex-1 min-h-0 flex flex-col' : ''}`}>
         <div
           ref={scrollRef}
-          className="texture-canvas-scroll"
+          className={`texture-canvas-scroll ${isFullScreen ? 'flex-1 min-h-0' : ''}`}
           onWheel={onWheel}
           style={{
-            height: `${viewportHeight}px`,
-            overflowY: sceneViewBox.height > viewportHeight + 1 ? 'auto' : 'hidden',
+            height: isFullScreen ? '100%' : `${viewportHeight}px`,
+            flex: isFullScreen ? '1 1 0' : 'none',
+            overflowY: isFullScreen || sceneViewBox.height > viewportHeight + 1 ? 'auto' : 'hidden',
             overflowX: 'hidden',
           }}
         >
@@ -498,14 +502,16 @@ export function TextureLayoutPanel() {
             onStartFrameDrag={startFrameDrag}
           />
         </div>
-        <div
-          className="texture-resize-handle"
-          onMouseDown={(event) => setResizeDrag({ startY: event.clientY, startHeight: viewportHeight })}
-          onDoubleClick={() => setManualHeight(null)}
-          title={ui('Потягніть, щоб змінити висоту зони')}
-        >
-          <span />
-        </div>
+        {!isFullScreen && (
+          <div
+            className="texture-resize-handle"
+            onMouseDown={(event) => setResizeDrag({ startY: event.clientY, startHeight: viewportHeight })}
+            onDoubleClick={() => setManualHeight(null)}
+            title={ui('Потягніть, щоб змінити висоту зони')}
+          >
+            <span />
+          </div>
+        )}
       </div>
       {contextMenu && (
         <div className="canvas-context-menu texture-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
@@ -539,7 +545,7 @@ export function TextureLayoutPanel() {
           ))}
         </div>
       )}
-      {floatingPreviewOpen && (
+      {floatingPreviewOpen && createPortal(
         <aside
           className="texture-preview-floating"
           style={{ left: `${previewPosition.x}px`, top: `${previewPosition.y}px`, right: 'auto', bottom: 'auto' }}
@@ -585,16 +591,17 @@ export function TextureLayoutPanel() {
               />
             ) : (
               <Suspense fallback={
-                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-slate-500 gap-3">
-                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                <div className="w-full h-full flex flex-col items-center justify-center bg-[var(--bg-main)] text-[var(--text-secondary)] gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-[var(--accent-color)]" />
                   <span className="font-medium text-sm">Завантаження 3D-движка...</span>
                 </div>
               }>
-                <Viewer3D className="w-full h-full bg-slate-900 overflow-hidden relative" />
+                <Viewer3D className="w-full h-full bg-[var(--bg-main)] overflow-hidden relative" hideToolbar={true} />
               </Suspense>
             )}
           </div>
-        </aside>
+        </aside>,
+        document.body
       )}
     </section>
   );

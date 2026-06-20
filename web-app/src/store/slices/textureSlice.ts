@@ -165,8 +165,7 @@ export const createTextureSlice: StateCreator<
         if (layout.id === sourceLayout.id || (groupKey && texturePartInteractionKey(part) === groupKey)) {
           layout.x += dx;
           layout.y += dy;
-          layout.sourceX = layout.x;
-          layout.sourceY = layout.y;
+          // Do NOT modify sourceX/sourceY here – they represent the original texture cut position.
         }
       });
       state.project.updatedAt = new Date().toISOString();

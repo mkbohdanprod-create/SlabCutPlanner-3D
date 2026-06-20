@@ -400,8 +400,13 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
   const mainSlab = slabs.find((s: SlabInstance) => s.id === mainPlacement.slabId);
   const thickness = mainSlab?.thickness ? mainSlab.thickness * s : 0.02;
   const mainPartDetail = details.find((d: Detail) => d.id === mainPart.detailId);
-  const baseX = mainPartDetail?.importOffsetX ?? mainPlacement.x;
-  const baseY = mainPartDetail?.importOffsetY ?? mainPlacement.y;
+  
+  // Prefer texture layout visual coordinates (x/y) for 3D placement so it matches the Texture Selection layout.
+  // sourceX/sourceY are strictly for texture mapping.
+  const placementX = layout?.x ?? mainPlacement.x;
+  const placementY = layout?.y ?? mainPlacement.y;
+  const baseX = (mainPartDetail?.importOffsetX ?? 0) + placementX;
+  const baseY = (mainPartDetail?.importOffsetY ?? 0) + placementY;
 
   const initialX = (baseX + mainPart.width / 2) * s - 1.5;
   const initialY = thickness / 2;
@@ -446,7 +451,13 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
       {foldPlacements.map((fp: Placement) => {
          const fPart = parts.find((p: DetailPart) => p.id === fp.partId);
          const fSlab = slabs.find((s: SlabInstance) => s.id === fp.slabId);
-         return fPart && fSlab && (
+         if (!fPart || !fSlab) return null;
+         const fLayout = textureLayouts.find((l) => l.partId === fPart.id);
+         const fPlacementX = fLayout?.x ?? fp.x;
+         const fPlacementY = fLayout?.y ?? fp.y;
+         const fBaseX = (fPart.importOffsetX ?? 0) + fPlacementX;
+         const fBaseY = (fPart.importOffsetY ?? 0) + fPlacementY;
+         return (
            <Suspense key={fp.id} fallback={null}>
              <TexturedPart 
                placement={fp} 
@@ -458,8 +469,8 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, parts, slabs, 
                onSelect={select}
                originOffset={originOffset}
                localTransform={isSink ? getSinkPartTransform(fPart, detail, thickness) : null}
-               baseX={baseX}
-               baseY={baseY}
+               baseX={fBaseX}
+               baseY={fBaseY}
              />
            </Suspense>
          );
@@ -534,7 +545,7 @@ function CaptureController({ onCaptureReady, contentRef }: { onCaptureReady?: (s
   }, [gl, camera, scene, contentRef, onCaptureReady]); 
   return null;
 }
-export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900 rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode }: { className?: string, onCaptureReady?: (snaps: string[]) => void, isCaptureMode?: boolean } = {}) {
+export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900 rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode, hideToolbar = false }: { className?: string, onCaptureReady?: (snaps: string[]) => void, isCaptureMode?: boolean, hideToolbar?: boolean } = {}) {
   const project = useProjectStore((state) => state.project);
   const parts = useProjectStore((state) => state.parts);
   const is3dGroupingEnabled = useUIStore(s => s.is3dGroupingEnabled);
@@ -543,15 +554,42 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
   const contentRef = React.useRef<THREE.Group | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  
+  const showEdges = useUIStore(s => s.showEdges);
+  const setShowEdges = useUIStore(s => s.setShowEdges);
+  const is3dAssemblyMode = useUIStore(s => s.is3dAssemblyMode);
+  const set3dAssemblyMode = useUIStore(s => s.set3dAssemblyMode);
+  const set3dGroupingEnabled = useUIStore(s => s.set3dGroupingEnabled);
+  const reset3dAssembly = useProjectStore(s => s.reset3dAssembly);
 
   const groups = useMemo(() => {
      return buildAssemblyGroups(parts, project.placements, is3dGroupingEnabled);
   }, [project.placements, parts, is3dGroupingEnabled]);
 
   return (
-    <div className={className}>
-      <Canvas camera={{ position: [0, 5, 8], fov: 50 }} shadows onPointerMissed={() => setSelectedId(null)}>
-        <color attach="background" args={['#b2c6ce']} />
+    <div className={`${className} flex flex-col`}>
+      {!isCaptureMode && !hideToolbar && (
+        <div className="toolbar shrink-0 bg-white border-b border-slate-300 p-2 z-10 shadow-sm relative">
+          <div className="segmented">
+            <button className={is3dAssemblyMode ? 'active' : ''} onClick={() => set3dAssemblyMode(!is3dAssemblyMode)}>Режим збірки</button>
+            <button className={is3dGroupingEnabled ? 'active' : ''} disabled={!is3dAssemblyMode} onClick={() => set3dGroupingEnabled(!is3dGroupingEnabled)}>Групувати деталі</button>
+            <button className={showEdges ? 'active' : ''} onClick={() => setShowEdges(!showEdges)}>Показувати контури</button>
+            <button onClick={() => setShowHelp(true)}>Інструкція</button>
+            <button onClick={() => {
+              useUIStore.getState().showConfirm({
+                title: 'Скинути збірку',
+                message: 'Ви впевнені, що хочете скинути всі 3D координати і повернути деталі на площину?',
+                confirmText: 'Скинути',
+                isDestructive: true,
+                onConfirm: () => reset3dAssembly()
+              });
+            }}>Скинути збірку</button>
+          </div>
+        </div>
+      )}
+      <div className="flex-1 min-h-0 relative">
+        <Canvas camera={{ position: [0, 5, 8], fov: 50 }} shadows onPointerMissed={() => setSelectedId(null)}>
+          <color attach="background" args={['#b2c6ce']} />
         
         <ambientLight intensity={0.5} />
           <directionalLight 
@@ -599,24 +637,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
             touches={{ ONE: THREE.TOUCH.NONE, TWO: THREE.TOUCH.DOLLY_ROTATE }}
           />
           {isCaptureMode && <CaptureController onCaptureReady={onCaptureReady} contentRef={contentRef} />}
-      </Canvas>
-      <div className="absolute top-4 left-4 text-white text-sm bg-black/50 px-3 py-1 rounded flex items-center gap-4 z-10">
-        <span>3D Перегляд</span>
-        <label className="flex items-center gap-2 cursor-pointer pointer-events-auto">
-          <input 
-            type="checkbox" 
-            checked={useUIStore(s => s.showEdges)} 
-            onChange={(e) => useUIStore.getState().setShowEdges(e.target.checked)} 
-            className="w-4 h-4"
-          />
-          Показувати контури
-        </label>
-        <button 
-          onClick={() => setShowHelp(true)} 
-          className="ml-2 px-2 py-0.5 bg-blue-600 hover:bg-blue-500 rounded text-xs font-semibold pointer-events-auto"
-        >
-          [?] Інструкція
-        </button>
+        </Canvas>
       </div>
 
       {showHelp && (

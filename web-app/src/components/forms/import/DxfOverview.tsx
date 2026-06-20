@@ -11,6 +11,15 @@ export const DXF_ROLE_LABELS: Record<DxfImportRole, string> = {
   fold: 'Підворот',
 };
 
+export type DxfOverviewOverlay = {
+  id: string;
+  path: string;
+  label?: string;
+  labelX?: number;
+  labelY?: number;
+  className?: string;
+};
+
 export function DxfPreviewShape({ contour }: { contour: DxfPreviewContour }) {
   if (!contour || !contour.points || contour.points.length === 0) {
     return <div className="w-12 h-12 bg-slate-50 border border-slate-200 rounded shrink-0" />;
@@ -37,8 +46,10 @@ export function DxfOverview({
   blockMode,
   blockDraft,
   selectedContourIds,
+  overlays = [],
   canvasSize,
   viewport,
+  lockCanvasToSize = false,
   dragging,
   zoom,
   onContourClick,
@@ -46,20 +57,26 @@ export function DxfOverview({
   onContourDoubleClick,
   onCanvasDragMove,
   onCanvasDragFinish,
+  onCanvasPanStart,
   onClearSelection,
   onSideClick,
   onAnchorClick,
   onBlockStart,
   onBlockMove,
   onBlockFinish,
+  jointToolItemId,
+  onJointHover,
+  onJointPoint,
 }: {
   contours: DxfPreviewContour[];
   binding: DxfBindingSession | null;
   blockMode: boolean;
   blockDraft: DxfBlockDraft | null;
   selectedContourIds: string[];
+  overlays?: DxfOverviewOverlay[];
   canvasSize: { width: number; height: number };
   viewport?: { x: number; y: number; width: number; height: number };
+  lockCanvasToSize?: boolean;
   dragging: boolean;
   zoom: number;
   onContourClick: (contour: DxfPreviewContour) => void;
@@ -67,19 +84,30 @@ export function DxfOverview({
   onContourDoubleClick: (contour: DxfPreviewContour) => void;
   onCanvasDragMove: (point: DxfPoint) => void;
   onCanvasDragFinish: () => void;
+  onCanvasPanStart?: (event: React.MouseEvent<SVGSVGElement>) => void;
   onClearSelection: () => void;
   onSideClick: (contourId: string, side: string) => void;
   onAnchorClick: (anchor: BindingAnchor) => void;
   onBlockStart: (point: DxfPoint) => void;
   onBlockMove: (point: DxfPoint) => void;
   onBlockFinish: () => void;
+  jointToolItemId?: string;
+  onJointHover?: (contour: DxfPreviewContour | undefined, point?: DxfPoint) => void;
+  onJointPoint?: (contour: DxfPreviewContour, point: DxfPoint) => void;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const width = viewport?.width ?? canvasSize.width;
-  const height = viewport?.height ?? canvasSize.height;
-  const originX = viewport?.x ?? 0;
-  const originY = viewport?.y ?? 0;
-  const pad = Math.max(width, height) * 0.04;
+  const baseWidth = viewport?.width ?? canvasSize.width;
+  const baseHeight = viewport?.height ?? canvasSize.height;
+  const baseOriginX = viewport?.x ?? 0;
+  const baseOriginY = viewport?.y ?? 0;
+  const contentViewport = dxfViewportForContours(contours);
+  const viewPad = Math.max(180, Math.max(baseWidth, baseHeight) * 0.08);
+  const originX = (lockCanvasToSize ? baseOriginX : Math.min(baseOriginX, contentViewport?.x ?? baseOriginX)) - viewPad;
+  const originY = (lockCanvasToSize ? baseOriginY : Math.min(baseOriginY, contentViewport?.y ?? baseOriginY)) - viewPad;
+  const maxX = (lockCanvasToSize ? baseOriginX + baseWidth : Math.max(baseOriginX + baseWidth, contentViewport ? contentViewport.x + contentViewport.width : baseOriginX + baseWidth)) + viewPad;
+  const maxY = (lockCanvasToSize ? baseOriginY + baseHeight : Math.max(baseOriginY + baseHeight, contentViewport ? contentViewport.y + contentViewport.height : baseOriginY + baseHeight)) + viewPad;
+  const width = Math.max(1, maxX - originX);
+  const height = Math.max(1, maxY - originY);
   const safeZoom = Math.max(zoom, 0.35);
   const parent = contours.find((contour) => contour.id === binding?.parentDetailId);
   const element = contours.find((contour) => contour.id === binding?.elementId);
@@ -126,12 +154,22 @@ export function DxfOverview({
     <svg
       ref={svgRef}
       className={blockMode ? 'dxf-overview block-mode' : 'dxf-overview'}
-      style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
-      viewBox={`${originX - pad} ${originY - pad} ${width + pad * 2} ${height + pad * 2}`}
+      style={{
+        width: `${Math.max(760, width * zoom)}px`,
+        height: `${Math.max(420, height * zoom)}px`,
+      }}
+      viewBox={`${originX} ${originY} ${width} ${height}`}
       aria-label="Композиція DXF"
       onMouseDown={(event) => {
         if (!blockMode) {
-          if (event.target === event.currentTarget) onClearSelection();
+          if (event.target === event.currentTarget) {
+            if (event.button === 0 && onCanvasPanStart) {
+              event.preventDefault();
+              onCanvasPanStart(event);
+            } else {
+              onClearSelection();
+            }
+          }
           return;
         }
         event.preventDefault();
@@ -171,10 +209,25 @@ export function DxfOverview({
             d={dxfSvgPath(contour.points, contour.holes)}
             fillRule="evenodd"
             onMouseDown={(event) => {
+              if (jointToolItemId === contour.id && onJointPoint) {
+                event.preventDefault();
+                event.stopPropagation();
+                const point = blockPoint(event);
+                if (point) onJointPoint(contour, point);
+                return;
+              }
               if (binding || blockMode) return;
               event.stopPropagation();
               const point = blockPoint(event);
               if (point) onContourDragStart(contour, point, event.ctrlKey || event.metaKey);
+            }}
+            onMouseMove={(event) => {
+              if (jointToolItemId !== contour.id || !onJointHover) return;
+              const point = blockPoint(event);
+              if (point) onJointHover(contour, point);
+            }}
+            onMouseLeave={() => {
+              if (jointToolItemId === contour.id) onJointHover?.(undefined);
             }}
             onClick={() => {
               if (!blockMode) onContourClick(contour);
@@ -189,6 +242,12 @@ export function DxfOverview({
           {blockGroupIds.has(contour.groupId) && (
             <text className="dxf-block-mark" style={{ fontSize: `${24 / safeZoom}px` }} x={12 / safeZoom} y={18 / safeZoom}>≡</text>
           )}
+        </g>
+      ))}
+      {(overlays ?? []).map((overlay) => (
+        <g key={overlay.id} className={overlay.className ?? 'dxf-feature-overlay'}>
+          <path d={overlay.path} />
+          {overlay.label && <text x={overlay.labelX} y={overlay.labelY}>{overlay.label}</text>}
         </g>
       ))}
       {completedBindings.map((link) => {
