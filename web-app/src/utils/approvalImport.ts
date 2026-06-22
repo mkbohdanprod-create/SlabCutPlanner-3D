@@ -3624,7 +3624,11 @@ export function applyApprovalItemDimensionsToPoints(item: ApprovalImportItem): A
       { x: innerHorizontal, y: leftHeight },
       { x: 0, y: leftHeight },
     ];
-    return { ...item, width: w, height: h, customPoints };
+    const warnings = [...item.warnings];
+    if (!warnings.includes('Перевірте наявність заокруглень на кресленні. Геометрію згенеровано з прямими кутами.')) {
+      warnings.push('Перевірте наявність заокруглень на кресленні. Геометрію згенеровано з прямими кутами.');
+    }
+    return { ...item, width: w, height: h, customPoints, importStatus: 'Needs review', warnings };
   }
   
   if (item.shape === 'П-подібна') {
@@ -3649,8 +3653,16 @@ export function applyApprovalItemDimensionsToPoints(item: ApprovalImportItem): A
       { x: leftWidth, y: leftHeight },
       { x: 0, y: leftHeight },
     ];
-    return { ...item, width: w, height: h, customPoints };
+    const warnings = [...item.warnings];
+    if (!warnings.includes('Перевірте наявність заокруглень на кресленні. Геометрію згенеровано з прямими кутами.')) {
+      warnings.push('Перевірте наявність заокруглень на кресленні. Геометрію згенеровано з прямими кутами.');
+    }
+    return { ...item, width: w, height: h, customPoints, importStatus: 'Needs review', warnings };
   }
   
-  return item;
+  const warnings = [...item.warnings];
+  if (!warnings.includes('Нестандартна фігура. Перевірте, чи коректно векторний контур зчитався і масштабувався до розмірів.')) {
+    warnings.push('Нестандартна фігура. Перевірте, чи коректно векторний контур зчитався і масштабувався до розмірів.');
+  }
+  return { ...item, importStatus: 'Needs review', warnings };
 }
