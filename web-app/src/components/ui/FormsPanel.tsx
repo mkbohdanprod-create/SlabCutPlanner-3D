@@ -1,11 +1,15 @@
 import { ReactNode, useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { referenceData, uid } from '../../domain/defaults';
 import { ChangeEvent, useEffect, useRef } from 'react';
 import type { BindingAnchor, Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, EdgeProfileType, MaterialType, SlabInstance, UiLanguage } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
 import type { ApprovalImportItem, ApprovalImportPreview } from '../../utils/approvalImport';
-import { parseApprovalFile } from '../../utils/approvalImport';
+import {
+  parseApprovalFile,
+  applyApprovalItemDimensionsToPoints,
+} from '../../utils/approvalImport';
 import { DEFAULT_EDGE_PROFILE, EDGE_PROFILE_OPTIONS } from '../../utils/edgeProfiles';
 import type {
   DxfPoint, DxfPreviewContour, DxfBindingSession,
@@ -348,6 +352,15 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
     setDxfBlockEditorIds(null);
   };
 
+  const approvalStableCanvasSizeForItems = (items: ApprovalImportItem[]) => {
+    const contours = items.filter(approvalItemHasExtractedGeometry).map(approvalItemToDxfContour);
+    const size = dxfCanvasSize(contours);
+    return {
+      width: Math.max(1400, size.width),
+      height: Math.max(900, size.height),
+    };
+  };
+
   const closeApprovalPreview = () => {
     setApprovalPreview(null);
   };
@@ -372,6 +385,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
       }
       setError('');
       setApprovalPreview(parsed);
+      setApprovalPreviewCanvasSize(approvalStableCanvasSizeForItems(parsed.items));
     } catch (reason) {
       setIsImporting(false);
       console.error('[APPROVAL_IMPORT_ERROR]', reason);
@@ -397,6 +411,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
       }
       setError('');
       setApprovalPreview(parsed);
+      setApprovalPreviewCanvasSize(approvalStableCanvasSizeForItems(parsed.items));
     } catch (reason) {
       setIsImporting(false);
       console.error('[APPROVAL_IMPORT_ERROR]', reason);
@@ -435,7 +450,11 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   const updateApprovalItem = (id: string, patch: Partial<ApprovalImportItem>) => {
     setApprovalPreview((current) => current ? {
       ...current,
-      items: current.items.map((item) => item.id === id ? { ...item, ...patch } : item),
+      items: current.items.map((item) => {
+        if (item.id !== id) return item;
+        const next = { ...item, ...patch };
+        return applyApprovalItemDimensionsToPoints(next);
+      }),
     } : current);
   };
 
@@ -503,7 +522,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
 
   const importApprovalPreview = () => {
     if (!approvalPreview?.items.length) return;
-    const importableItems = approvalPreview.items.filter(approvalItemHasExtractedGeometry);
+    const importableItems = approvalPreview.items.filter(item => approvalItemHasExtractedGeometry(item) && item.width > 0 && item.height > 0);
     if (!importableItems.length) {
       setError('Geometry was not extracted. This product cannot be imported.');
       return;
@@ -930,7 +949,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
     const rect = viewport.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
-    const nextZoom = Math.min(6, Math.max(0.35, dxfZoom * (event.deltaY < 0 ? 1.16 : 1 / 1.16)));
+    const nextZoom = Math.min(6, Math.max(0.01, dxfZoom * (event.deltaY < 0 ? 1.16 : 1 / 1.16)));
     const ratio = nextZoom / dxfZoom;
     const nextLeft = (viewport.scrollLeft + pointerX) * ratio - pointerX;
     const nextTop = (viewport.scrollTop + pointerY) * ratio - pointerY;
@@ -938,6 +957,42 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
     requestAnimationFrame(() => {
       viewport.scrollLeft = nextLeft;
       viewport.scrollTop = nextTop;
+    });
+  };
+
+  const fitDxfPreviewToWindow = () => {
+    const viewport = dxfOverviewScrollRef.current;
+    const bounds = dxfViewportForContours(visibleDxfPreview);
+    if (!viewport || !bounds) return;
+    const viewPad = Math.max(180, Math.max(dxfPreviewCanvasSize.width, dxfPreviewCanvasSize.height) * 0.08);
+    const availableWidth = Math.max(240, viewport.clientWidth - 36);
+    const availableHeight = Math.max(180, viewport.clientHeight - 36);
+    const nextZoom = Math.min(6, Math.max(
+      0.01,
+      Math.min(availableWidth / Math.max(1, bounds.width + 120), availableHeight / Math.max(1, bounds.height + 120)),
+    ));
+    setDxfZoom(nextZoom);
+    requestAnimationFrame(() => {
+      viewport.scrollLeft = Math.max(0, (bounds.x + viewPad + bounds.width / 2) * nextZoom - viewport.clientWidth / 2);
+      viewport.scrollTop = Math.max(0, (bounds.y + viewPad + bounds.height / 2) * nextZoom - viewport.clientHeight / 2);
+    });
+  };
+
+  const fitApprovalPreviewToWindow = () => {
+    const viewport = approvalOverviewScrollRef.current;
+    const bounds = dxfViewportForContours(approvalPreviewContours);
+    if (!viewport || !bounds) return;
+    const viewPad = Math.max(180, Math.max(approvalPreviewCanvasSize.width, approvalPreviewCanvasSize.height) * 0.08);
+    const availableWidth = Math.max(240, viewport.clientWidth - 36);
+    const availableHeight = Math.max(180, viewport.clientHeight - 36);
+    const nextZoom = Math.min(6, Math.max(
+      0.01,
+      Math.min(availableWidth / Math.max(1, bounds.width + 120), availableHeight / Math.max(1, bounds.height + 120)),
+    ));
+    setApprovalZoom(nextZoom);
+    requestAnimationFrame(() => {
+      viewport.scrollLeft = Math.max(0, (bounds.x + viewPad + bounds.width / 2) * nextZoom - viewport.clientWidth / 2);
+      viewport.scrollTop = Math.max(0, (bounds.y + viewPad + bounds.height / 2) * nextZoom - viewport.clientHeight / 2);
     });
   };
 
@@ -1106,16 +1161,24 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
     ];
   }, [approvalPreview]);
 
+  // ResizeObserver removed to keep stable canvas size based on drawing bounding box
+
   useEffect(() => {
-    if (!approvalOverviewScrollRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry) {
-        setApprovalPreviewCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height });
-      }
-    });
-    observer.observe(approvalOverviewScrollRef.current);
-    return () => observer.disconnect();
+    if (dxfPreview && dxfPreview.length > 0) {
+      const timer = setTimeout(() => {
+        fitDxfPreviewToWindow();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [dxfPreview]);
+
+  useEffect(() => {
+    if (approvalPreview && approvalPreview.items.length > 0) {
+      const timer = setTimeout(() => {
+        fitApprovalPreviewToWindow();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
   }, [approvalPreview]);
 
   useEffect(() => {
@@ -1157,7 +1220,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
     const pointerY = event.clientY - rect.top;
     const step = 0.15;
     const rawNextZoom = event.deltaY < 0 ? approvalZoom * (1 + step) : approvalZoom / (1 + step);
-    const nextZoom = Math.max(0.1, Math.min(5, rawNextZoom));
+    const nextZoom = Math.max(0.01, Math.min(5, rawNextZoom));
     const ratio = nextZoom / approvalZoom;
     const nextLeft = (viewport.scrollLeft + pointerX) * ratio - pointerX;
     const nextTop = (viewport.scrollTop + pointerY) * ratio - pointerY;
@@ -1482,13 +1545,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
               <button
                 type="button"
                 className="dxf-tool-button"
-                onClick={() => {
-                  setApprovalZoom(1);
-                  if (approvalOverviewScrollRef.current) {
-                    approvalOverviewScrollRef.current.scrollLeft = 0;
-                    approvalOverviewScrollRef.current.scrollTop = 0;
-                  }
-                }}
+                onClick={fitApprovalPreviewToWindow}
               >
                 Вписати всі
               </button>
@@ -1625,7 +1682,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
             </div>
             <div className="detail-modal-footer">
               <button type="button" onClick={closeApprovalPreview}>Скасувати</button>
-              <button type="button" className="primary-action" disabled={approvalPreview.items.length === 0 || approvalPreview.items.some((item) => !approvalItemHasExtractedGeometry(item) || item.width === 0 || item.height === 0)} onClick={importApprovalPreview}>Імпортувати</button>
+              <button type="button" className="primary-action" disabled={approvalPreview.items.length === 0 || approvalPreview.items.every((item) => !approvalItemHasExtractedGeometry(item) || item.width === 0 || item.height === 0)} onClick={importApprovalPreview}>Імпортувати</button>
             </div>
           </div>
         </div>
@@ -1694,6 +1751,13 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
                 }}
               >
                 Повернути 90°
+              </button>
+              <button
+                type="button"
+                className="dxf-tool-button"
+                onClick={fitDxfPreviewToWindow}
+              >
+                Вписати всі
               </button>
               <div className="dxf-layers-control">
                 <button
@@ -1950,6 +2014,18 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
               {dxfNotice && <span className="dxf-notice" role="status">{dxfNotice}</span>}
               <button type="button" className="primary-action" onClick={closeDxfBlockEditor}>Готово</button>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {isImporting && (
+        <div className="modal-backdrop" role="presentation" style={{ zIndex: 9999 }}>
+          <div className="detail-modal" role="dialog" aria-modal="true" style={{ width: '400px', maxWidth: '90vw', textAlign: 'center', padding: '2.5rem 2rem', margin: 'auto' }}>
+            <Loader2 className="w-12 h-12 animate-spin text-blue-500 mx-auto mb-4" style={{ margin: '0 auto 1.5rem', display: 'block', color: '#007bff' }} />
+            <h2 style={{ marginBottom: '1rem', fontSize: '1.25rem', color: '#1e293b' }}>Обробка бланку...</h2>
+            <p style={{ color: '#64748b', margin: 0, fontSize: '0.9rem', lineHeight: 1.5 }}>
+              Система розпізнає креслення та отримує дані за допомогою OCR. Будь ласка, зачекайте, це може зайняти до 1 хвилини.
+            </p>
           </div>
         </div>
       )}
