@@ -157,11 +157,61 @@ function approvalJointCrossesWholeDetail(points: DxfPoint[], joint: { start: Dxf
 }
 
 function splitApprovalRawPolygonByJoint(points: DxfPoint[], joint: ApprovalImportJoint) {
-  if (approvalJointCrossesWholeDetail(points, joint)) return [points];
+  if (joint.source !== 'manual' && approvalJointCrossesWholeDetail(points, joint)) return [points];
   if (!approvalJointHasInteriorRun(points, joint)) return [points];
-  const first = clipPolygonByLine(points, joint.start, joint.end, true);
-  const second = clipPolygonByLine(points, joint.start, joint.end, false);
+
+  const getClosest = (point: DxfPoint) => {
+    let bestIndex = -1;
+    let bestDist = Infinity;
+    let closestPoint = point;
+    for (let i = 0; i < points.length; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % points.length];
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const lenSq = dx * dx + dy * dy;
+      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((point.x - p1.x) * dx + (point.y - p1.y) * dy) / lenSq));
+      const proj = { x: p1.x + t * dx, y: p1.y + t * dy };
+      const dist = Math.hypot(point.x - proj.x, point.y - proj.y);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = i;
+        closestPoint = proj;
+      }
+    }
+    return { index: bestIndex, dist: bestDist, point: closestPoint };
+  };
+
+  const startHit = getClosest(joint.start);
+  const endHit = getClosest(joint.end);
+
+  if (startHit.dist > 5 || endHit.dist > 5) return [points];
+  if (startHit.index === endHit.index) return [points];
+
+  const firstPoints: DxfPoint[] = [startHit.point, endHit.point];
+  let curr = (endHit.index + 1) % points.length;
+  while (curr !== (startHit.index + 1) % points.length) {
+    firstPoints.push(points[curr]);
+    curr = (curr + 1) % points.length;
+  }
+
+  const secondPoints: DxfPoint[] = [endHit.point, startHit.point];
+  curr = (startHit.index + 1) % points.length;
+  while (curr !== (endHit.index + 1) % points.length) {
+    secondPoints.push(points[curr]);
+    curr = (curr + 1) % points.length;
+  }
+
+  const cleanPolygon = (poly: DxfPoint[]) => poly.filter((p, i, arr) => {
+    const prev = arr[(i + arr.length - 1) % arr.length];
+    return Math.hypot(p.x - prev.x, p.y - prev.y) > 0.5;
+  });
+
+  const first = cleanPolygon(firstPoints);
+  const second = cleanPolygon(secondPoints);
+
   if (first.length < 3 || second.length < 3) return [points];
+
   const originalBounds = dxfBounds(points);
   const minAllowedThickness = Math.min(90, Math.max(35, Math.min(originalBounds.width, originalBounds.height) * 0.035));
   const partLooksLikeSliver = (part: DxfPoint[], area: number) => {
@@ -188,20 +238,42 @@ function splitApprovalRawPolygonByJoint(points: DxfPoint[], joint: ApprovalImpor
 function approvalSplitSideData(item: ApprovalImportItem, part: { points: DxfPoint[]; width: number; height: number; sourceX: number; sourceY: number }) {
   const sideSegments: Record<string, { start: DxfPoint; end: DxfPoint }> = {};
   const edgeProfiles: ApprovalImportItem['edgeProfiles'] = {};
-  const inPart = (point: DxfPoint, tolerance = 0.5) => (
-    point.x >= -0.5
-    && point.y >= -0.5
-    && point.x <= part.width + 0.5
-    && point.y <= part.height + 0.5
-    && (isPointInsidePreviewPolygon(point, part.points) || pointNearPolygonBoundary(point, part.points, tolerance))
-  );
+
+  const isEdgeOnSegment = (edgeStart: DxfPoint, edgeEnd: DxfPoint, segStart: DxfPoint, segEnd: DxfPoint) => {
+    const distToLine = (p: DxfPoint) => {
+      const dx = segEnd.x - segStart.x;
+      const dy = segEnd.y - segStart.y;
+      const lengthSq = dx * dx + dy * dy;
+      const t = lengthSq <= 0 ? 0 : ((p.x - segStart.x) * dx + (p.y - segStart.y) * dy) / lengthSq;
+      const closest = { x: segStart.x + dx * t, y: segStart.y + dy * t };
+      return { distance: Math.hypot(p.x - closest.x, p.y - closest.y), t };
+    };
+    const d1 = distToLine(edgeStart);
+    const d2 = distToLine(edgeEnd);
+    if (d1.distance > 5 || d2.distance > 5) return false;
+    if (Math.max(d1.t, d2.t) < -0.1 || Math.min(d1.t, d2.t) > 1.1) return false;
+    const len = Math.hypot(edgeEnd.x - edgeStart.x, edgeEnd.y - edgeStart.y);
+    return len >= 10;
+  };
+
   Object.entries(item.sideSegments ?? {}).forEach(([side, segment]) => {
     const start = { x: segment.start.x - part.sourceX, y: segment.start.y - part.sourceY };
     const end = { x: segment.end.x - part.sourceX, y: segment.end.y - part.sourceY };
-    const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-    if (!inPart(start, 6) || !inPart(end, 6) || !inPart(middle, 10)) return;
-    sideSegments[side] = { start, end };
-    if (item.edgeProfiles[side]) edgeProfiles[side] = item.edgeProfiles[side];
+    const points = part.points;
+    let matchedEdge: { start: DxfPoint; end: DxfPoint } | undefined = undefined;
+    for (let i = 0; i < points.length; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % points.length];
+      if (isEdgeOnSegment(p1, p2, start, end)) {
+        if (!matchedEdge || Math.hypot(p2.x - p1.x, p2.y - p1.y) > Math.hypot(matchedEdge.end.x - matchedEdge.start.x, matchedEdge.end.y - matchedEdge.start.y)) {
+          matchedEdge = { start: p1, end: p2 };
+        }
+      }
+    }
+    if (matchedEdge) {
+      sideSegments[side] = matchedEdge;
+      if (item.edgeProfiles[side]) edgeProfiles[side] = item.edgeProfiles[side];
+    }
   });
   const keptSides = new Set(Object.keys(sideSegments));
   // EdgeFeature у цьому проєкті = { enabled, size, sides } — без sideSizes/sideLengths.

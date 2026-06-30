@@ -229,9 +229,13 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .joint-checks { position: absolute; right: 22px; bottom: 28px; z-index: 4; display: flex; flex-direction: column; gap: 8px; width: 180px; }
 .joint-checks label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; font-size: 13px; color: var(--text-secondary); }
 .joint-checks input { width: auto; }
+.approval-item-editors-top { display: grid; grid-template-columns: minmax(300px, 1.2fr) minmax(260px, 1fr); gap: 20px; align-items: start; margin-bottom: 14px; }
+.approval-dimension-editor strong { display: block; margin-bottom: 12px; font-size: 15px; color: #162635; }
+.approval-side-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .edge-processing-designer { border: 1px solid #cad8e3; border-radius: 4px; background: #f8fbff; padding: 14px; margin-bottom: 12px; }
-.edge-processing-designer h3 { margin: 0 0 14px; font-size: 15px; color: #162635; }
-.edge-processing-global-sizes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.edge-processing-designer h3 { margin: 0; font-size: 15px; color: #162635; padding-bottom: 6px; }
+.edge-processing-header { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; justify-content: space-between; }
+.edge-processing-global-sizes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 0; flex: 1; max-width: 320px; justify-content: end; margin-left: auto; }
 .edge-processing-table-wrapper { overflow-x: auto; }
 .edge-processing-table { width: 100%; border-collapse: separate; border-spacing: 0 4px; }
 .edge-processing-table th { text-align: left; padding: 0 8px 8px; font-size: 13px; color: #516d82; font-weight: 600; border-bottom: 1px solid #cad8e3; }
@@ -440,7 +444,7 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .group-drag-preview { pointer-events: none; filter: drop-shadow(0 8px 14px rgba(31,45,58,.2)); }
 .group-drag-preview polygon { fill: rgba(114,147,171,.28); stroke: #1f78b4; stroke-width: 2; stroke-dasharray: 8 5; }
 .allowance-outline { stroke-dasharray: 8 6; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.edge-profile-marks line { stroke: #1f5f87; stroke-width: 1.15; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; }
+.edge-profile-marks line, .edge-profile-marks polyline { stroke: #1f5f87; stroke-width: 1.15; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; }
 .edge-profile-marks text { fill: #1f5f87; font-size: 9px; font-weight: 700; paint-order: stroke; stroke: rgba(248,251,253,.82); stroke-width: 3px; vector-effect: non-scaling-stroke; }
 .slab-svg-drop-active { cursor: copy; }
 .unplaced-empty { min-height: 62px; display: flex; align-items: center; color: #536b7a; background: rgba(255,255,255,.35); border: 1px dashed rgba(127,152,173,.55); border-radius: 2px; padding: 10px; }
@@ -507,3 +511,111 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .quote-totals { display: flex; flex-wrap: wrap; gap: 18px; padding: 12px 0; font-size: 14px; }
 .quote-grand-total { font-size: 16px; }
 .quote-grand-total strong { color: #0f766e; }
+
+/* Joint Editing Overlay Styles */
+.dxf-joint-overlay {
+  stroke: #7c3aed;
+  stroke-width: 2.2;
+  stroke-dasharray: 6 4;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+.dxf-joint-overlay text {
+  fill: #7c3aed;
+  font-size: 10px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 3px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  vector-effect: non-scaling-stroke;
+}
+
+.dxf-joint-preview-overlay {
+  stroke: #2563eb;
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+  opacity: 0.6;
+}
+
+path.dxf-edge-overlay, .dxf-edge-overlay path {
+  fill: none;
+  stroke: #1f5f87;
+  stroke-width: 1.15;
+  stroke-dasharray: 8 5;
+  vector-effect: non-scaling-stroke;
+}
+text.dxf-overlay-label, .dxf-edge-overlay text {
+  fill: #1f5f87;
+  font-size: 9px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(248,251,253,.82);
+  stroke-width: 3px;
+  vector-effect: non-scaling-stroke;
+}
+
+.dxf-thickening-overlay path, .dxf-fold-overlay path {
+  fill: rgba(31, 95, 135, 0.1);
+  stroke: #1f5f87;
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+.dxf-thickening-overlay text, .dxf-fold-overlay text {
+  fill: #1f5f87;
+  font-size: 8px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: rgba(248,251,253,.9);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+}
+
+.dxf-joint-corner-guide {
+  fill: #6366f1;
+  stroke: #ffffff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.dxf-joint-point-guide {
+  fill: #10b981;
+  stroke: #ffffff;
+  stroke-width: 1.8;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.dxf-joint-draft-point {
+  fill: #d97706;
+  stroke: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.dxf-joint-edge-hover {
+  stroke: #10b981;
+  stroke-width: 3;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.approval-joint-select {
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 6px;
+  background-color: #ffffff;
+  transition: all 0.2s ease-in-out;
+}
+.approval-joint-select.active {
+  border-color: #7c3aed;
+  background-color: #faf5ff;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
+}
+

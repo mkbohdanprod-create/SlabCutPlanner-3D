@@ -18,6 +18,7 @@ export type DxfOverviewOverlay = {
   labelX?: number;
   labelY?: number;
   className?: string;
+  clipPathId?: string;
 };
 
 export function DxfPreviewShape({ contour }: { contour: DxfPreviewContour }) {
@@ -191,6 +192,13 @@ export function DxfOverview({
         else if (dragging) onCanvasDragFinish();
       }}
     >
+      <defs>
+        {contours.map((contour) => (
+          <clipPath key={`clip-${contour.id}`} id={`clip-${contour.id}`}>
+            <path transform={`translate(${contour.sourceX} ${contour.sourceY})`} d={dxfSvgPath(contour.points, contour.holes)} />
+          </clipPath>
+        ))}
+      </defs>
       {contours.map((contour) => (
         <g key={contour.id} transform={`translate(${contour.sourceX} ${contour.sourceY})`}>
           <path
@@ -245,7 +253,7 @@ export function DxfOverview({
         </g>
       ))}
       {(overlays ?? []).map((overlay) => (
-        <g key={overlay.id} className={overlay.className ?? 'dxf-feature-overlay'}>
+        <g key={overlay.id} className={overlay.className ?? 'dxf-feature-overlay'} clipPath={overlay.clipPathId ? `url(#${overlay.clipPathId})` : undefined}>
           <path d={overlay.path} />
           {overlay.label && <text x={overlay.labelX} y={overlay.labelY}>{overlay.label}</text>}
         </g>

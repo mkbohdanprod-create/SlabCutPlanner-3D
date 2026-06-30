@@ -22,6 +22,7 @@ import { HelpDialog } from './components/ui/HelpDialog';
 import { ServiceDialog } from './components/ui/ServiceDialog';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { BugReporterDialog } from './components/ui/BugReporterDialog';
+import { WorkspacePane } from './components/WorkspacePane';
 
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { blackbox } from './utils/blackbox';
@@ -30,6 +31,12 @@ import * as rrweb from 'rrweb';
 function App() {
   const setMainView = useUIStore((s) => s.setMainView);
   const mainView = useUIStore((s) => s.mainView);
+  const splitLeftView = useUIStore((s) => s.splitLeftView);
+  const setSplitLeftView = useUIStore((s) => s.setSplitLeftView);
+  const splitRightView = useUIStore((s) => s.splitRightView);
+  const setSplitRightView = useUIStore((s) => s.setSplitRightView);
+  const splitRatio = useUIStore((s) => s.splitRatio);
+  const setSplitRatio = useUIStore((s) => s.setSplitRatio);
   const set3dAssemblyMode = useUIStore((s) => s.set3dAssemblyMode);
   const updateProjectHeader = useProjectStore((s) => s.updateProjectHeader);
   const initialize = useProjectStore(s => s.initialize);
@@ -425,106 +432,59 @@ function App() {
       {/* Main Content Workspace */}
       <main className="flex-1 min-h-0 overflow-hidden flex p-4 gap-4">
         {/* Left Sidebar - Tools & Parts */}
-        {mainView === '2d' ? <Sidebar /> : <Sidebar3D />}
+        {mainView === '2d' || mainView === 'split' ? <Sidebar /> : <Sidebar3D />}
 
-        <div className="flex-1 min-h-0 min-w-0 flex flex-col">
-          {/* Canvas Tabs */}
-          <div className="flex items-end z-10 relative bg-[#f0f3f5] pt-2 px-4 border-b border-[var(--border-color)]">
-            <button
-              onClick={() => {
-                setMainView('2d');
-                useUIStore.getState().setFloatingPreviewOpen(false);
-              }}
-              className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ${
-                mainView === '2d' && !useUIStore.getState().isFloatingPreviewOpen
-                  ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]' 
-                  : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
-              }`}
-              style={{ fontFamily: 'Roboto, sans-serif' }}
-            >
-              <Layers className="w-4 h-4" />
-              2D Розкрій
-            </button>
-            <button
-              onClick={() => {
-                setMainView('texture');
-                useUIStore.getState().setFloatingPreviewOpen(false);
-              }}
-              className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 ${
-                mainView === 'texture' && !useUIStore.getState().isFloatingPreviewOpen
-                  ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]' 
-                  : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
-              }`}
-              style={{ fontFamily: 'Roboto, sans-serif' }}
-            >
-              <Image className="w-4 h-4" /> Підбір текстури
-            </button>
-            <button
-              onClick={() => {
-                setMainView('3d');
-                set3dAssemblyMode(true);
-                useUIStore.getState().setFloatingPreviewOpen(false);
-              }}
-              className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 ${
-                mainView === '3d' && useUIStore.getState().is3dAssemblyMode
-                  ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]' 
-                  : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
-              }`}
-              style={{ fontFamily: 'Roboto, sans-serif' }}
-            >
-              <Box className="w-4 h-4" /> 3D Редактор
-            </button>
-            <button
-              onClick={() => {
-                setMainView('2d');
-                useUIStore.getState().setFloatingPreviewMode('3d');
-                useUIStore.getState().setFloatingPreviewOpen(true);
-              }}
-              className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 ${
-                useUIStore.getState().isFloatingPreviewOpen
-                  ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]' 
-                  : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
-              }`}
-              style={{ fontFamily: 'Roboto, sans-serif' }}
-            >
-              <Eye className="w-4 h-4" /> 3D Прев'ю
-            </button>
-            
-          </div>
-
-          {/* Center Canvas Area */}
-          <section className="flex-1 min-h-0 bg-white rounded-b-sm rounded-tr-sm shadow-sm border border-slate-300 border-t-0 overflow-y-auto custom-scrollbar flex flex-col p-4 gap-4 relative workspace z-0">
-          {mainView === '2d' ? (
-            <div className="flex flex-col gap-4 min-h-min">
-              <ErrorBoundary componentName="UnplacedPartsPanel">
-                <div className="shrink-0"><UnplacedPartsPanel /></div>
-              </ErrorBoundary>
-              <ErrorBoundary componentName="SlabBoard">
-                <div className="shrink-0"><SlabBoard /></div>
-              </ErrorBoundary>
-              <ErrorBoundary componentName="TextureLayoutPanel">
-                <div className="shrink-0"><TextureLayoutPanel /></div>
-              </ErrorBoundary>
-            </div>
-          ) : mainView === 'texture' ? (
-            <div className="flex flex-col gap-4 h-full relative">
-              <ErrorBoundary componentName="TextureLayoutPanel">
-                <TextureLayoutPanel />
-              </ErrorBoundary>
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col relative">
+          {mainView === 'split' ? (
+            <div className="flex-1 flex flex-row w-full h-full min-h-0 overflow-hidden relative workspace-container">
+              <div style={{ width: `${splitRatio}%`, minWidth: '20%' }} className="flex flex-col h-full min-h-0">
+                <WorkspacePane 
+                  view={splitLeftView} 
+                  onChangeView={setSplitLeftView} 
+                  isSplitModeActive={true} 
+                  onToggleSplit={() => setMainView(splitLeftView)} 
+                />
+              </div>
+              
+              <div 
+                className="w-1.5 bg-slate-200 hover:bg-[#0084ff] active:bg-[#0084ff] cursor-col-resize flex-shrink-0 transition-colors z-20"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  const startX = e.clientX;
+                  const startRatio = splitRatio;
+                  const onMouseMove = (moveEvent: MouseEvent) => {
+                    const deltaX = moveEvent.clientX - startX;
+                    const containerWidth = document.querySelector('.workspace-container')?.clientWidth || window.innerWidth - 300;
+                    const deltaRatio = (deltaX / containerWidth) * 100;
+                    const newRatio = Math.max(20, Math.min(80, startRatio + deltaRatio));
+                    setSplitRatio(newRatio);
+                  };
+                  const onMouseUp = () => {
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                  };
+                  document.addEventListener('mousemove', onMouseMove);
+                  document.addEventListener('mouseup', onMouseUp);
+                }}
+              />
+              
+              <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden" style={{ minWidth: '20%' }}>
+                <WorkspacePane 
+                  view={splitRightView} 
+                  onChangeView={setSplitRightView} 
+                  isSplitModeActive={true} 
+                  onToggleSplit={() => setMainView(splitRightView)} 
+                />
+              </div>
             </div>
           ) : (
-            <ErrorBoundary componentName="Viewer3D">
-              <Suspense fallback={
-                <div className="flex-1 flex flex-col items-center justify-center bg-slate-100 text-slate-500 w-full h-full gap-3">
-                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                  <span className="font-medium">Завантаження 3D-движка...</span>
-                </div>
-              }>
-                <Viewer3D />
-              </Suspense>
-            </ErrorBoundary>
+            <WorkspacePane 
+              view={mainView as any} 
+              onChangeView={setMainView} 
+              isSplitModeActive={false} 
+              onToggleSplit={() => setMainView('split')} 
+            />
           )}
-          </section>
         </div>
       </main>
 

@@ -114,22 +114,20 @@ export function approvalPreviewDebugSummary(preview: ApprovalImportPreview) {
 export function ApprovalItemCrop({ item }: { item: ApprovalImportItem }) {
   if (!item.sourcePreview) return <span className="approval-error-text">Drawing crop was not found.</span>;
   const hasContour = Boolean(item.customPoints?.length);
-  const viewWidth = hasContour
-    ? Math.max(1, item.width, item.sourcePreview.x + item.sourcePreview.width)
-    : Math.max(1, item.sourcePreview.width);
-  const viewHeight = hasContour
-    ? Math.max(1, item.height, item.sourcePreview.y + item.sourcePreview.height)
-    : Math.max(1, item.sourcePreview.height);
+  const viewWidth = hasContour ? Math.max(1, item.width) : Math.max(1, item.sourcePreview.width);
+  const viewHeight = hasContour ? Math.max(1, item.height) : Math.max(1, item.sourcePreview.height);
   return (
     <svg viewBox={`0 0 ${viewWidth} ${viewHeight}`} aria-label="Crop креслення з PDF">
-      <image
-        href={item.sourcePreview.image}
-        x={hasContour ? item.sourcePreview.x : 0}
-        y={hasContour ? item.sourcePreview.y : 0}
-        width={item.sourcePreview.width}
-        height={item.sourcePreview.height}
-        preserveAspectRatio="none"
-      />
+      {!hasContour && (
+        <image
+          href={item.sourcePreview.image}
+          x={0}
+          y={0}
+          width={item.sourcePreview.width}
+          height={item.sourcePreview.height}
+          preserveAspectRatio="none"
+        />
+      )}
       {hasContour ? <path d={dxfSvgPath(approvalItemPoints(item), item.customHoles ?? [])} fillRule="evenodd" /> : null}
     </svg>
   );
@@ -137,13 +135,52 @@ export function ApprovalItemCrop({ item }: { item: ApprovalImportItem }) {
 
 export function ApprovalOverview({ items }: { items: ApprovalImportItem[] }) {
   const drawableItems = items.filter(approvalItemHasExtractedGeometry);
-  const width = Math.max(1, ...drawableItems.map((item) => item.sourceX + item.width));
-  const height = Math.max(1, ...drawableItems.map((item) => item.sourceY + item.height));
-  const pad = Math.max(60, Math.max(width, height) * 0.04);
+
+  // For each item, compute the FULL bounding box that encompasses both the contour AND the preview image.
+  // All coordinates are local to the item (contour starts at 0,0 with size width×height).
+  interface ItemLayout {
+    item: ApprovalImportItem;
+    // Local bounding box of the combined contour+preview (may have negative minY or minX)
+    localMinX: number;
+    localMinY: number;
+    localMaxX: number;
+    localMaxY: number;
+    // Absolute position of the contour origin in the final SVG
+    svgOriginX: number;
+    svgOriginY: number;
+  }
+
+  const GAP = 120;
+  let currentY = 0;
+  const layoutItems: ItemLayout[] = drawableItems.map((item) => {
+    const sp = item.sourcePreview;
+    // Bounding box in item-local coords
+    const localMinX = Math.min(0, sp ? sp.x : 0);
+    const localMinY = Math.min(0, sp ? sp.y : 0);
+    const localMaxX = Math.max(item.width, sp ? sp.x + sp.width : item.width);
+    const localMaxY = Math.max(item.height, sp ? sp.y + sp.height : item.height);
+
+    // To start the combined bbox at y=currentY, the contour origin must be at:
+    const svgOriginX = -localMinX;           // push contour so localMinX lands at 0
+    const svgOriginY = currentY - localMinY; // push contour so localMinY lands at currentY
+
+    currentY = svgOriginY + localMaxY + GAP;
+
+    return { item, localMinX, localMinY, localMaxX, localMaxY, svgOriginX, svgOriginY };
+  });
+
+  const totalWidth = Math.max(1, ...layoutItems.map((li) => li.svgOriginX + li.localMaxX));
+  const totalHeight = Math.max(1, currentY - GAP);
+  const pad = Math.max(60, Math.max(totalWidth, totalHeight) * 0.04);
+
   return (
-    <svg className="approval-overview" viewBox={`${-pad} ${-pad} ${width + pad * 2} ${height + pad * 2}`} aria-label="Схема імпорту бланку погодження">
-      {drawableItems.map((item) => (
-        <g key={item.id} transform={`translate(${item.sourceX} ${item.sourceY})`}>
+    <svg
+      className="approval-overview"
+      viewBox={`${-pad} ${-pad} ${totalWidth + pad * 2} ${totalHeight + pad * 2}`}
+      aria-label="Схема імпорту бланку погодження"
+    >
+      {layoutItems.map(({ item, svgOriginX, svgOriginY }) => (
+        <g key={item.id} transform={`translate(${svgOriginX} ${svgOriginY})`}>
           {item.sourcePreview && (
             <image
               href={item.sourcePreview.image}

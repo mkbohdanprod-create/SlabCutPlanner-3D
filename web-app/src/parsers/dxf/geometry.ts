@@ -105,7 +105,30 @@ export function dxfHoleSize(hole: DxfPoint[]) {
 }
 
 export function dxfSvgPath(points: DxfPoint[], holes: DxfPoint[][] = []) {
-  const path = (items: DxfPoint[]) => items.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`).join(' ') + ' Z';
+  const path = (items: DxfPoint[]) => {
+    if (!items.length) return '';
+    let d = `M${items[0].x} ${items[0].y}`;
+    for (let i = 1; i <= items.length; i++) {
+      const isLast = i === items.length;
+      const prev = items[i - 1];
+      const point = items[isLast ? 0 : i];
+      if (isLast && !prev.bulge) {
+        d += ' Z';
+        break;
+      }
+      if (prev.bulge) {
+        const theta = 4 * Math.atan(prev.bulge);
+        const chord = Math.hypot(point.x - prev.x, point.y - prev.y);
+        const radius = Math.abs(chord / (2 * Math.sin(theta / 2)));
+        const largeArcFlag = Math.abs(theta) > Math.PI ? 1 : 0;
+        const sweepFlag = prev.bulge > 0 ? 1 : 0;
+        d += ` A ${radius} ${radius} 0 ${largeArcFlag} ${sweepFlag} ${point.x} ${point.y}`;
+      } else {
+        d += ` L ${point.x} ${point.y}`;
+      }
+    }
+    return d;
+  };
   return [path(points), ...holes.map(path)].join(' ');
 }
 

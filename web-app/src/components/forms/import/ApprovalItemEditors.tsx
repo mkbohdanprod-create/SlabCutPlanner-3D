@@ -55,10 +55,12 @@ export function ApprovalItemEditors({
   item,
   sides,
   onPatch,
+  children,
 }: {
   item: ApprovalImportItem;
   sides?: string[];                                  // опціонально; за замовч. — з item
   onPatch: (patch: Partial<ApprovalImportItem>) => void;
+  children?: React.ReactNode;
 }) {
   const sideList = sides ?? sidesForItem(item);
   const dimensionFor = (side: string) =>
@@ -92,18 +94,47 @@ export function ApprovalItemEditors({
 
   return (
     <div className="approval-item-editors">
-      <div className="approval-dimension-editor" aria-label="Розміри сторін">
-        <strong>Розміри сторін</strong>
-        <div className="approval-side-grid">
-          {sideList.map((side) => (
-            <Field key={side} label={side}>
-              <input
-                type="number"
-                value={dimensionFor(side)}
-                onChange={(event) => onPatch(updateApprovalDimensionList(item, side, event.target.value))}
-              />
-            </Field>
-          ))}
+      <div className="approval-item-editors-top">
+        {children}
+        <div className="approval-dimension-editor" aria-label="Розміри сторін">
+          <strong>Розміри сторін</strong>
+          <div className="approval-side-grid">
+            {(() => {
+              const cells: (string | null)[] = [];
+              if (sideList.length > 0) {
+                // Row 1: indices 0, 2, 4
+                cells.push(sideList[0] ?? null);
+                cells.push(sideList[2] ?? null);
+                cells.push(sideList[4] ?? null);
+                // Row 2: indices 1, 3, 5
+                cells.push(sideList[1] ?? null);
+                cells.push(sideList[3] ?? null);
+                cells.push(sideList[5] ?? null);
+                // Row 3+: indices 6 and above
+                for (let i = 6; i < sideList.length; i++) {
+                  cells.push(sideList[i]);
+                }
+              }
+              
+              // Remove trailing nulls if it's completely empty at the end, but keep middle nulls to preserve grid structure
+              while (cells.length > 0 && cells[cells.length - 1] === null) {
+                cells.pop();
+              }
+
+              return cells.map((side, index) => {
+                if (!side) return <div key={`empty-${index}`} />;
+                return (
+                  <Field key={side} label={side}>
+                    <input
+                      type="number"
+                      value={dimensionFor(side)}
+                      onChange={(event) => onPatch(updateApprovalDimensionList(item, side, event.target.value))}
+                    />
+                  </Field>
+                );
+              });
+            })()}
+          </div>
         </div>
       </div>
 

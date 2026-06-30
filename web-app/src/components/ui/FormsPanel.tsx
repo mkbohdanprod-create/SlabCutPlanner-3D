@@ -9,6 +9,7 @@ import type { ApprovalImportItem, ApprovalImportPreview } from '../../utils/appr
 import {
   parseApprovalFile,
   applyApprovalItemDimensionsToPoints,
+  layoutItems,
 } from '../../utils/approvalImport';
 import { DEFAULT_EDGE_PROFILE, EDGE_PROFILE_OPTIONS } from '../../utils/edgeProfiles';
 import type {
@@ -95,7 +96,12 @@ import {
   approvalFeatureOverlaysForItem,
   approvalEdgeOverlaysForItem,
   approvalJointOverlaysForItem,
+  approvalJointGuideOverlaysForItem,
+  nearestApprovalContourPoint,
+  approvalJointSegmentForPoint,
+  approvalCustomJointIsInside,
 } from '../forms/import/approvalCanvasUtils';
+import type { ApprovalJointToolMode, ApprovalJointHover } from '../forms/import/approvalCanvasUtils';
 import type { DxfOverviewOverlay } from '../forms/import/DxfOverview';
 import { DimInput, QuantityInput, ShapeIcon, Field } from '../forms/utils/sharedInputs';
 import { splitApprovalItemByJoint } from '../../engines/approvalSplit';
@@ -141,6 +147,10 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   const [approvalZoom, setApprovalZoom] = useState(1);
   const [approvalPreviewCanvasSize, setApprovalPreviewCanvasSize] = useState({ width: 1, height: 1 });
   const approvalOverviewScrollRef = useRef<HTMLDivElement | null>(null);
+  const [approvalJointTool, setApprovalJointTool] = useState<{ itemId: string; mode: ApprovalJointToolMode } | null>(null);
+  const [approvalJointDraft, setApprovalJointDraft] = useState<{ itemId: string; point: DxfPoint } | null>(null);
+  const [approvalJointHover, setApprovalJointHover] = useState<ApprovalJointHover | null>(null);
+  const [approvalJointNotice, setApprovalJointNotice] = useState('');
   const [slab, setSlab] = useState({
     width: 3200,
     height: 1600,
@@ -363,35 +373,12 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
 
   const closeApprovalPreview = () => {
     setApprovalPreview(null);
+    setApprovalJointTool(null);
+    setApprovalJointDraft(null);
+    setApprovalJointHover(null);
+    setApprovalJointNotice('');
   };
 
-  const openApprovalFixture = async (fixtureFileName = '81-1305719.pdf') => {
-    try {
-      console.warn('[APPROVAL_IMPORT_V2_REACHED]', {
-        fileName: fixtureFileName,
-        timestamp: new Date().toISOString(),
-        source: 'dev-fixture-button',
-      });
-      const response = await fetch(`/test-fixtures/approval-forms/${encodeURIComponent(fixtureFileName)}`);
-      if (!response.ok) throw new Error(`fixture ${fixtureFileName} is not available (${response.status})`);
-      const blob = await response.blob();
-      const file = new File([blob], fixtureFileName, { type: 'application/pdf' });
-      setIsImporting(true);
-      const parsed = await parseApprovalFile(file);
-      setIsImporting(false);
-      if (!parsed.items.length) {
-        setError('У бланку погодження не знайдено таблиць виробів для імпорту.');
-        return;
-      }
-      setError('');
-      setApprovalPreview(parsed);
-      setApprovalPreviewCanvasSize(approvalStableCanvasSizeForItems(parsed.items));
-    } catch (reason) {
-      setIsImporting(false);
-      console.error('[APPROVAL_IMPORT_ERROR]', reason);
-      setError(`Не вдалося прочитати тестовий бланк погодження: ${reason instanceof Error ? reason.message : String(reason)}`);
-    }
-  };
 
   const onApprovalFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -448,22 +435,156 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   };
 
   const updateApprovalItem = (id: string, patch: Partial<ApprovalImportItem>) => {
-    setApprovalPreview((current) => current ? {
-      ...current,
-      items: current.items.map((item) => {
+    setApprovalPreview((current) => {
+      if (!current) return current;
+      const nextItems = current.items.map((item) => {
         if (item.id !== id) return item;
         const next = { ...item, ...patch };
         return applyApprovalItemDimensionsToPoints(next);
-      }),
-    } : current);
+      });
+      return { ...current, items: layoutItems(nextItems) as ApprovalImportItem[] };
+    });
   };
 
   const deleteApprovalItem = (id: string) => {
+    if (approvalJointTool?.itemId === id) {
+      setApprovalJointTool(null);
+      setApprovalJointDraft(null);
+      setApprovalJointHover(null);
+    }
     setApprovalPreview((current) => {
       if (!current) return current;
       const items = current.items.filter((item) => item.id !== id);
       return items.length ? { ...current, items } : null;
     });
+  };
+
+  const commitApprovalJoint = (itemId: string, joint: { start: DxfPoint; end: DxfPoint }) => {
+    setApprovalPreview((current) => {
+      if (!current) return null;
+      return {
+        ...current,
+        items: current.items.map((item) => {
+          if (item.id !== itemId) return item;
+          const nextJoints = [...(item.joints ?? [])];
+          const newJoint = {
+            id: uid('joint'),
+            type: approvalJointTool?.mode ?? 'custom',
+            start: joint.start,
+            end: joint.end,
+            source: 'manual' as const,
+          };
+          nextJoints.push(newJoint);
+          const patch: Partial<ApprovalImportItem> = {
+            joints: nextJoints,
+            importStatus: 'Needs review',
+          };
+          return { ...item, ...patch };
+        }),
+      };
+    });
+    setApprovalSplitItemIds((prev) => [...new Set([...prev, itemId])]);
+    setApprovalJointDraft(null);
+    setApprovalJointHover(null);
+    setApprovalJointNotice('Стик додано.');
+  };
+
+  const updateApprovalJointHover = (itemId: string, globalPoint: DxfPoint) => {
+    if (!approvalJointTool || approvalJointTool.itemId !== itemId || !approvalPreview) return;
+    const item = approvalPreview.items.find((i) => i.id === itemId);
+    if (!item) return;
+    if (approvalJointTool.mode === 'pointToPoint') {
+      const snap = nearestApprovalContourPoint(item, globalPoint);
+      if (!snap) {
+        setApprovalJointHover(null);
+        return;
+      }
+      const draftPoint = approvalJointDraft?.itemId === itemId ? approvalJointDraft.point : null;
+      let previewJoint: { start: DxfPoint; end: DxfPoint } | undefined;
+      if (draftPoint) {
+        previewJoint = { start: draftPoint, end: snap.point };
+      }
+      setApprovalJointHover({
+        itemId,
+        point: snap.point,
+        edgeStart: snap.edgeStart,
+        edgeEnd: snap.edgeEnd,
+        snappedToCorner: snap.snappedToCorner,
+        previewJoint,
+      });
+      return;
+    }
+    const result = approvalJointSegmentForPoint(item, globalPoint, approvalJointTool.mode);
+    if (result.error) {
+      setApprovalJointNotice(result.error);
+      setApprovalJointHover(null);
+      return;
+    }
+    if (result.snap && result.joint) {
+      setApprovalJointHover({
+        itemId,
+        point: result.snap.point,
+        edgeStart: result.snap.edgeStart,
+        edgeEnd: result.snap.edgeEnd,
+        snappedToCorner: result.snap.snappedToCorner,
+        previewJoint: result.joint,
+      });
+      setApprovalJointNotice('');
+    }
+  };
+
+  const createApprovalJointAtPoint = (itemId: string, globalPoint: DxfPoint) => {
+    if (!approvalJointTool || approvalJointTool.itemId !== itemId || !approvalPreview) return;
+    const item = approvalPreview.items.find((i) => i.id === itemId);
+    if (!item) return;
+    if (approvalJointTool.mode === 'pointToPoint') {
+      const snap = nearestApprovalContourPoint(item, globalPoint);
+      if (!snap) return;
+      if (approvalJointDraft?.itemId === itemId) {
+        const start = approvalJointDraft.point;
+        const end = snap.point;
+        if (Math.hypot(end.x - start.x, end.y - start.y) < 2) {
+          setApprovalJointNotice('Стик не може бути нульової довжини.');
+          return;
+        }
+        if (!approvalCustomJointIsInside(item, start, end)) {
+          setApprovalJointNotice('Стик «від точки до точки» має повністю проходити всередині деталі та з’єднувати протилежні сторони.');
+          return;
+        }
+        commitApprovalJoint(itemId, { start, end });
+      } else {
+        setApprovalJointDraft({ itemId, point: snap.point });
+        setApprovalJointNotice('Оберіть другу точку на контурі для завершення стику.');
+      }
+      return;
+    }
+    const result = approvalJointSegmentForPoint(item, globalPoint, approvalJointTool.mode);
+    if (result.error) {
+      setApprovalJointNotice(result.error);
+      return;
+    }
+    if (result.joint) {
+      commitApprovalJoint(itemId, result.joint);
+    }
+  };
+
+  const deleteApprovalJoints = (itemId: string) => {
+    setApprovalPreview((current) => {
+      if (!current) return null;
+      return {
+        ...current,
+        items: current.items.map((item) => {
+          if (item.id !== itemId) return item;
+          return {
+            ...item,
+            joints: [],
+            importStatus: 'Needs review',
+          };
+        }),
+      };
+    });
+    setApprovalSplitItemIds((prev) => prev.filter((id) => id !== itemId));
+    setApprovalJointNotice('Всі стики на деталі видалено.');
   };
 
   const approvalItemGeometry = (item: ApprovalImportItem): Detail['geometry'] => {
@@ -1154,12 +1275,16 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   const approvalPreviewOverlays = useMemo(() => {
     if (!approvalPreview) return [];
     const items = approvalPreview.items.filter(approvalItemHasExtractedGeometry);
-    return [
+    const regularOverlays = [
       ...items.flatMap(approvalFeatureOverlaysForItem),
       ...items.flatMap(approvalEdgeOverlaysForItem),
       ...items.flatMap(approvalJointOverlaysForItem),
     ];
-  }, [approvalPreview]);
+    const toolOverlays = items.flatMap((item) =>
+      approvalJointGuideOverlaysForItem(item, approvalJointTool, approvalJointHover, approvalJointDraft)
+    );
+    return [...regularOverlays, ...toolOverlays];
+  }, [approvalPreview, approvalJointTool, approvalJointHover, approvalJointDraft]);
 
   // ResizeObserver removed to keep stable canvas size based on drawing bounding box
 
@@ -1480,7 +1605,6 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
               <div>
                 <h2>Попередній перегляд бланку погодження</h2>
                 <p>Перевірте дані замовлення, вироби, кромки та елементи перед імпортом.</p>
-                <p className="approval-pipeline-marker">Approval Import Pipeline: V2 · {approvalPreview.approvalImportBuildId}</p>
               </div>
               <button type="button" className="icon-button" aria-label="Закрити" onClick={closeApprovalPreview}>×</button>
             </div>
@@ -1552,6 +1676,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
               <button type="button" className="dxf-tool-button" disabled={!approvalPreview.items.length} onClick={openApprovalBindingPreview}>
                 Стикування
               </button>
+              {approvalJointNotice && <span className="dxf-notice approval-joint-notice" role="status">{approvalJointNotice}</span>}
             </div>
             {approvalPreview.warnings.length > 0 && (
               <div className="approval-warning-box">
@@ -1573,70 +1698,83 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
                     <div className="approval-item-crop">
                       <ApprovalItemCrop item={item} />
                     </div>
-                    <div className="dxf-preview-controls">
-                      <Field label="Назва">
-                        <input value={item.name} onChange={(event) => updateApprovalItem(item.id, { name: event.target.value })} />
-                      </Field>
-                      <Field label="Тип">
-                        <select value={item.type} onChange={(event) => updateApprovalItem(item.id, { type: event.target.value as DetailType })}>
-                          {detailTypes.map((type) => <option key={type} value={type}>{ui(type)}</option>)}
-                        </select>
-                      </Field>
-                      <Field label="Форма">
-                        <select value={item.shape} onChange={(event) => updateApprovalItem(item.id, { shape: event.target.value as DetailShape })}>
-                          {referenceData.detailShapes.map((shape) => <option key={shape} value={shape}>{ui(shape)}</option>)}
-                        </select>
-                      </Field>
-                      <Field label="Ширина">
-                        <input type="number" className={item.width === 0 ? 'error-input' : ''} value={item.width} onChange={(event) => updateApprovalItem(item.id, { width: Number(event.target.value) })} />
-                      </Field>
-                      <Field label="Висота">
-                        <input type="number" className={item.height === 0 ? 'error-input' : ''} value={item.height} onChange={(event) => updateApprovalItem(item.id, { height: Number(event.target.value) })} />
-                      </Field>
-                      <Field label="Кількість">
-                        <input type="number" value={item.quantity} onChange={(event) => updateApprovalItem(item.id, { quantity: Number(event.target.value) })} />
-                      </Field>
-                      {(item.joints?.length || item.jointVertical || item.jointHorizontal) ? (
-                        <label className="approval-split-check">
-                          <input
-                            type="checkbox"
-                            checked={approvalSplitItemIds.includes(item.id)}
-                            onChange={(event) => setApprovalSplitItemIds((current) => (
-                              event.target.checked
-                                ? [...new Set([...current, item.id])]
-                                : current.filter((id) => id !== item.id)
-                            ))}
-                          />
-                          <span>Розділити на окремі деталі</span>
-                        </label>
-                      ) : null}
-                      <button type="button" className="danger-button" onClick={() => deleteApprovalItem(item.id)}>Видалити</button>
-                    </div>
-                    <ApprovalItemEditors item={item} onPatch={(patch) => updateApprovalItem(item.id, patch)} />
-                    <div className="approval-spec-summary">
-                      {item.area ? <span>Площа з бланку: {item.area.toFixed(3)} м²</span> : null}
-                      <span>pipeline: {item.pipelineVersion}</span>
-                      <span>buildId: {approvalPreview.approvalImportBuildId}</span>
-                      <span>geometrySource: {item.geometrySource}</span>
-                      <span>shapeMode: {item.shapeMode}</span>
-                      <span>contourPointsCount: {item.customPoints?.length ?? 0}</span>
-                      <span>finalImportAllowed: {approvalItemHasExtractedGeometry(item) ? 'true' : 'false'}</span>
-                      <span>dimensionsSource: {item.dimensionsSource}</span>
-                      <span>specSource: {item.specSource}</span>
-                      {item.dimensions.length > 0 ? <span>Розміри з креслення: {item.dimensions.map((dimension) => `${dimension.side}=${dimension.value}`).join(', ')}</span> : null}
-                      {item.sizeSource === 'drawing' ? <span>Геометрію взято з креслення бланку.</span> : null}
-                      {!approvalItemHasExtractedGeometry(item) ? <span className="approval-error-text">Geometry was not extracted. This product cannot be imported.</span> : null}
-                      {item.warnings.map((warning, index) => <span key={`${item.id}-warning-${index}`} className="approval-warning-text">{warning}</span>)}
-                      {(item.jointVertical || item.jointHorizontal) && <span>Стик: {item.jointVertical ? 'вертикальний' : 'горизонтальний'}</span>}
-                      {item.rows.slice(0, 6).map((row, index) => (
-                        <span key={`${item.id}-row-${index}`}>{row.side}: {row.elementType} {row.width ? `${row.width} мм` : ''} {row.profile}</span>
-                      ))}
-                      {!item.rows.length && <span>Без таблиці специфікації у PDF-тексті.</span>}
-                      <details className="approval-debug-details">
-                        <summary>Діагностика імпорту</summary>
-                        <pre>{JSON.stringify(item.debug, null, 2)}</pre>
-                      </details>
-                    </div>
+                    <ApprovalItemEditors item={item} onPatch={(patch) => updateApprovalItem(item.id, patch)}>
+                      <div className="dxf-preview-controls">
+                        <Field label="Назва">
+                          <input value={item.name} onChange={(event) => updateApprovalItem(item.id, { name: event.target.value })} />
+                        </Field>
+                        <Field label="Тип">
+                          <select value={item.type} onChange={(event) => updateApprovalItem(item.id, { type: event.target.value as DetailType })}>
+                            {detailTypes.map((type) => <option key={type} value={type}>{ui(type)}</option>)}
+                          </select>
+                        </Field>
+                        <Field label="Форма">
+                          <select value={item.shape} onChange={(event) => updateApprovalItem(item.id, { shape: event.target.value as DetailShape })}>
+                            {referenceData.detailShapes.map((shape) => <option key={shape} value={shape}>{ui(shape)}</option>)}
+                          </select>
+                        </Field>
+                        <Field label="Ширина">
+                          <input type="number" className={item.width === 0 ? 'error-input' : ''} value={item.width} onChange={(event) => updateApprovalItem(item.id, { width: Number(event.target.value) })} />
+                        </Field>
+                        <Field label="Висота">
+                          <input type="number" className={item.height === 0 ? 'error-input' : ''} value={item.height} onChange={(event) => updateApprovalItem(item.id, { height: Number(event.target.value) })} />
+                        </Field>
+                        <Field label="Кількість">
+                          <input type="number" value={item.quantity} onChange={(event) => updateApprovalItem(item.id, { quantity: Number(event.target.value) })} />
+                        </Field>
+                        <Field label="Стик">
+                          <select
+                            className={`approval-joint-select ${approvalJointTool?.itemId === item.id ? 'active' : ''}`}
+                            value={approvalJointTool?.itemId === item.id ? approvalJointTool.mode : ''}
+                            onChange={(event) => {
+                              const mode = event.target.value as ApprovalJointToolMode | '';
+                              if (mode) {
+                                setApprovalJointTool({ itemId: item.id, mode });
+                                setApprovalJointDraft(null);
+                                setApprovalJointHover(null);
+                                setApprovalJointNotice('Оберіть точку на контуру для додавання стику.');
+                              } else {
+                                setApprovalJointTool(null);
+                                setApprovalJointDraft(null);
+                                setApprovalJointHover(null);
+                                setApprovalJointNotice('');
+                              }
+                            }}
+                          >
+                            <option value="">Не вибрано</option>
+                            <option value="vertical">Вертикальний</option>
+                            <option value="horizontal">Горизонтальний</option>
+                            <option value="diagonal45">Під 45°</option>
+                            <option value="pointToPoint">Від точки до точки</option>
+                          </select>
+                        </Field>
+                        {(item.joints && item.joints.length > 0) ? (
+                          <button
+                            type="button"
+                            className="danger-button approval-delete-joints-btn"
+                            style={{ marginTop: '0.25rem' }}
+                            onClick={() => deleteApprovalJoints(item.id)}
+                          >
+                            Видалити стики
+                          </button>
+                        ) : null}
+                        {(item.joints?.length || item.jointVertical || item.jointHorizontal) ? (
+                          <label className="approval-split-check">
+                            <input
+                              type="checkbox"
+                              checked={approvalSplitItemIds.includes(item.id)}
+                              onChange={(event) => setApprovalSplitItemIds((current) => (
+                                event.target.checked
+                                  ? [...new Set([...current, item.id])]
+                                  : current.filter((id) => id !== item.id)
+                              ))}
+                            />
+                            <span>Розділити на окремі деталі</span>
+                          </label>
+                        ) : null}
+                        <button type="button" className="danger-button" onClick={() => deleteApprovalItem(item.id)}>Видалити</button>
+                      </div>
+                    </ApprovalItemEditors>
                   </div>
                 ))}
               </aside>
@@ -1676,6 +1814,17 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
                       currentY: point.y,
                     } : current)}
                     onBlockFinish={finishApprovalBlockSelection}
+                    jointToolItemId={approvalJointTool?.itemId}
+                    onJointHover={(contour, point) => {
+                      if (!contour || !point) {
+                        setApprovalJointHover(null);
+                      } else {
+                        updateApprovalJointHover(contour.id, point);
+                      }
+                    }}
+                    onJointPoint={(contour, point) => {
+                      createApprovalJointAtPoint(contour.id, point);
+                    }}
                   />
                 </div>
               </section>

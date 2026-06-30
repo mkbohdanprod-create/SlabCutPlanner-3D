@@ -50,9 +50,8 @@ export function EdgeProcessingDesigner({
     const linkedSet = isThickening ? linkedThickeningSet : linkedFoldSet;
     const nextFeatureSides = checked
       ? [...new Set([...feature.sides, ...sides.filter((s) => !linkedSet.has(s))])]
-      : feature.sides.filter((s) => !sides.includes(s) || linkedSet.has(s)); // Keep sides that are linked or not in current "sides" list
+      : feature.sides.filter((s) => !sides.includes(s) || linkedSet.has(s));
       
-    // If we add thickening/fold, we must remove edge profiles from those sides
     const nextProfiles = { ...edgeProfiles };
     if (checked) {
       sides.forEach((s) => {
@@ -60,10 +59,14 @@ export function EdgeProcessingDesigner({
       });
     }
     
+    const nextSideSizes = feature.sideSizes
+      ? Object.fromEntries(nextFeatureSides.map((s) => [s, feature.sideSizes?.[s] ?? feature.size]))
+      : undefined;
+
     onChange({
       edgeProfiles: nextProfiles,
-      thickening: isThickening ? { ...thickening, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides } : thickening,
-      fold: !isThickening ? { ...fold, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides } : fold,
+      thickening: isThickening ? { ...thickening, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides, sideSizes: nextSideSizes } : thickening,
+      fold: !isThickening ? { ...fold, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides, sideSizes: nextSideSizes } : fold,
     });
   };
 
@@ -73,7 +76,6 @@ export function EdgeProcessingDesigner({
     if (profile) nextProfiles[side] = profile;
     else delete nextProfiles[side];
 
-    // Remove feature if profile is added
     const nextThickeningSides = profile ? thickening.sides.filter((s) => s !== side) : thickening.sides;
     const nextFoldSides = profile ? fold.sides.filter((s) => s !== side) : fold.sides;
 
@@ -99,10 +101,14 @@ export function EdgeProcessingDesigner({
       delete nextProfiles[side];
     }
 
+    const nextSideSizes = feature.sideSizes
+      ? Object.fromEntries(nextFeatureSides.map((s) => [s, feature.sideSizes?.[s] ?? feature.size]))
+      : undefined;
+
     onChange({
       edgeProfiles: nextProfiles,
-      thickening: isThickening ? { ...thickening, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides } : thickening,
-      fold: !isThickening ? { ...fold, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides } : fold,
+      thickening: isThickening ? { ...thickening, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides, sideSizes: nextSideSizes } : thickening,
+      fold: !isThickening ? { ...fold, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides, sideSizes: nextSideSizes } : fold,
     });
   };
 
@@ -117,23 +123,37 @@ export function EdgeProcessingDesigner({
 
   return (
     <section className="edge-processing-designer">
-      <h3>Обробка сторін</h3>
-      
-      <div className="edge-processing-global-sizes">
-        <Field label="Розмір потовщення, мм">
-          <input 
-            type="number" 
-            value={thickening.size} 
-            onChange={(e) => onChange({ edgeProfiles, fold, thickening: { ...thickening, size: Number(e.target.value) } })} 
-          />
-        </Field>
-        <Field label="Розмір підвороту, мм">
-          <input 
-            type="number" 
-            value={fold.size} 
-            onChange={(e) => onChange({ edgeProfiles, thickening, fold: { ...fold, size: Number(e.target.value) } })} 
-          />
-        </Field>
+      <div className="edge-processing-header">
+        <h3>Обробка сторін</h3>
+        
+        <div className="edge-processing-global-sizes">
+          <Field label="Розмір потовщення, мм">
+            <input 
+              type="number" 
+              value={thickening.size} 
+              onChange={(e) => {
+                const size = Number(e.target.value);
+                const nextSideSizes = thickening.sides.length > 0
+                  ? Object.fromEntries(thickening.sides.map((k) => [k, size]))
+                  : undefined;
+                onChange({ edgeProfiles, fold, thickening: { ...thickening, size, sideSizes: nextSideSizes } });
+              }} 
+            />
+          </Field>
+          <Field label="Розмір підвороту, мм">
+            <input 
+              type="number" 
+              value={fold.size} 
+              onChange={(e) => {
+                const size = Number(e.target.value);
+                const nextSideSizes = fold.sides.length > 0
+                  ? Object.fromEntries(fold.sides.map((k) => [k, size]))
+                  : undefined;
+                onChange({ edgeProfiles, thickening, fold: { ...fold, size, sideSizes: nextSideSizes } });
+              }} 
+            />
+          </Field>
+        </div>
       </div>
 
       <div className="edge-processing-table-wrapper">

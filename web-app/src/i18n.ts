@@ -60,6 +60,8 @@ const messages = {
     statusFailed: 'Не сформовано',
     statusManualConflict: 'Конфлікт після ручного редагування',
     statusOutOfBounds: 'Поза корисною зоною',
+    statusError: 'Конфлікт розміщення',
+    statusPacking: 'Пакування...',
   },
   en: {
     language: 'Language',
@@ -114,6 +116,8 @@ const messages = {
     statusFailed: 'Not calculated',
     statusManualConflict: 'Conflict after manual editing',
     statusOutOfBounds: 'Outside usable area',
+    statusError: 'Placement conflict',
+    statusPacking: 'Packing...',
   },
   pl: {
     language: 'Język',
@@ -168,6 +172,8 @@ const messages = {
     statusFailed: 'Nie utworzono',
     statusManualConflict: 'Konflikt po ręcznej edycji',
     statusOutOfBounds: 'Poza obszarem roboczym',
+    statusError: 'Konflikt rozmieszczenia',
+    statusPacking: 'Pakowanie...',
   },
 } as const;
 
@@ -188,6 +194,8 @@ export function statusLabel(language: UiLanguage | undefined, status: Calculatio
   if (status === 'partial') return t(language, 'statusPartial');
   if (status === 'manual_conflict') return t(language, 'statusManualConflict');
   if (status === 'out_of_bounds') return t(language, 'statusOutOfBounds');
+  if (status === 'error') return t(language, 'statusError');
+  if (status === 'packing') return t(language, 'statusPacking');
   return t(language, 'statusFailed');
 }
 

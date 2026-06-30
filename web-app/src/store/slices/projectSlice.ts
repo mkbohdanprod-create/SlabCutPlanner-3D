@@ -216,18 +216,7 @@ export const createProjectSlice: StateCreator<
 
   deleteDetail: (detailId) => {
     const current = get().project;
-    const detailIds = new Set([detailId]);
-    let foundLinkedDetail = true;
-    while (foundLinkedDetail) {
-      foundLinkedDetail = false;
-      for (const d of current.details) {
-        if (!detailIds.has(d.id) && d.dimensions?.some((dim) => dim.linkedDetailId && detailIds.has(dim.linkedDetailId))) {
-          detailIds.add(d.id);
-          foundLinkedDetail = true;
-        }
-      }
-    }
-    const nextDetails = current.details.filter((item) => !detailIds.has(item.id));
+    const nextDetails = current.details.filter((item) => item.id !== detailId);
     triggerPackingAsync({ ...current, details: nextDetails } as Project, get().packingMode, get().parts, set, get);
   },
 
@@ -304,7 +293,7 @@ export const createProjectSlice: StateCreator<
     set((state) => {
       const placement = state.project.placements.find(p => p.id === placementId);
       if (placement) {
-        placement.locked = !placement.locked;
+        placement.manualLocked = !placement.manualLocked;
       }
       finalizeProjectState(state);
     });
@@ -316,7 +305,7 @@ export const createProjectSlice: StateCreator<
     set((state) => {
       const ids = new Set(placementIds);
       state.project.placements.forEach(p => {
-        if (ids.has(p.id)) p.locked = locked;
+        if (ids.has(p.id)) p.manualLocked = locked;
       });
       finalizeProjectState(state);
     });

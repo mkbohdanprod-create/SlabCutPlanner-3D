@@ -40,11 +40,12 @@ export async function persist(project: Project, dbProjectId?: string | null) {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) return;
         
-        await supabase.from('projects').update({
+        const { error } = await supabase.from('projects').update({
           data: project,
           name: project.orderNumber || 'Проект без назви',
           updated_at: new Date().toISOString()
         }).eq('id', dbProjectId);
+        if (error) console.error('Помилка збереження:', error);
       }, 1000);
     }
   } catch (e) {

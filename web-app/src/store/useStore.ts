@@ -3,9 +3,15 @@ import type { Project, ViewMode, PackingMode, SlabInstance, Detail, Placement, D
 
 
 interface UIState {
-  mainView: '2d' | '3d' | 'texture';
+  mainView: '2d' | '3d' | 'texture' | 'split';
+  splitRatio: number;
+  setSplitRatio: (ratio: number) => void;
+  splitLeftView: '2d' | '3d' | 'texture';
+  setSplitLeftView: (view: '2d' | '3d' | 'texture') => void;
+  splitRightView: '2d' | '3d' | 'texture';
+  setSplitRightView: (view: '2d' | '3d' | 'texture') => void;
   viewMode: ViewMode;
-  setMainView: (view: '2d' | '3d' | 'texture') => void;
+  setMainView: (view: '2d' | '3d' | 'texture' | 'split') => void;
   setViewMode: (mode: ViewMode) => void;
   is3dAssemblyMode: boolean;
   set3dAssemblyMode: (enabled: boolean) => void;
@@ -49,6 +55,12 @@ interface UIState {
 
 export const useUIStore = create<UIState>((set) => ({
   mainView: '2d',
+  splitRatio: 50,
+  setSplitRatio: (splitRatio) => set({ splitRatio }),
+  splitLeftView: '2d',
+  setSplitLeftView: (splitLeftView) => set({ splitLeftView }),
+  splitRightView: '3d',
+  setSplitRightView: (splitRightView) => set({ splitRightView }),
   viewMode: 'technical',
   setMainView: (mainView) => set({ mainView }),
   setViewMode: (viewMode) => set({ viewMode }),

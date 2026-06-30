@@ -220,20 +220,46 @@ function polygonsOverlap(a: Point[], b: Point[]) {
   const aCenter = polygonCenter(a);
   const bCenter = polygonCenter(b);
 
-  return (
-    a.some((point) => pointInPolygonStrict(point, b))
-    || b.some((point) => pointInPolygonStrict(point, a))
-    || (pointInPolygonStrict(aCenter, a) && pointInPolygonStrict(aCenter, b))
-    || (pointInPolygonStrict(bCenter, b) && pointInPolygonStrict(bCenter, a))
-    || [0.25, 0.5, 0.75].some((fx) => [0.25, 0.5, 0.75].some((fy) => {
-      const sample = {
-        x: overlapX1 + (overlapX2 - overlapX1) * fx,
-        y: overlapY1 + (overlapY2 - overlapY1) * fy,
-      };
-      return pointInPolygonStrict(sample, a) && pointInPolygonStrict(sample, b);
-    }))
-  );
+  if (pointInPolygonStrict(aCenter, b)) return true;
+  if (pointInPolygonStrict(bCenter, a)) return true;
+
+  for (let i = 0; i < a.length; i += 1) {
+    const p1 = a[i];
+    if (pointInPolygonStrict(p1, b)) return true;
+    const p2 = a[(i + 1) % a.length];
+    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    if (pointInPolygonStrict(mid, b)) return true;
+  }
+
+  for (let i = 0; i < b.length; i += 1) {
+    const p1 = b[i];
+    if (pointInPolygonStrict(p1, a)) return true;
+    const p2 = b[(i + 1) % b.length];
+    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    if (pointInPolygonStrict(mid, a)) return true;
+  }
+
+  // Sample grid points WITHIN each polygon to catch cases where one concave
+  // polygon's "notch" contains the other polygon without edge intersections.
+  // We sample from each polygon's own bbox to ensure points are inside that polygon.
+  const sampleInside = (poly: Point[], otherPoly: Point[]) => {
+    const box = polygonBounds(poly);
+    const steps = 4;
+    for (let fi = 1; fi < steps; fi++) {
+      for (let fj = 1; fj < steps; fj++) {
+        const pt = {
+          x: box.x + (box.width * fi) / steps,
+          y: box.y + (box.height * fj) / steps,
+        };
+        if (pointInPolygonStrict(pt, poly) && pointInPolygonStrict(pt, otherPoly)) return true;
+      }
+    }
+    return false;
+  };
+
+  return sampleInside(a, b) || sampleInside(b, a);
 }
+
 
 
 

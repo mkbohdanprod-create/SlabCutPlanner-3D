@@ -462,10 +462,12 @@ function edgeParts(detail: Detail, feature: EdgeFeature | undefined, basePart: D
   const CURVED_SHAPES = new Set<DetailShape>(['Кругла', 'Овальна']);
   const isCurved = CURVED_SHAPES.has(basePart.shape);
   const validSides = feature.sides.filter((side, index, sides) => (
-    sides.indexOf(side) === index && (isCurved ? ['A', 'B', 'C', 'D'].includes(side) : sideSegment(basePart, side))
+    sides.indexOf(side) === index && (isCurved
+      ? ['A', 'B', 'C', 'D'].includes(side)
+      : (sideSegment(basePart, side) || (basePart.shape === 'customContour' && basePart.sideSegments !== undefined)))
   ));
   if (validSides.length === 0) return [];
-  if (basePart.points.length > 8) {
+  if (isCurved) {
     const sideAngles: Record<string, [number, number]> = {
       A: [Math.PI, Math.PI * 1.5],
       B: [Math.PI * 1.5, Math.PI * 2],
@@ -496,7 +498,9 @@ function edgeParts(detail: Detail, feature: EdgeFeature | undefined, basePart: D
   }
   return validSides.map((side) => {
     const segment = nominalSegment(basePart, side);
-    const horizontal = segment ? Math.abs(segment.end.x - segment.start.x) >= Math.abs(segment.end.y - segment.start.y) : ['B', 'D', 'F', 'H'].includes(side);
+    const horizontal = segment
+      ? Math.abs(segment.end.x - segment.start.x) >= Math.abs(segment.end.y - segment.start.y)
+      : ['A', 'C', 'E', 'G', 'I'].includes(side);
     const nominalLength = segment ? Math.max(1, segmentLength(segment)) : (horizontal ? basePart.width : basePart.height);
     const nominalEdgeSize = Math.max(1, feature.size);
     const length = Math.max(1, nominalLength + activeAllowances.elementLength * 2);

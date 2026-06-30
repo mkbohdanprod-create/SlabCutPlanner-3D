@@ -16,7 +16,14 @@ export function EdgeProfileMarks({ part, placement, profiles, scale }: { part: D
         const labelY = (placement.y + marker.labelPoint.y) * scale;
         return (
           <g key={`${part.id}-${marker.side}-${marker.profile}`}>
-            <line x1={x1} y1={y1} x2={x2} y2={y2} />
+            {marker.points && marker.points.length > 0 ? (
+              <polyline 
+                points={marker.points.map(p => `${(placement.x + p.x) * scale},${(placement.y + p.y) * scale}`).join(' ')} 
+                fill="none" 
+              />
+            ) : (
+              <line x1={x1} y1={y1} x2={x2} y2={y2} />
+            )}
             <text x={labelX} y={labelY - 3} textAnchor="middle">{edgeProfileShortLabel(marker.profile)}</text>
           </g>
         );

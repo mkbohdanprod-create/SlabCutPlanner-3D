@@ -1,4 +1,4 @@
-export type CalculationStatus = 'success' | 'partial' | 'failed' | 'manual_conflict' | 'out_of_bounds';
+export type CalculationStatus = 'success' | 'partial' | 'failed' | 'manual_conflict' | 'out_of_bounds' | 'error' | 'packing';
 export type MaterialType = 'Керамограніт' | 'Кварцит' | 'Натуральний камінь' | 'Акрил' | 'Компакт-плита';
 export type DetailType = 'Стільниця' | 'Стінова панель' | 'Мийка' | 'Фасад' | 'Опора';
 export type DetailShape = 'Прямокутна' | 'Г-подібна' | 'П-подібна' | 'Кругла' | 'Овальна';
@@ -28,6 +28,7 @@ export interface TextureTransform {
 export interface Point {
   x: number;
   y: number;
+  bulge?: number;
 }
 
 export interface DefectZone {
