@@ -3,8 +3,8 @@ import path from 'path';
 import { exec } from 'child_process';
 import https from 'https';
 
-const token = "8629412481:AAH4JH-y3ZZbIzCwUcpqj5fiapvXkCu_Uvg";
-const chat_id = 1499195100;
+const token = process.env.TELEGRAM_BOT_TOKEN || "";
+const chat_id = process.env.TELEGRAM_CHAT_ID || "";
 const watchFile = path.resolve('src/utils/approvalImport.ts');
 const blanksDir = 'C:/hhgh/cad 20/Бланки';
 const outDir = 'C:/Users/b_dulysh/.gemini/antigravity-ide/scratch';
