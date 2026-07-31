@@ -1,0 +1,14 @@
+{
+  "name": "slabcutplanner-3d-demo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Демо-версія SlabCutPlanner 3D. Реальний застосунок живе у web-app/",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "cd web-app && npm run dev",
+    "build": "cd web-app && npm run build",
+    "preview": "cd web-app && npm run preview"
+  }
+}
