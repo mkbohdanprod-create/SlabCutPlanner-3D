@@ -1324,7 +1324,9 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
   const contentRef = React.useRef<THREE.Group | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
-  const [showAnimationPrototype, setShowAnimationPrototype] = useState(false);
+  // Кнопку «Анімація (Прототип)» прибрано з інтерфейсу — це недоведений прототип.
+  // Сам компонент лишається в коді: щоб увімкнути, поверніть кнопку або true.
+  const [showAnimationPrototype] = useState(false);
   
   const showEdges = useUIStore(s => s.showEdges);
   const setShowEdges = useUIStore(s => s.setShowEdges);
@@ -1357,7 +1359,6 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
                 💡 Підсвітка
               </button>
             )}
-            <button className={showAnimationPrototype ? 'active !bg-purple-600 !text-white' : ''} onClick={() => setShowAnimationPrototype(!showAnimationPrototype)}>🎬 Анімація (Прототип)</button>
             <button onClick={() => setShowHelp(true)}>Інструкція</button>
             <button onClick={() => {
               useUIStore.getState().showConfirm({
