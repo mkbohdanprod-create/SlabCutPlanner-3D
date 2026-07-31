@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 690 260">
+  <defs>
+    <linearGradient id="rectFill" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#fbfdff"/>
+      <stop offset="1" stop-color="#e8f0f6"/>
+    </linearGradient>
+    <filter id="soft" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#d6e2ea" flood-opacity=".75"/>
+    </filter>
+  </defs>
+  <rect width="690" height="260" fill="#e8f0f6"/>
+  <rect x="258" y="78" width="238" height="118" fill="url(#rectFill)" stroke="#627b8e" stroke-width="2"/>
+
+  <g font-family="Arial, sans-serif" font-size="16" fill="#6a8292" text-anchor="middle" dominant-baseline="middle" filter="url(#soft)">
+    <rect x="202" y="100" width="34" height="34" rx="8" fill="#f7fbfd" stroke="#cad8e3"/>
+    <text x="219" y="117">A</text>
+    <rect x="394" y="38" width="34" height="34" rx="8" fill="#f7fbfd" stroke="#cad8e3"/>
+    <text x="411" y="55">B</text>
+    <rect x="526" y="118" width="34" height="34" rx="8" fill="#f7fbfd" stroke="#cad8e3"/>
+    <text x="543" y="135">C</text>
+    <rect x="350" y="205" width="34" height="34" rx="8" fill="#f7fbfd" stroke="#cad8e3"/>
+    <text x="367" y="222">D</text>
+  </g>
+
+  <text x="620" y="110" fill="#536b7a" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Кількість</text>
+</svg>

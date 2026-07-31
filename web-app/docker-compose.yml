@@ -1,0 +1,44 @@
+services:
+  # Фронтенд (nginx: статика + proxy /api → api)
+  web:
+    build: .
+    image: slabcutplanner-web
+    container_name: slabcutplanner_web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # Бекенд: Keycloak OIDC (флоу як в ai-agents-ws) + CRUD проектів у Postgres
+  api:
+    build: ./server
+    image: slabcutplanner-api
+    container_name: slabcutplanner_api
+    environment:
+      DATABASE_URL: postgres://slabcut:${POSTGRES_PASSWORD:-slabcut}@postgres:5432/slabcut
+      # Корпоративний Keycloak Viyar — той самий shared-клієнт `qr`,
+      # що й в інших сервісах (ai-agents-ws). Секрет — тільки з .env.
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-qr}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in .env}
+      KEYCLOAK_DISCOVERY_URL: ${KEYCLOAK_DISCOVERY_URL:-https://auth-dev.viyar.tech/auth/realms/ViyarLocal/.well-known/openid-configuration}
+      REDIRECT_URI: ${REDIRECT_URI:-https://slabcutplanner.viyar.tech/api/auth/callback}
+      APP_URL: ${APP_URL:-https://slabcutplanner.viyar.tech/}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: slabcutplanner_postgres
+    environment:
+      POSTGRES_USER: slabcut
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-slabcut}
+      POSTGRES_DB: slabcut
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:

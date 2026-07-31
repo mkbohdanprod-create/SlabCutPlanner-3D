@@ -1,0 +1,236 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`geometry.ts (Safety Net) > should correctly explode details into parts with allowances > exploded-parts 1`] = `
+[
+  {
+    "area": 0.63,
+    "detailId": "det-1",
+    "dimsLabel": "1000×600",
+    "edgeKind": undefined,
+    "edgeSide": undefined,
+    "elementAnchor": undefined,
+    "elementSide": undefined,
+    "height": 620,
+    "holes": undefined,
+    "id": "part:det-1:main:body:Стільниця 1:0:0",
+    "isMain": true,
+    "name": "Стільниця 1",
+    "nominalHoles": undefined,
+    "nominalPoints": [
+      {
+        "x": 10,
+        "y": 10,
+      },
+      {
+        "x": 1010,
+        "y": 10,
+      },
+      {
+        "x": 1010,
+        "y": 610,
+      },
+      {
+        "x": 10,
+        "y": 610,
+      },
+    ],
+    "parentAnchor": undefined,
+    "parentLabel": "Стільниця 1",
+    "points": [
+      {
+        "x": 0,
+        "y": 0,
+      },
+      {
+        "x": 1020,
+        "y": 0,
+      },
+      {
+        "x": 1020,
+        "y": 620,
+      },
+      {
+        "x": 0,
+        "y": 620,
+      },
+    ],
+    "rotation": 0,
+    "shape": "Прямокутна",
+    "sideAliases": undefined,
+    "sideSegments": undefined,
+    "textureGroupAnchor": undefined,
+    "textureGroupKind": undefined,
+    "textureGroupLabel": undefined,
+    "textureIrrelevant": undefined,
+    "textureOffsetX": undefined,
+    "textureOffsetY": undefined,
+    "type": "Стільниця",
+    "width": 1020,
+  },
+  {
+    "area": 1.13,
+    "detailId": "det-2",
+    "dimsLabel": "1800×600",
+    "edgeKind": undefined,
+    "edgeSide": undefined,
+    "elementAnchor": undefined,
+    "elementSide": undefined,
+    "height": 620,
+    "holes": undefined,
+    "id": "part:det-2:main:body:Стільниця 2.1:0:0",
+    "isMain": true,
+    "name": "Стільниця 2.1",
+    "nominalHoles": undefined,
+    "nominalPoints": [
+      {
+        "x": 10,
+        "y": 10,
+      },
+      {
+        "x": 1810,
+        "y": 10,
+      },
+      {
+        "x": 1810,
+        "y": 610,
+      },
+      {
+        "x": 10,
+        "y": 610,
+      },
+    ],
+    "parentAnchor": undefined,
+    "parentLabel": "Стільниця 2.1",
+    "points": [
+      {
+        "x": 0,
+        "y": 0,
+      },
+      {
+        "x": 1820,
+        "y": 0,
+      },
+      {
+        "x": 1820,
+        "y": 620,
+      },
+      {
+        "x": 0,
+        "y": 620,
+      },
+    ],
+    "rotation": 0,
+    "shape": "Прямокутна",
+    "sideAliases": undefined,
+    "sideSegments": {
+      "D": {
+        "end": {
+          "x": 1800,
+          "y": 620,
+        },
+        "start": {
+          "x": 600,
+          "y": 620,
+        },
+      },
+    },
+    "textureGroupAnchor": undefined,
+    "textureGroupKind": undefined,
+    "textureGroupLabel": "Стільниця 2",
+    "textureIrrelevant": undefined,
+    "textureOffsetX": 0,
+    "textureOffsetY": 0,
+    "type": "Стільниця",
+    "width": 1820,
+  },
+  {
+    "area": 0.38,
+    "detailId": "det-2",
+    "dimsLabel": "600×600",
+    "edgeKind": undefined,
+    "edgeSide": undefined,
+    "elementAnchor": undefined,
+    "elementSide": undefined,
+    "height": 620,
+    "holes": undefined,
+    "id": "part:det-2:main:body:Стільниця 2.2:0:0",
+    "isMain": true,
+    "name": "Стільниця 2.2",
+    "nominalHoles": undefined,
+    "nominalPoints": [
+      {
+        "x": 10,
+        "y": 10,
+      },
+      {
+        "x": 610,
+        "y": 10,
+      },
+      {
+        "x": 610,
+        "y": 610,
+      },
+      {
+        "x": 10,
+        "y": 610,
+      },
+    ],
+    "parentAnchor": undefined,
+    "parentLabel": "Стільниця 2.2",
+    "points": [
+      {
+        "x": 0,
+        "y": 0,
+      },
+      {
+        "x": 620,
+        "y": 0,
+      },
+      {
+        "x": 620,
+        "y": 620,
+      },
+      {
+        "x": 0,
+        "y": 620,
+      },
+    ],
+    "rotation": 0,
+    "shape": "Прямокутна",
+    "sideAliases": {
+      "E": "C",
+      "F": "D",
+    },
+    "sideSegments": {
+      "E": {
+        "end": {
+          "x": 620,
+          "y": 600,
+        },
+        "start": {
+          "x": 620,
+          "y": 0,
+        },
+      },
+      "F": {
+        "end": {
+          "x": 600,
+          "y": 620,
+        },
+        "start": {
+          "x": 0,
+          "y": 620,
+        },
+      },
+    },
+    "textureGroupAnchor": undefined,
+    "textureGroupKind": undefined,
+    "textureGroupLabel": "Стільниця 2",
+    "textureIrrelevant": undefined,
+    "textureOffsetX": 0,
+    "textureOffsetY": 620,
+    "type": "Стільниця",
+    "width": 620,
+  },
+]
+`;
