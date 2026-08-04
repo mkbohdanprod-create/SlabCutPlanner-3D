@@ -14,6 +14,7 @@ import { uid } from '../../domain/defaults';
 import type { CommercialManualLine, CommercialQuoteSettings, EdgeProfileType } from '../../domain/types';
 import { useProjectStore } from '../../store/useProjectStore';
 import { calculateCommercialQuote, type CommercialQuoteLine } from '../../engines/pricing';
+import { getAllProjectDetails } from '../../store/projectHelpers';
 
 type CommercialQuoteDialogProps = {
   open: boolean;
@@ -40,7 +41,12 @@ export function CommercialQuoteDialog({ open, onClose }: CommercialQuoteDialogPr
 
   const settings = project.commercialQuote;
   const edgeProfiles = project.referenceData?.edgeProfiles ?? [];
-  const calculation = useMemo(() => calculateCommercialQuote(project, parts), [project, parts]);
+  // Деталі передаємо явно: у виробах вони живуть у дереві project.products,
+  // і без цього крайки виробів не потрапили б у метри торця.
+  const calculation = useMemo(
+    () => calculateCommercialQuote(project, parts, getAllProjectDetails(project)),
+    [project, parts],
+  );
 
   if (!open) return null;
 

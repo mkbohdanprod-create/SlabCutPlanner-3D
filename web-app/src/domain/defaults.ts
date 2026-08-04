@@ -23,7 +23,7 @@ export const referenceData: ReferenceData = {
     { id: 'full_bullnose', label: 'Full bullnose', shortLabel: 'Full bull', description: 'повний радіус торця', allowance: 2.5, operations: [{ serviceId: 'EDGE_ROUND', multiplier: 2 }] },
     { id: 'sharknose', label: 'Sharknose', shortLabel: 'Shark', description: 'скошена піднутрена кромка', allowance: 2.5, operations: [{ serviceId: 'CUT_45', multiplier: 1 }, { serviceId: 'EDGE_POLISH', multiplier: 1 }] },
     { id: 'straight_edge', label: 'Straight edge', shortLabel: 'Straight', description: 'пряма кромка без фаски/радіуса', allowance: 0, operations: [{ serviceId: 'CUT_STRAIGHT', multiplier: 1 }] },
-    { id: 'd_12', label: 'Торець D-12', shortLabel: 'D-12', description: 'Спеціальний торець (допуск 4мм)', allowance: 4.0, operations: [] },
+    { id: 'd_12', label: 'Торець D-12', shortLabel: 'D-12', description: 'Спеціальний торець (припуск 4.5 мм на сторону)', allowance: 4.5, operations: [] },
   ],
 };
 
@@ -52,6 +52,7 @@ export const defaultCommercialQuoteSettings: CommercialQuoteSettings = {
   squareMeterPrice: 0,
   sawCutPricePerM: 0,
   waterjetCutPricePerM: 0,
+  holePricePerPcs: 0,
   edgePrices: {
     chamfer_2x2: 0,
     chamfer_2x2_top_bottom: 0,

@@ -8,6 +8,7 @@ import { triggerPackingAsync } from './packingSlice';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { createEmptyProject, defaultCommercialQuoteSettings } from '../../domain/defaults';
 import { partNameForLabel } from '../projectHelpers';
+import { edgeAllowanceMm } from '../../domain/allowances';
 
 function finalizeProjectState(state: ProjectState, refreshConflicts = true) {
   state.project.updatedAt = new Date().toISOString();
@@ -535,20 +536,13 @@ export const createProjectSlice: StateCreator<
             const pId = treatment.top?.profileId || treatment.bottom?.profileId;
             if (pId) {
               const edgeProfileDef = state.project.referenceData?.edgeProfiles?.find(p => p.id === pId);
-              const allowanceSetting = edgeProfileDef?.allowance || 0;
-              
-              let allowance = 0;
-              if (state.project.projectMaterial === 'Компакт-плита') {
-                allowance = 1;
-              } else if (state.project.projectMaterial === 'Акрил') {
-                allowance = 3;
-              } else {
-                // kvarzit / keramogranit
-                const isShort = treatment.isFullLength === false && treatment.size && treatment.size <= 30;
-                if (!isShort) {
-                  allowance = allowanceSetting > 0 ? (allowanceSetting) : 2.5; 
-                }
-              }
+              // Припуск рахує domain/allowances.ts — те саме джерело, з якого
+              // бере кошторис. Раніше ця логіка була скопійована сюди руками.
+              const allowance = edgeAllowanceMm({
+                material: state.project.projectMaterial,
+                profileAllowanceMm: edgeProfileDef?.allowance,
+                treatment,
+              });
               
               if (allowance > 0) {
                 if (side === 'A') newAllowances.top = allowance;

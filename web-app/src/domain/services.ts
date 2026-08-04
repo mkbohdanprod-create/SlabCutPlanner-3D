@@ -8,18 +8,21 @@ export interface ServiceDefinition {
   unit: ServiceUnit;
   price: number;
   category: ServiceCategory;
-}
-
-export interface CalculatedService {
-  serviceId: string;
-  name: string;
-  unit: ServiceUnit;
-  quantity: number;
-  pricePerUnit: number;
-  totalPrice: number;
-  category: ServiceCategory;
-  detailsRef?: string[]; // IDs of details this service applies to
-  metadata?: Record<string, any>; // any extra info (e.g. side: 'A', cutoutId)
+  /**
+   * Код послуги в обліковій системі (ВіярПро/1С), наприклад '219964'.
+   * Заповнює керівник у налаштуваннях; рушій фактів його не бачить і
+   * не повинен бачити — саме тому поле необов'язкове.
+   */
+  externalId?: string;
+  /**
+   * Матеріальна група. Номенклатура 1С подвоєна: одна операція має
+   * різні коди на керамограніт і кварцит. Порожньо = послуга спільна.
+   */
+  materialGroup?: string;
+  /** Верстат, на якому виконується — з довідника ВіярПро */
+  equipment?: string;
+  /** Послуга, додана керівником, а не вбудована */
+  custom?: boolean;
 }
 
 export const DEFAULT_SERVICE_CATALOG: Record<string, ServiceDefinition> = {
@@ -51,6 +54,23 @@ export const DEFAULT_SERVICE_CATALOG: Record<string, ServiceDefinition> = {
   // Кути
   CORNER_RADIUS: { id: 'CORNER_RADIUS', name: 'Радіусне скруглення кута', unit: 'pcs', price: 200, category: 'machine' },
   CORNER_CHAMFER: { id: 'CORNER_CHAMFER', name: 'Прямий зріз кута (Фаска)', unit: 'pcs', price: 150, category: 'machine' },
+
+  // Різ водою і великі отвори — раніше в каталозі не існували,
+  // тому криволінійна порізка ніде не нараховувалась
+  CUT_WATERJET: { id: 'CUT_WATERJET', name: 'Криволінійна порізка водою', unit: 'm', price: 450, category: 'machine' },
+  HOLE_LARGE: { id: 'HOLE_LARGE', name: 'Різ водою отвору понад 100 мм', unit: 'm', price: 500, category: 'machine' },
+
+  // Торець D-12: профіль у довіднику був, послуги під нього — ні
+  EDGE_D12: { id: 'EDGE_D12', name: 'Фрезерування крайки D-12', unit: 'm', price: 550, category: 'machine' },
+
+  // Ручна доводка торця — галочка на стороні деталі
+  EDGE_MANUAL_FINISH: { id: 'EDGE_MANUAL_FINISH', name: 'Ручна доводка торця', unit: 'm', price: 300, category: 'manual' },
+
+  // Пропил для стику — виписується двічі на стик
+  JOINT_SAWCUT: { id: 'JOINT_SAWCUT', name: 'Пропил для стику деталей', unit: 'pcs', price: 180, category: 'machine' },
+
+  // Матеріал за лист — альтернатива розрахунку за м²
+  MATERIAL_SLAB: { id: 'MATERIAL_SLAB', name: 'Матеріал за лист (сляб)', unit: 'pcs', price: 18000, category: 'material' },
 
   // Інженерні послуги
   MEASUREMENT: { id: 'MEASUREMENT', name: 'Виїзд на замір', unit: 'комплект', price: 1500, category: 'engineering' },

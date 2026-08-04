@@ -1,10 +1,13 @@
 import  { useState, useMemo } from 'react';
 import { X, FileText, Settings, Plus, Trash2 } from 'lucide-react';
 import type { Detail, Project, CustomService } from '../../domain/types';
-import { extractServices, calculateServices } from '../../engines/servicesExtractor';
-import { DEFAULT_SERVICE_CATALOG } from '../../domain/services';
+import { computeDetailEstimate } from '../../engines/estimate';
 import { useProjectStore } from '../../store/useProjectStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import { translateStaticUiText } from '../../i18n';
+import { findDetailByPathOrSlot } from '../../domain/ids';
+import { FACT_KIND_LABELS, factUnit } from '../../domain/serviceMapping';
+import type { ProductionFact } from '../../engines/productionFacts';
 
 interface DetailPassportModalProps {
   detailId: string;
@@ -24,22 +27,58 @@ export function DetailPassportModal({
   onSave
 }: DetailPassportModalProps) {
   const language = useProjectStore(s => s.language);
+  const parts = useProjectStore(s => s.parts);
+  const serviceCatalog = useSettingsStore(s => s.serviceCatalog);
+  const mappingOverrides = useSettingsStore(s => s.mappingOverrides);
+  const customRules = useSettingsStore(s => s.customRules);
+  const getRules = useSettingsStore(s => s.getRules);
   const ui = (val: string) => translateStaticUiText(language, val);
   
   const [activeTab, setActiveTab] = useState<'passport' | 'settings'>(initialTab);
   
-  const detail = useMemo(() => details.find(d => d.id === detailId), [details, detailId]);
+  // Меню в 3D віддає слот, а деталі приходять повними шляхами — шукаємо
+  // в обох формах, інакше вікно просто не відкривається.
+  const detail = useMemo(() => findDetailByPathOrSlot(details, detailId), [details, detailId]);
   
   const [customServices, setCustomServices] = useState<CustomService[]>(
     detail?.customServices ? [...detail.customServices] : []
   );
 
-  const calculatedServices = useMemo(() => {
-    if (!project || !details) return [];
-    const reqs = extractServices(project, undefined);
-    const allServices = calculateServices(reqs, DEFAULT_SERVICE_CATALOG);
-    return allServices.filter(s => s.detailsRef?.includes(detailId));
-  }, [project, details, detailId]);
+  // Той самий рушій, що й у кошторисі, з користувацьким прайсом і
+  // прив'язками. Раніше тут стояв окремий виклик зі стандартним каталогом,
+  // тому паспорт показував заводські ціни, а не ті, що налаштував керівник.
+  // Розріз по одній деталі: спершу відсіюються факти, і вже вони
+  // перекладаються в послуги. Фільтрувати готові рядки кошторису не можна —
+  // у них кількість зібрана з усього проєкту.
+  const detailEstimate = useMemo(() => {
+    if (!project || !details) return null;
+    return computeDetailEstimate(project, parts, detailId, {
+      details,
+      catalog: serviceCatalog,
+      rules: getRules(),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, parts, details, detailId, serviceCatalog, mappingOverrides, customRules]);
+
+  const calculatedServices = detailEstimate?.lines ?? [];
+  const detailFacts = detailEstimate?.facts ?? [];
+
+  const edgeProfiles = project?.referenceData?.edgeProfiles ?? [];
+  const unitLabel = (unit: string) => (unit === 'm' ? 'м.п.' : unit === 'm2' ? 'м²' : unit === 'pcs' ? 'шт' : unit);
+
+  /** Людський підпис обробки: «Торець R2 · сторона B» */
+  const describeFact = (fact: ProductionFact) => {
+    const base = FACT_KIND_LABELS[fact.kind] ?? fact.kind;
+    const parts: string[] = [];
+    if (fact.variant) {
+      const profile = edgeProfiles.find((item) => item.id === fact.variant);
+      parts.push(profile?.shortLabel || profile?.label || fact.variant);
+    }
+    if (fact.ref?.side) parts.push(`сторона ${fact.ref.side}`);
+    if (fact.ref?.cornerId) parts.push(`кут ${fact.ref.cornerId}`);
+    if (fact.ref?.cutoutIndex !== undefined) parts.push(`виріз ${fact.ref.cutoutIndex + 1}`);
+    return parts.length ? `${base} · ${parts.join(' · ')}` : base;
+  };
 
   if (!detail) return null;
 
@@ -123,7 +162,7 @@ export function DetailPassportModal({
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="text-slate-500 block mb-1">Матеріал</span>
-                    <span className="font-medium text-slate-800">{project?.referenceData?.materials[0] || 'Не вказано'}</span>
+                    <span className="font-medium text-slate-800">{project?.projectMaterial || 'Не вказано'}</span>
                   </div>
                   <div>
                     <span className="text-slate-500 block mb-1">Товщина</span>
@@ -140,9 +179,44 @@ export function DetailPassportModal({
                 </div>
               </div>
 
+              {/* Обробки, які підтягуються на деталь */}
+              <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200">
+                <h3 className="text-sm font-bold text-slate-700 mb-1 uppercase tracking-wider">Обробки на деталі</h3>
+                <p className="text-xs text-slate-400 mb-4">
+                  Те, що програма побачила в геометрії. З цього нараховуються послуги нижче.
+                </p>
+                {detailFacts.length === 0 ? (
+                  <p className="text-sm text-slate-500 italic">
+                    Обробок не знайдено. Якщо деталь щойно змінили — запустіть розкрій, факти рахуються з нього.
+                  </p>
+                ) : (
+                  <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-slate-500 bg-slate-50 border-y border-slate-200">
+                      <tr>
+                        <th className="py-2 px-3">Обробка</th>
+                        <th className="py-2 px-3 w-24 text-right">К-сть</th>
+                        <th className="py-2 px-3 w-20">Од.вим.</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {detailFacts.map((fact, idx) => (
+                        <tr key={`${fact.kind}_${idx}`} className="hover:bg-slate-50">
+                          <td className="py-2 px-3 text-slate-800">{describeFact(fact)}</td>
+                          <td className="py-2 px-3 text-slate-800 font-medium text-right">{fact.qty.toFixed(3)}</td>
+                          <td className="py-2 px-3 text-slate-500">{unitLabel(factUnit(fact.kind))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
               {/* Calculated Services */}
               <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200">
-                <h3 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider">Розраховані послуги</h3>
+                <h3 className="text-sm font-bold text-slate-700 mb-1 uppercase tracking-wider">Послуги за цією деталлю</h3>
+                <p className="text-xs text-slate-400 mb-4">
+                  Прив'язки налаштовуються в Налаштування → Прив'язки послуг.
+                </p>
                 {calculatedServices.length === 0 ? (
                   <p className="text-sm text-slate-500 italic">Немає автоматично розрахованих послуг для цієї деталі.</p>
                 ) : (
@@ -150,19 +224,32 @@ export function DetailPassportModal({
                     <thead className="text-xs text-slate-500 bg-slate-50 border-y border-slate-200">
                       <tr>
                         <th className="py-2 px-3">Послуга</th>
-                        <th className="py-2 px-3 w-24">Кількість</th>
+                        <th className="py-2 px-3 w-24 text-right">К-сть</th>
                         <th className="py-2 px-3 w-20">Од.вим.</th>
+                        <th className="py-2 px-3 w-24 text-right">Сума, ₴</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {calculatedServices.map((cs, idx) => (
                         <tr key={idx} className="hover:bg-slate-50">
-                          <td className="py-2 px-3 text-slate-800">{cs.name}</td>
-                          <td className="py-2 px-3 text-slate-800 font-medium">{cs.quantity.toFixed(2)}</td>
-                          <td className="py-2 px-3 text-slate-500">{cs.unit}</td>
+                          <td className="py-2 px-3 text-slate-800">
+                            {cs.name}
+                            {cs.externalId && <span className="ml-2 text-xs text-slate-400 font-mono">{cs.externalId}</span>}
+                          </td>
+                          <td className="py-2 px-3 text-slate-800 font-medium text-right">{cs.quantity.toFixed(2)}</td>
+                          <td className="py-2 px-3 text-slate-500">{unitLabel(cs.unit)}</td>
+                          <td className="py-2 px-3 text-slate-800 text-right">{cs.total.toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot>
+                      <tr className="border-t border-slate-200">
+                        <td className="py-2 px-3 text-slate-500" colSpan={3}>Разом за деталлю</td>
+                        <td className="py-2 px-3 text-right font-bold text-slate-800">
+                          {(detailEstimate?.total ?? 0).toFixed(2)}
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 )}
               </div>
@@ -182,7 +269,7 @@ export function DetailPassportModal({
                       {customServices.map((cs, idx) => (
                         <tr key={idx}>
                           <td className="py-2 px-3 text-amber-900 font-medium">
-                            {cs.name || DEFAULT_SERVICE_CATALOG[cs.serviceId]?.name || cs.serviceId}
+                            {cs.name || serviceCatalog[cs.serviceId]?.name || cs.serviceId}
                           </td>
                           <td className="py-2 px-3 text-amber-900">{cs.quantity}</td>
                         </tr>
@@ -223,12 +310,12 @@ export function DetailPassportModal({
                               handleUpdateCustomService(index, 'serviceId', '');
                             } else {
                               handleUpdateCustomService(index, 'serviceId', e.target.value);
-                              handleUpdateCustomService(index, 'name', DEFAULT_SERVICE_CATALOG[e.target.value]?.name);
+                              handleUpdateCustomService(index, 'name', serviceCatalog[e.target.value]?.name);
                             }
                           }}
                         >
                           <option value="custom">Своя назва (інше)...</option>
-                          {Object.values(DEFAULT_SERVICE_CATALOG).map(service => (
+                          {Object.values(serviceCatalog).map(service => (
                             <option key={service.id} value={service.id}>{service.name}</option>
                           ))}
                         </select>

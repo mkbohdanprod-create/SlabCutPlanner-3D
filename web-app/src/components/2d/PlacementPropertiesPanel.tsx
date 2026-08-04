@@ -1,6 +1,7 @@
 import { useProjectStore } from '../../store/useProjectStore';
 import { Settings, Link as LinkIcon, Unlink } from 'lucide-react';
 import type { EdgeTreatment, EdgeProcessing } from '../../domain/types';
+import { edgeToolOutMm } from '../../domain/allowances';
 
 export function PlacementPropertiesPanel() {
   const { project, selectedPlacementIds, updatePlacement } = useProjectStore();
@@ -47,10 +48,9 @@ export function PlacementPropertiesPanel() {
     // Default sizing based on material logic (preview only)
     const allowance = edgeProfiles.find(p => p.id === t.top?.profileId)?.allowance || 0;
     const material = project.projectMaterial;
-    let toolOut = 30; // quartz/keramogranit
-    if (material === 'Акрил' || material === 'Компакт-плита') {
-      toolOut = allowance || 2;
-    }
+    // Прев'ю: для м'яких матеріалів із нульовим припуском лишаємо 2 мм,
+    // щоб довжина обробки не збігалась із повною стороною.
+    const toolOut = edgeToolOutMm(material, allowance, { softFallbackMm: 2 });
     const actualSize = t.size ? Math.max(0, t.size - toolOut) : 0;
 
     return (

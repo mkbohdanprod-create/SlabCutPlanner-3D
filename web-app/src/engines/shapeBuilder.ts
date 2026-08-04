@@ -415,12 +415,16 @@ export function getDetailPointsAndBounds(detail: DetailDraft) {
       const iw = detail.innerHorizontal || 600;
       const ih = detail.innerVertical || 600;
       return [
-        { id: "start", x: 0, y: 0 },
-        { id: "AB", x: width, y: 0 },
-        { id: "inner", x: width, y: height - ih },
-        { id: "inner_corner", x: iw, y: height - ih },
-        { id: "CD", x: iw, y: height },
-        { id: "DA", x: 0, y: height },
+        // Сторони Г-подібної названі буквами A..F — так само, як у
+        // редакторі, у списку сторін і в ключах доповнень (`leg_A`,
+        // `wall_panel_F`). Доти тут жила стара нотація AB/inner/CD/DA,
+        // і жодне доповнення на Г-подібній не знаходило свого ребра.
+        { id: "start", closeId: "F", x: 0, y: 0 },
+        { id: "A", x: width, y: 0 },
+        { id: "B", x: width, y: height - ih },
+        { id: "C", x: iw, y: height - ih },
+        { id: "D", x: iw, y: height },
+        { id: "E", x: 0, y: height },
       ];
     }
 

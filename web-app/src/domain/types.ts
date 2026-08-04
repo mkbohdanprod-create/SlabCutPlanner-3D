@@ -227,6 +227,12 @@ export interface CommercialQuoteSettings {
   squareMeterPrice: number;
   sawCutPricePerM: number;
   waterjetCutPricePerM: number;
+  /**
+   * Ціна за один отвір до 100 мм. Такі отвори рахуються штуками, а не
+   * метрами (прайс 195310), тому в метри водяної різки не входять і
+   * потребують власного рядка — інакше вони мовчки зникають із КП.
+   */
+  holePricePerPcs: number;
   edgePrices: Partial<Record<EdgeProfileType, number>>;
   gluePricingMode: CommercialGluePricingMode;
   gluePricePerM: number;
@@ -254,29 +260,6 @@ export interface CutAllowances {
 
 export type SideId = string;
 export type SlotId = 'main' | `wall_panel_${string}` | `leg_${string}`;
-export type ServiceKey = string;
-export type ServiceCode = string;
-
-export interface ServiceRequirement {
-  key: ServiceKey;
-  serviceCode: ServiceCode;
-  detailId: string;
-  targetRef: string;
-  quantity: number;
-  unit: 'mm' | 'm' | 'm2' | 'pcs';
-  origin: 'auto' | 'manual';
-  stage: 'preliminary' | 'final';
-  note?: string;
-}
-
-export interface ServiceOverride {
-  key: ServiceKey;
-  action: 'add' | 'adjust' | 'remove';
-  quantity?: number;
-  unitPrice?: number;
-  reason?: string;
-}
-
 export type CornerProcessingType = 'radius' | 'chamfer' | 'l-cut';
 
 export interface CornerProcessing {

@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { 
   X, Plus, Save, Trash2, RefreshCw, 
-  Settings2, Scissors, Grid, Circle, Square, Hammer, HardHat, FileBox
+  Settings2, Scissors, Grid, Circle, Square, Hammer, HardHat, FileBox, Link2
 } from 'lucide-react';
 import { useUIStore } from '../../store/useStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import type { ServiceDefinition, ServiceCategory, ServiceUnit } from '../../domain/services';
+import { ServiceMappingPanel } from './ServiceMappingPanel';
 
 type ProcessingCategory = {
   id: string;
@@ -176,7 +177,27 @@ export function SettingsModal() {
                 );
               })}
             </div>
-            
+
+            <div className="p-2 border-t">
+              <button
+                onClick={() => {
+                  setActiveTab('mapping');
+                  setEditingId(null);
+                  setIsAdding(false);
+                }}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors text-left w-full
+                  ${activeTab === 'mapping'
+                    ? 'bg-blue-100/50 text-blue-700 font-medium'
+                    : 'text-gray-700 hover:bg-gray-100'
+                  }
+                `}
+                title="Які послуги нараховуються за яку обробку"
+              >
+                <Link2 className={`w-4 h-4 ${activeTab === 'mapping' ? 'text-blue-600' : 'text-gray-400'}`} />
+                <span>Прив'язки послуг</span>
+              </button>
+            </div>
+
             <div className="p-4 border-t">
               <button
                 onClick={resetToDefault}
@@ -191,6 +212,7 @@ export function SettingsModal() {
 
           {/* Main Content */}
           <div className="flex-1 bg-white flex flex-col overflow-y-auto p-6 relative">
+            {activeTab === 'mapping' && <ServiceMappingPanel />}
             {activeCategory && (
               <>
                 {/* Category Header */}

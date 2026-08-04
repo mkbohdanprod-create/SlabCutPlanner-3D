@@ -8,12 +8,14 @@
 
 import type {
   CommercialQuoteSettings,
+  Detail,
   DetailPart,
   EdgeProfileType,
-  Point,
   Project,
 } from '../domain/types';
 import { DEFAULT_SERVICE_CATALOG } from '../domain/services';
+import { polygonPerimeter } from './geometryUtils';
+import { extractProductionFacts, sumFacts } from './productionFacts';
 
 export type CommercialQuoteLineCategory = 'material' | 'processing' | 'additional' | 'adjustment';
 
@@ -42,6 +44,8 @@ export type CommercialQuoteMetrics = {
   usedSlabs: number;
   sawCutM: number;
   waterjetCutM: number;
+  /** Отвори до 100 мм — рахуються штуками, не метрами */
+  holeCount: number;
   glueLengthM: number;
   glueElements: number;
   edgeLengths: Record<string, number>;
@@ -54,56 +58,15 @@ export type CommercialQuoteCalculation = {
   totals: CommercialQuoteTotals;
 };
 
-// --- локальні математичні хелпери (навмисно self-contained, щоб модуль був
-//     drop-in незалежно від стану консолідації geometryUtils). Пізніше можна
-//     замінити на спільні з src/engines/geometryUtils.ts. ---
+// --- математика винесена у engines/geometryUtils.ts: тими самими формулами
+//     рахує рушій виробничих фактів, і дві копії означали б два різні числа
+//     в кошторисі й у КП. Тут лишається тільки округлення під гроші. ---
 
 function round(value: number, digits = 2) {
   const factor = 10 ** digits;
   return Math.round((Number.isFinite(value) ? value : 0) * factor) / factor;
 }
 
-function pointDistance(a: Point, b: Point) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function polygonPerimeter(points: Point[]) {
-  if (points.length < 2) return 0;
-  return points.reduce((sum, point, index) => sum + pointDistance(point, points[(index + 1) % points.length]), 0);
-}
-
-// Довжина тільки НЕ-осьових різів (для розрахунку водяної різки)
-function polygonWaterjetLength(points: Point[]) {
-  if (points.length < 2) return 0;
-  return points.reduce((sum, point, index) => {
-    const next = points[(index + 1) % points.length];
-    const dx = Math.abs(point.x - next.x);
-    const dy = Math.abs(point.y - next.y);
-    const isAxisAligned = dx < 0.001 || dy < 0.001;
-    return sum + (isAxisAligned ? 0 : pointDistance(point, next));
-  }, 0);
-}
-
-function sideSegment(part: DetailPart, side: string) {
-  const custom = part.sideSegments?.[side];
-  if (custom) return custom;
-  const resolvedSide = part.sideAliases?.[side] ?? side;
-  const byPointCount: Record<number, Partial<Record<string, number>>> = {
-    4: { B: 0, C: 1, D: 2, A: 3 },
-    6: { B: 0, C: 1, D: 2, E: 3, F: 4, A: 5 },
-    8: { B: 0, C: 1, D: 2, E: 3, F: 4, G: 5, H: 6, A: 7 },
-  };
-  const index = byPointCount[part.points.length]?.[resolvedSide];
-  if (index === undefined || !part.points[index]) return undefined;
-  return { start: part.points[index], end: part.points[(index + 1) % part.points.length] };
-}
-
-function edgeLengthForSide(part: DetailPart, side: string) {
-  const segment = sideSegment(part, side);
-  if (segment) return pointDistance(segment.start, segment.end);
-  const edges = Math.max(1, part.points.length);
-  return polygonPerimeter(part.points) / edges;
-}
 
 function addLine(
   lines: CommercialQuoteLine[],
@@ -123,34 +86,36 @@ function addLine(
   });
 }
 
-function projectDetailsById(project: Project) {
-  return new Map(project.details.map((detail) => [detail.id, detail]));
-}
-
-export function calculateCommercialQuote(project: Project, parts: DetailPart[]): CommercialQuoteCalculation {
+export function calculateCommercialQuote(
+  project: Project,
+  parts: DetailPart[],
+  details?: Detail[],
+): CommercialQuoteCalculation {
   const settings = project.commercialQuote;
-  const detailsById = projectDetailsById(project);
-  const mainParts = parts.filter((part) => part.isMain);
   const elementParts = parts.filter((part) => !part.isMain || part.edgeKind);
-  const placedSlabs = new Set(project.placements.map((placement) => placement.slabId));
-  const usedSlabs = placedSlabs.size || project.slabs.length;
 
-  const detailAreaM2 = round(mainParts.reduce((sum, part) => sum + part.area, 0), 3);
-  const sawCutM = round(mainParts.reduce((sum, part) => sum + polygonPerimeter(part.points), 0) / 1000, 3);
-  const waterjetCutM = round(mainParts.reduce((sum, part) => {
-    const holeLength = (part.holes ?? []).reduce((holeSum, hole) => holeSum + polygonPerimeter(hole), 0);
-    return sum + holeLength + polygonWaterjetLength(part.points);
-  }, 0) / 1000, 3);
+  // Числа беруться з того самого рушія фактів, що й кошторис. До цього тут
+  // була власна математика, у якій пила рахувала ВЕСЬ периметр, а вода —
+  // ще раз ті самі дуги: непрямі різи потрапляли в суму двічі.
+  const facts = extractProductionFacts(project, parts, { details });
+  const detailAreaM2 = sumFacts(facts, 'detail_area');
+  const usedSlabs = sumFacts(facts, 'slabs_used');
+  const sawCutM = sumFacts(facts, 'saw_cut');
+  const waterjetCutM = round(
+    sumFacts(facts, 'waterjet_cut') + sumFacts(facts, 'cutout_perimeter') + sumFacts(facts, 'hole_large'),
+    3,
+  );
+  const holeCount = sumFacts(facts, 'hole_small');
+
+  // Склейка доповнень лишається за партами: підворот і потовщення — це не
+  // стик, а окремий елемент, і у фактах вони не мають власного виду.
   const glueLengthM = round(elementParts.reduce((sum, part) => sum + polygonPerimeter(part.points), 0) / 1000, 3);
   const glueElements = elementParts.length;
-  const edgeLengths: Record<string, number> = {};
 
-  mainParts.forEach((part) => {
-    const detail = detailsById.get(part.detailId);
-    Object.entries(detail?.edgeProfiles ?? {}).forEach(([side, profile]) => {
-      if (!profile) return;
-      edgeLengths[profile] = round((edgeLengths[profile] ?? 0) + edgeLengthForSide(part, side) / 1000, 3);
-    });
+  const edgeLengths: Record<string, number> = {};
+  facts.filter((fact) => fact.kind === 'edge' && fact.variant).forEach((fact) => {
+    const profileId = fact.variant as string;
+    edgeLengths[profileId] = round((edgeLengths[profileId] ?? 0) + fact.qty, 3);
   });
 
   const metrics: CommercialQuoteMetrics = {
@@ -158,6 +123,7 @@ export function calculateCommercialQuote(project: Project, parts: DetailPart[]):
     usedSlabs,
     sawCutM,
     waterjetCutM,
+    holeCount,
     glueLengthM,
     glueElements,
     edgeLengths,
@@ -204,6 +170,17 @@ export function calculateCommercialQuote(project: Project, parts: DetailPart[]):
     unit: 'пог. м',
     unitPrice: settings.waterjetCutPricePerM,
     visible: waterjetCutM > 0,
+    automatic: true,
+  });
+
+  addLine(lines, settings, {
+    id: 'holes',
+    category: 'processing',
+    name: 'Отвори до 100 мм',
+    quantity: holeCount,
+    unit: 'шт',
+    unitPrice: settings.holePricePerPcs ?? 0,
+    visible: holeCount > 0,
     automatic: true,
   });
 

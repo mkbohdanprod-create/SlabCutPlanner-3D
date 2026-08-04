@@ -2,7 +2,7 @@ import { uid } from '../domain/defaults';
 import type { DefectZone, DetailPart, PackingMode, Placement, Point, Project, Rotation, SlabInstance } from '../domain/types';
 import { rotatePoint as rotateProjectPoint, rotatedLocalPoints, rotatedSize as projectRotatedSize } from '../lib/project';
 import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
-import { pointInPolygonStrict, pointInPolygonOrOn, pointOnSegment, outwardNormal, textureGroupKey } from './geometryUtils';
+import { pointInPolygonStrict, pointInPolygonOrOn, pointOnSegment, outwardNormal, textureGroupKey, polygonDistance } from './geometryUtils';
 
 type OccupiedBox = { x: number; y: number; width: number; height: number };
 type OccupiedShape = { box: OccupiedBox; polygon: Point[]; holes: Point[][] };
@@ -64,40 +64,7 @@ function overlapsWithGap(a: OccupiedBox, b: OccupiedBox, gap: number) {
     && a.y + a.height + gap > b.y;
 }
 
-function pointDistance(a: Point, b: Point) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function pointSegmentDistance(point: Point, a: Point, b: Point) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const lengthSq = dx * dx + dy * dy;
-  if (lengthSq <= 0.0001) return pointDistance(point, a);
-  const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq));
-  return pointDistance(point, { x: a.x + dx * t, y: a.y + dy * t });
-}
-
-function segmentDistance(a: Point, b: Point, c: Point, d: Point) {
-  return Math.min(
-    pointSegmentDistance(a, c, d),
-    pointSegmentDistance(b, c, d),
-    pointSegmentDistance(c, a, b),
-    pointSegmentDistance(d, a, b),
-  );
-}
-
-function polygonDistance(a: Point[], b: Point[]) {
-  let best = Infinity;
-  for (let i = 0; i < a.length; i += 1) {
-    const a1 = a[i];
-    const a2 = a[(i + 1) % a.length];
-    for (let j = 0; j < b.length; j += 1) {
-      best = Math.min(best, segmentDistance(a1, a2, b[j], b[(j + 1) % b.length]));
-      if (best <= 0.001) return 0;
-    }
-  }
-  return best;
-}
+// Відстані живуть у geometryUtils — ними ж міряє перевірка виробничості.
 
 function packingClearance(project: Project) {
   return Math.max(0, project.allowances?.interPartSpacing ?? 0);

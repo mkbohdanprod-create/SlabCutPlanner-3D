@@ -1145,12 +1145,16 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
       const iw = detail.innerHorizontal || 600;
       const ih = detail.innerVertical || 600;
       return [
-        { id: "start", x: 0, y: 0 },
-        { id: "AB", x: width, y: 0 },
-        { id: "inner", x: width, y: height - ih },
-        { id: "inner_corner", x: iw, y: height - ih },
-        { id: "CD", x: iw, y: height },
-        { id: "DA", x: 0, y: height },
+        // Сторони Г-подібної названі буквами A..F — так само, як у
+        // редакторі, у списку сторін і в ключах доповнень (`leg_A`,
+        // `wall_panel_F`). Доти тут жила стара нотація AB/inner/CD/DA,
+        // і жодне доповнення на Г-подібній не знаходило свого ребра.
+        { id: "start", closeId: "F", x: 0, y: 0 },
+        { id: "A", x: width, y: 0 },
+        { id: "B", x: width, y: height - ih },
+        { id: "C", x: iw, y: height - ih },
+        { id: "D", x: iw, y: height },
+        { id: "E", x: 0, y: height },
       ];
     }
 
@@ -1235,8 +1239,9 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
       {/* ATTACHMENTS (Wall Panels, Legs) */}
       {mainLineSegments.map((item, i) => {
         const pId = item.id;
-        if (pId.startsWith("start") || pId.startsWith("inner"))
-          return null;
+        // Раніше тут відсіювались "start" і "inner*" — релікт старої
+        // нотації Г-подібної. Після переходу на букви таких сторін немає,
+        // а фільтр глушив два реальні ребра.
 
         const wallPanelId = `wall_panel_${pId}`;
         const legId = `leg_${pId}`;
@@ -1443,12 +1448,16 @@ export function Detail3DPreview({
       const iw = detail.innerHorizontal || 600;
       const ih = detail.innerVertical || 600;
       return [
-        { id: "start", x: 0, y: 0 },
-        { id: "AB", x: width, y: 0 },
-        { id: "inner", x: width, y: height - ih },
-        { id: "inner_corner", x: iw, y: height - ih },
-        { id: "CD", x: iw, y: height },
-        { id: "DA", x: 0, y: height },
+        // Сторони Г-подібної названі буквами A..F — так само, як у
+        // редакторі, у списку сторін і в ключах доповнень (`leg_A`,
+        // `wall_panel_F`). Доти тут жила стара нотація AB/inner/CD/DA,
+        // і жодне доповнення на Г-подібній не знаходило свого ребра.
+        { id: "start", closeId: "F", x: 0, y: 0 },
+        { id: "A", x: width, y: 0 },
+        { id: "B", x: width, y: height - ih },
+        { id: "C", x: iw, y: height - ih },
+        { id: "D", x: iw, y: height },
+        { id: "E", x: 0, y: height },
       ];
     }
 
