@@ -3,7 +3,8 @@ import { ProductElement3DNode } from '../3d/ProductElement3DNode';
 import {  ChevronDown, ChevronRight, ChevronLeft, Save, Trash2, Folder } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUIStore } from '../../store/useStore';
-import { DesignerCanvas } from './FormsPanel';
+import { DesignerCanvas, sideOptionsFor } from './FormsPanel';
+import { SinkDesigner } from '../forms/shapes/SinkDesigner';
 import { EdgeProcessingDesigner } from '../forms/editors/EdgeProcessingDesigner';
 import { translateStaticUiText } from '../../i18n';
 import type { DetailDraft, ShapeKind } from '../forms/utils/draftHelpers';
@@ -15,6 +16,8 @@ import { JointOffsetPopup } from './JointOffsetPopup';
 import { flattenProductToDetails } from '../../store/projectHelpers';
 import { uid } from '../../domain/defaults';
 import { toDetailShape, buildGeometry } from '../../domain/elementToDetail';
+import { sinkAdditionElements, createProductSink } from '../../domain/productSink';
+import type { ProductSinkDef } from '../../domain/types';
 import type { Product, ProductElement, Joint } from '../../domain/types';
 
 import type { Detail, DetailGeometry, DetailShape } from '../../domain/types';
@@ -110,6 +113,11 @@ export function buildProductFromSession(
     const isFold = id.includes('fold_');
     const isThickening = id.includes('thickening_');
     if (isFold || isThickening) return;
+    // Мийки — ПОХІДНІ від mainDetail.sinks і створюються нижче через
+    // sinkAdditionElements. Якщо слот sink_* просочився в subDetails
+    // (напр., із сесії відкритого старого виробу) — пропускаємо, інакше
+    // мийка дублюється при кожному повторному збереженні.
+    if (id.startsWith('sink_')) return;
 
     const elementId = buildElementPath(productId, id);
     const isSkirting = id.startsWith('skirting_');
@@ -169,6 +177,17 @@ export function buildProductFromSession(
     rootElement.joints.push(joint);
     allElements.push(addition);
   });
+
+  // Мийки, встановлені в стільницю: кожна — САМОСТІЙНИЙ Елемент виробу
+  // (як Опора чи Стінова панель, §3), зі слотом sink_<id>. З нього розкрій
+  // робить комплект деталей чаші. Виріз у стільниці домішується в
+  // buildGeometry — тут його створювати не треба.
+  if (session.mainDetail) {
+    sinkAdditionElements(productId, session.mainDetail).forEach((sinkEl) => {
+      productElements.push(sinkEl);
+      allElements.push(sinkEl);
+    });
+  }
 
   // Dynamically create Additions for Folds & Thickenings for ALL elements
   allElements.forEach((element) => {
@@ -304,6 +323,8 @@ export function ProductEditorWorkspace() {
   const detail = isMainActive
     ? session.mainDetail
     : (session.subDetails[session.activeDetailId!] ?? findGeneratedDraft(session.activeDetailId!));
+
+  const isSinkDetail = detail?.kind === 'sink_rect' || detail?.kind === 'sink_slot';
 
   const updateDetail = (patch: Partial<DetailDraft>) => {
     if (!detail) return;
@@ -944,10 +965,15 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                             </span>
                           </div>
                           <button
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (isMain) {
-                                setSession({ ...session, mainDetail: undefined, activeDetailId: null }); 
+                                setSession({ ...session, mainDetail: undefined, activeDetailId: null });
+                              } else if (elementSlot.startsWith('sink_')) {
+                                // Мийка живе в mainDetail.sinks, а не в subDetails
+                                const nextSinks = { ...session.mainDetail?.sinks };
+                                delete nextSinks[elementSlot.slice('sink_'.length)];
+                                setSession({ ...session, mainDetail: { ...session.mainDetail!, sinks: nextSinks }, activeDetailId: isActive ? 'main' : session.activeDetailId });
                               } else {
                                 const newSubDetails = { ...session.subDetails };
                                 delete newSubDetails[elementSlot];
@@ -1001,6 +1027,11 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                                         if (newMain.thickening.sides.length === 0) newMain.thickening.enabled = false;
                                       }
                                       setSession({ ...session, mainDetail: newMain, activeDetailId: isAddActive ? 'main' : session.activeDetailId });
+                                    } else if (additionSlot.startsWith('sink_')) {
+                                      // Старий формат (мийка як доповнення): джерело — mainDetail.sinks
+                                      const nextSinks = { ...session.mainDetail?.sinks };
+                                      delete nextSinks[additionSlot.slice('sink_'.length)];
+                                      setSession({ ...session, mainDetail: { ...session.mainDetail!, sinks: nextSinks }, activeDetailId: isAddActive ? 'main' : session.activeDetailId });
                                     } else {
                                       const newSubDetails = { ...session.subDetails };
                                       delete newSubDetails[additionSlot];
@@ -1086,21 +1117,39 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                 <h2 className="text-sm font-bold text-slate-700">Властивості деталі</h2>
               </div>
               
-              <div className="accordion-edges transition-all duration-500">
-                <Accordion title="Сторони (Розміри та Кромка)" defaultOpen={true}>
-                  <EdgeProcessingDesigner
-                    edgeProfiles={detail.edgeProfiles}
-                  thickening={detail.thickening}
-                  fold={detail.fold}
-                  sides={allSides}
-                  blockedEdgeSides={[]}
-                  linkedThickeningSides={[]}
-                  linkedFoldSides={[]}
-                  onChange={(patch) => updateDetail(patch)}
-                />
+              {/* Мийка — не плоска деталь: у неї власні розміри чаші
+                  (довжина, ширина, глибина), а кромки й кути на неї не
+                  накладаються. Тому для неї показуємо конструктор мийки
+                  замість таблиці сторін. */}
+              {isSinkDetail ? (
+                <Accordion title="Розміри мийки" defaultOpen={true}>
+                  <div className="p-3 bg-white">
+                    <SinkDesigner detail={detail} updateDetail={(patch) => updateDetail(patch)} />
+                  </div>
                 </Accordion>
-              </div>
+              ) : (
+                <div className="accordion-edges transition-all duration-500">
+                  <Accordion title="Сторони (Розміри та Кромка)" defaultOpen={true}>
+                    <EdgeProcessingDesigner
+                      edgeProfiles={detail.edgeProfiles}
+                    thickening={detail.thickening}
+                    fold={detail.fold}
+                    /* Сторони за формою деталі: прямокутник має A–D, а не A–H.
+                       Раніше тут стояв повний список, тож на панелі й
+                       стільниці висіли чотири неіснуючі сторони. */
+                    sides={sideOptionsFor(detail.kind)}
+                    blockedEdgeSides={[]}
+                    linkedThickeningSides={[]}
+                    linkedFoldSides={[]}
+                    onChange={(patch) => updateDetail(patch)}
+                  />
+                  </Accordion>
+                </div>
+              )}
 
+          {/* Кути й вирізи існують на плоскій деталі; у мийки їх нема */}
+          {!isSinkDetail && (
+          <>
           <Accordion title="Обробка кутів (Радіуси)">
             <div className="p-4 flex flex-col gap-2">
               {detail.corners && Object.keys(detail.corners).length > 0 ? (
@@ -1174,6 +1223,8 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
               )}
             </div>
           </Accordion>
+          </>
+          )}
 
           <Accordion title="Стики (З'єднання деталей)">
             <div className="p-4 flex flex-col gap-2">
@@ -1318,12 +1369,107 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
             </div>
           </Accordion>
 
+          {isMainActive && !isSinkDetail && (
           <Accordion title="Встановлення мийки в виріб">
-            <div className="text-sm text-slate-500 py-4 text-center">
-              Інтерфейс мийок буде додано тут...
+            <div className="flex flex-col gap-3">
+              {Object.values(detail.sinks ?? {}).map((sink) => {
+                const patchSink = (patch: Partial<ProductSinkDef>) => {
+                  updateDetail({ sinks: { ...detail.sinks, [sink.id]: { ...sink, ...patch } } });
+                };
+                return (
+                  <div key={sink.id} className="p-2 bg-slate-50 border border-slate-200 rounded-sm flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-[#1f2d3a] text-sm">
+                        Мийка {sink.kind === 'slot' ? '(щілинна)' : '(прямокутна)'}
+                      </span>
+                      <button
+                        onClick={() => {
+                          const next = { ...detail.sinks };
+                          delete next[sink.id];
+                          updateDetail({ sinks: next });
+                        }}
+                        className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
+                        title="Видалити мийку"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <select
+                      value={sink.kind}
+                      onChange={(e) => patchSink({ kind: e.target.value as 'rect' | 'slot' })}
+                      className="px-2 py-1 text-xs border border-slate-300 rounded-sm bg-white"
+                    >
+                      <option value="rect">Прямокутна чаша</option>
+                      <option value="slot">Щілинна чаша</option>
+                    </select>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        ['Центр по X, мм', 'x'],
+                        ['Центр по Y, мм', 'y'],
+                        ['Довжина чаші, мм', 'width'],
+                        ['Ширина чаші, мм', 'height'],
+                        ['Глибина чаші, мм', 'depth'],
+                      ] as Array<[string, 'x' | 'y' | 'width' | 'height' | 'depth']>).map(([label, field]) => (
+                        <label key={field} className="flex flex-col gap-0.5 text-[11px] text-slate-500 font-medium">
+                          {label}
+                          <input
+                            type="number"
+                            value={sink[field]}
+                            onChange={(e) => patchSink({ [field]: Math.max(0, Number(e.target.value) || 0) } as Partial<ProductSinkDef>)}
+                            className="px-2 py-1 text-sm border border-slate-300 rounded-sm font-bold text-slate-800"
+                          />
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 leading-snug">
+                      Виріз у стільниці ({sink.width}×{sink.height} мм) робиться автоматично
+                      за внутрішнім контуром чаші. Чаша підклеюється знизу.
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button
+                onClick={() => {
+                  const existing = Object.keys(detail.sinks ?? {});
+                  let n = existing.length + 1;
+                  while (existing.includes(String(n))) n += 1;
+                  const sink = createProductSink(String(n), detail);
+                  updateDetail({ sinks: { ...detail.sinks, [sink.id]: sink } });
+                }}
+                className="px-3 py-1.5 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
+              >
+                + Додати мийку
+              </button>
+
+              {!Object.keys(detail.sinks ?? {}).length && (
+                <div className="text-xs text-slate-500 text-center">
+                  Мийка нижнього монтажу: позиціонується як виріз, редагується
+                  за розмірами, деталі чаші потрапляють у розкрій автоматично.
+                </div>
+              )}
             </div>
           </Accordion>
+          )}
             </>
+          ) : session.activeDetailId?.startsWith('sink_') ? (
+            <div className="p-8 text-center text-slate-500 flex flex-col gap-2 items-center justify-center h-full">
+              <Box className="w-8 h-8 text-slate-300" />
+              <span className="font-medium text-slate-600">Це мийка, встановлена у виріб</span>
+              <p className="text-sm mt-2">
+                Позиція і розміри чаші редагуються на стільниці —
+                розділ «Встановлення мийки в виріб».
+              </p>
+              <button
+                onClick={() => setSession({ ...session, activeDetailId: 'main' })}
+                className="mt-4 px-4 py-1.5 text-sm font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
+              >
+                Перейти до стільниці
+              </button>
+            </div>
           ) : session.activeDetailId?.startsWith('fold_') || session.activeDetailId?.startsWith('thickening_') ? (
             <div className="p-8 text-center text-slate-500 flex flex-col gap-2 items-center justify-center h-full">
               <Box className="w-8 h-8 text-slate-300" />

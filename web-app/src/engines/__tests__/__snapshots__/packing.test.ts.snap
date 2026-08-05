@@ -39,13 +39,13 @@ exports[`packing.ts (Safety Net) > should autoPack project with deterministic ou
     "y": 634,
   },
   {
-    "id": "test-id-2184",
+    "id": "test-id-1562",
     "manualLocked": false,
     "partId": "part:det-4:fold:B:Det4:0:0",
-    "rotation": 0,
+    "rotation": 90,
     "slabId": "slab-1",
-    "x": 10,
-    "y": 1186,
+    "x": 2110,
+    "y": 10,
   },
 ]
 `;

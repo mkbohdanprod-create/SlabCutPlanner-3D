@@ -311,4 +311,4 @@ export function EdgeProfileIcon({ profile }: { profile?: EdgeProfileType }) {
       />
     </svg>
   );
-}
+}

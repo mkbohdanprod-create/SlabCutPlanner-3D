@@ -25,6 +25,9 @@ export const WorkspacePane = memo(function WorkspacePane({
 }: WorkspacePaneProps) {
   const isFloatingPreviewOpen = useUIStore((s) => s.isFloatingPreviewOpen);
   const is3dAssemblyMode = useUIStore((s) => s.is3dAssemblyMode);
+  // «3D Прев'ю» і «Послуги для виробництва» — вкладки супер-адміна
+  // (щит у шапці, PIN); для менеджера їх не існує
+  const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
   // Документи (кошторис, прорахунок) не мають плаваючого 3D-прев'ю поверх себе,
   // тож на них вкладка «3D Прев'ю» не має підсвічуватись активною.
   const isDocumentView = view === 'estimate' || view === 'quote';
@@ -79,36 +82,40 @@ export const WorkspacePane = memo(function WorkspacePane({
         >
           <Box className="w-4 h-4" /> 3D Підбір
         </button>
-        <button
-          onClick={() => {
-            onChangeView('2d'); // Switch to 2D for background
-            useUIStore.getState().setFloatingPreviewMode('3d');
-            useUIStore.getState().setFloatingPreviewOpen(true);
-          }}
-          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 shrink-0 whitespace-nowrap ${
-            isFloatingPreviewOpen && !isDocumentView
-              ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]'
-              : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
-          }`}
-          style={{ fontFamily: 'Roboto, sans-serif' }}
-        >
-          <Eye className="w-4 h-4" /> 3D Прев'ю
-        </button>
-        <button
-          onClick={() => {
-            onChangeView('estimate');
-            useUIStore.getState().setFloatingPreviewOpen(false);
-          }}
-          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 shrink-0 whitespace-nowrap ${
-            view === 'estimate'
-              ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]'
-              : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
-          }`}
-          style={{ fontFamily: 'Roboto, sans-serif' }}
-          title="Повний перелік операцій із кодами — для виробництва"
-        >
-          <FileText className="w-4 h-4" /> Послуги для виробництва
-        </button>
+        {isAdminUnlocked && (
+          <button
+            onClick={() => {
+              onChangeView('2d'); // Switch to 2D for background
+              useUIStore.getState().setFloatingPreviewMode('3d');
+              useUIStore.getState().setFloatingPreviewOpen(true);
+            }}
+            className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 shrink-0 whitespace-nowrap ${
+              isFloatingPreviewOpen && !isDocumentView
+                ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]'
+                : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
+            }`}
+            style={{ fontFamily: 'Roboto, sans-serif' }}
+          >
+            <Eye className="w-4 h-4" /> 3D Прев'ю
+          </button>
+        )}
+        {isAdminUnlocked && (
+          <button
+            onClick={() => {
+              onChangeView('estimate');
+              useUIStore.getState().setFloatingPreviewOpen(false);
+            }}
+            className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 shrink-0 whitespace-nowrap ${
+              view === 'estimate'
+                ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]'
+                : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
+            }`}
+            style={{ fontFamily: 'Roboto, sans-serif' }}
+            title="Повний перелік операцій із кодами — для виробництва"
+          >
+            <FileText className="w-4 h-4" /> Послуги для виробництва
+          </button>
+        )}
         <button
           onClick={() => {
             onChangeView('quote');

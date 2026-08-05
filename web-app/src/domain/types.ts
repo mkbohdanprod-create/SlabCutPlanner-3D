@@ -56,6 +56,31 @@ export interface ElementDefinition {
   wallPanels: Record<string, WallPanel>;
   legs: Record<string, Leg>;
   customServices?: CustomService[];
+  /**
+   * Мийки, встановлені У виріб (нижній монтаж). Живуть на стільниці:
+   * позиціонуються як виріз (центр чаші в координатах деталі), а далі з них
+   * ПОХІДНО народжуються і виріз у стільниці, і елемент-мийка з комплектом
+   * деталей у розкрої. Самі вирізи в `cutouts` не зберігаються — інакше
+   * після кожного перерахунку вони б дублювались.
+   */
+  sinks?: Record<string, ProductSinkDef>;
+}
+
+/** Мийка нижнього монтажу, встановлена в стільницю */
+export interface ProductSinkDef {
+  id: string;
+  /** Прямокутна чи щілинна — той самий поділ, що й в окремої мийки */
+  kind: 'rect' | 'slot';
+  /** Центр чаші від лівого краю деталі, мм */
+  x: number;
+  /** Центр чаші від верхнього краю деталі, мм */
+  y: number;
+  /** Внутрішня довжина чаші, мм */
+  width: number;
+  /** Внутрішня ширина чаші, мм */
+  height: number;
+  /** Глибина чаші, мм */
+  depth: number;
 }
 
 export interface AnchorRef {

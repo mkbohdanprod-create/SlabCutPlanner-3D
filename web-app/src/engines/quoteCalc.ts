@@ -12,8 +12,9 @@ import {
   type QuoteShape,
   type QuoteUnit,
 } from '../domain/quoteCalc';
-import type { Detail, DetailPart } from '../domain/types';
+import type { Detail, DetailPart, Project } from '../domain/types';
 import { fabrication1cCode } from '../domain/quote1cCatalog';
+import { jointLengthMm } from './productionFacts';
 
 /**
  * Движок прорахунку для клієнта.
@@ -151,6 +152,10 @@ export function computeQuoteCalc(
   //  по 1.2 м²» — це один рядок 2.4 м², бо номенклатура одна.
   const fabQty = new Map<string, number>();
   const add = (typeId: string, qty: number) => fabQty.set(typeId, (fabQty.get(typeId) ?? 0) + qty);
+  //  Скільки з площі номенклатури — влиті ноги/опуски. Це показується в
+  //  назві рядка, інакше нога «зникає» і виглядає непорахованою.
+  const foldedQty = new Map<string, number>();
+  let hasLeg = false;
 
   doc.items.forEach((item) => {
     const type = quoteProductType(item.productTypeId);
@@ -168,14 +173,15 @@ export function computeQuoteCalc(
 
     // Нога/опуск: площа вливається у стільницю (Логіка §3–4)
     if (type.foldInto?.length) {
+      hasLeg = true;
       const target = type.foldInto.find((candidate) =>
         doc.items.some((other) => other.productTypeId === candidate));
-      if (target) {
-        add(target, qty);
-      } else {
+      const into = target ?? type.foldInto[0];
+      add(into, qty);
+      foldedQty.set(into, (foldedQty.get(into) ?? 0) + qty);
+      if (!target) {
         // Стільниці в замовленні немає — тарифікуємо за першою
         // номенклатурою зі списку, але чесно попереджаємо.
-        add(type.foldInto[0], qty);
         warnings.push(`«${type.label}» без стільниці в замовленні — площу враховано за номенклатурою стільниці`);
       }
       return;
@@ -187,13 +193,17 @@ export function computeQuoteCalc(
     const type = quoteProductType(typeId);
     if (!type) return;
     const manufacturerSuffix = doc.manufacturer ? ` — ${doc.manufacturer}` : '';
+    // Влита площа ноги показується в назві рядка — щоб було видно,
+    // що нога порахована, хоч і не окремою номенклатурою (Логіка §3)
+    const folded = foldedQty.get(typeId) ?? 0;
+    const foldedSuffix = folded > 0 ? ` (з ногою ${round3(folded)} м²)` : '';
     // Код: ручне налаштування (від точного ключа до загального), а коли
     // його немає — вбудований довідник 1С («Виготовлення … Laminam»;
     // невідомий виробник лягає на «Під проект» свого матеріалу).
     const builtinCode = fabrication1cCode(typeId, doc.materialType, doc.manufacturer)?.code;
     push(
       `fab:${typeId}`, 'fabrication',
-      `Виготовлення: ${type.label}${manufacturerSuffix}`,
+      `Виготовлення: ${type.label}${manufacturerSuffix}${foldedSuffix}`,
       qty, type.unit,
       fabricationPrice(book, typeId, doc.materialType, doc.manufacturer),
       code1c(`fab:${typeId}:${doc.materialType}:${doc.manufacturer}`)
@@ -201,6 +211,11 @@ export function computeQuoteCalc(
         ?? builtinCode,
     );
   });
+
+  // Нога є, а послуги стикування немає — швидше за все, забули (Логіка §2)
+  if (hasLeg && !(doc.services.joint_leg > 0)) {
+    warnings.push('У замовленні є нога — додайте послугу «Стикування “Ноги” з виробом» (м.п. з\'єднання) в додаткових послугах');
+  }
 
   // ── 2. Матеріал: лист/півлиста ─────────────────────────────────────
   if (doc.materialSheets > 0) {
@@ -274,6 +289,86 @@ export function computeQuoteCalc(
 }
 
 export const quoteUnitLabel = (unit: QuoteUnit) => QUOTE_UNIT_LABELS[unit];
+
+// ── Авто-заповнення додаткових послуг ────────────────────────────────
+
+/**
+ * Кількості послуг, які виробнича логіка вже знає з проєкту — щоб
+ * менеджер не вписував руками те, що застосунок порахував сам:
+ *
+ *   · joint_leg — «Стикування ноги»: довжина стиків joint_leg_* у
+ *     виробах, м.п. (та сама довжина, за якою рахується різ під 45)
+ *   · joint_flat — «Стикування деталей в площині»: розрізана стиками
+ *     Г-подібна дає 1 стик, П-подібна — 2 (ТЗ: 1 шт на 1 стик)
+ *   · texture_match — «Підбір текстури»: якщо в проєкті ввімкнено
+ *
+ * Це ЗАМОВЧУВАННЯ: ручне значення в документі (навіть 0) перемагає.
+ */
+/**
+ * Ефективні кількості послуг: авто з проєкту + ручні поверх.
+ *
+ * Нуль у документі трактується як «не задано», а не як свідоме «нуль»:
+ * порожнє поле в панелі колись зберігало 0, і такий залишок мовчки
+ * блокував авто-заповнення. Прибрати послугу, яку геометрія бачить
+ * (стик ноги є в виробі), — це не сценарій: тоді треба прибирати ногу.
+ */
+export function mergeQuoteServices(
+  auto: Record<string, number>,
+  manual: Record<string, number> | undefined,
+): Record<string, number> {
+  const merged: Record<string, number> = { ...auto };
+  Object.entries(manual ?? {}).forEach(([id, qty]) => {
+    if (qty > 0) merged[id] = qty;
+    else if (!(merged[id] > 0)) merged[id] = qty;
+  });
+  return merged;
+}
+
+export function autoQuoteServices(project: Project, details: Detail[]): Record<string, number> {
+  const auto: Record<string, number> = {};
+
+  let legMm = 0;
+  const walkElements = (elements: Array<{ joints?: unknown[]; additions?: unknown[] }> | undefined) => {
+    (elements ?? []).forEach((element) => {
+      (element.joints ?? []).forEach((joint) => {
+        const j = joint as { id?: string };
+        if (String(j.id ?? '').startsWith('joint_leg_')) {
+          legMm += jointLengthMm(joint as Parameters<typeof jointLengthMm>[0]);
+        }
+      });
+      walkElements(element.additions as never);
+    });
+  };
+  (project.products ?? []).forEach((product) => walkElements(product.elements as never));
+  if (legMm > 0) auto.joint_leg = Math.round(legMm) / 1000;
+
+  let flatJoints = 0;
+  details.forEach((detail) => {
+    if (detail.geometry?.wholeDetail) return;
+    if (detail.shape === 'Г-подібна') flatJoints += 1;
+    if (detail.shape === 'П-подібна') flatJoints += 2;
+  });
+  if (flatJoints > 0) auto.joint_flat = flatJoints;
+
+  if (project.textureSelectionEnabled) auto.texture_match = 1;
+
+  // Мийки, ВСТАНОВЛЕНІ в стільниці (нижній монтаж): кожна вимагає виріз
+  // під чашу. Рахуємо з sinks на драфтах елементів — того самого джерела,
+  // з якого народжуються і виріз, і деталі чаші.
+  let sinkCuts = 0;
+  const walkSinks = (elements: Array<{ baseDefinition?: { sinks?: Record<string, unknown>; quantity?: number }; additions?: unknown[] }> | undefined) => {
+    (elements ?? []).forEach((element) => {
+      const def = element.baseDefinition;
+      const count = Object.keys(def?.sinks ?? {}).length;
+      if (count > 0) sinkCuts += count * Math.max(1, def?.quantity ?? 1);
+      walkSinks(element.additions as never);
+    });
+  };
+  (project.products ?? []).forEach((product) => walkSinks(product.elements as never));
+  if (sinkCuts > 0) auto.sink_cutout = sinkCuts;
+
+  return auto;
+}
 
 // ── Імпорт виробів із розкрою ────────────────────────────────────────
 

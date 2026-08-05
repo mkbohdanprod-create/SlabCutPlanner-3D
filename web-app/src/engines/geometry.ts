@@ -1082,6 +1082,9 @@ function uShapeWithAllowances(w: number, h: number, cutW: number, cutD: number, 
     width: offsetContour.width,
     height: offsetContour.height,
     nominalPoints: offsetPoints(nominal, offsetContour.shiftX, offsetContour.shiftY),
+    // Зсув припуску — щоб отвори переїхали разом із контуром (як у Г-формі).
+    shiftX: offsetContour.shiftX,
+    shiftY: offsetContour.shiftY,
   };
 }
 
@@ -2002,7 +2005,14 @@ function explodeDetails(details: Detail[]): DetailPart[] {
             ['start', 'A', 'B', 'C', 'D', 'E'],
             ['A', 'B', 'C', 'D', 'E', 'F']
           );
-          const main = buildPart(detail, parentLabel, 'Г-подібна', complexLayout.points, layout.width, layout.height, true, parentLabel, undefined, undefined, { nominalPoints: layout.nominalPoints });
+          // Вирізи мусять прорізатись і в ЦІЛІЙ Г-подібній: розрізані стиками
+          // сегменти і прямокутні деталі отвори отримували, а ця гілка — ні,
+          // тому виріз існував у 3D, але зникав із розкрою і бланку.
+          const wholeHoles = buildHolesFromCutouts(g.cutouts, complexLayout.points, layout.width, layout.height, layout.shiftX, layout.shiftY);
+          const main = buildPart(detail, parentLabel, 'Г-подібна', complexLayout.points, layout.width, layout.height, true, parentLabel, undefined, undefined, {
+            nominalPoints: layout.nominalPoints,
+            holes: wholeHoles.length ? wholeHoles : undefined,
+          });
           main.sideSegments = complexLayout.sideSegments;
           pushPartWithEdges(parts, detail, main);
         } else {
@@ -2084,7 +2094,12 @@ function explodeDetails(details: Detail[]): DetailPart[] {
             ['start', 'A', 'B', 'C', 'D', 'E', 'F', 'G'],
             ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
           );
-          const main = buildPart(detail, parentLabel, 'П-подібна', complexLayout.points, layout.width, layout.height, true, parentLabel, undefined, undefined, { nominalPoints: layout.nominalPoints });
+          // Та сама діра, що й у цілої Г-подібної: вирізи не прорізались.
+          const wholeHoles = buildHolesFromCutouts(g.cutouts, complexLayout.points, layout.width, layout.height, layout.shiftX, layout.shiftY);
+          const main = buildPart(detail, parentLabel, 'П-подібна', complexLayout.points, layout.width, layout.height, true, parentLabel, undefined, undefined, {
+            nominalPoints: layout.nominalPoints,
+            holes: wholeHoles.length ? wholeHoles : undefined,
+          });
           main.sideSegments = complexLayout.sideSegments;
           pushPartWithEdges(parts, detail, main);
         } else if (side === 'bottom' || side === 'top') {

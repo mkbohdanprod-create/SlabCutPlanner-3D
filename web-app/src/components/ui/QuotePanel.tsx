@@ -1,11 +1,16 @@
-import { useMemo, useState } from 'react';
-import { Calculator, Plus, Trash2, AlertTriangle, Download, RefreshCw, FileDown, Loader2, Settings } from 'lucide-react';
+import { Suspense, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Calculator, Plus, Trash2, AlertTriangle, Download, RefreshCw, FileDown, Loader2, Settings, X } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useUIStore } from '../../store/useStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
-import { exportQuotePdf } from '../../utils/export/quotePdf';
+import { exportQuotePdf, DEFAULT_QUOTE_PDF_OPTIONS, type QuotePdfOptions } from '../../utils/export/quotePdf';
 import { QuoteSettingsModal } from './QuoteSettingsModal';
+import { Viewer3D } from '../3d/Viewer3DLazy';
 import {
+  autoQuoteServices,
+  mergeQuoteServices,
   computeQuoteCalc,
   itemAreaM2,
   itemLengthM,
@@ -68,6 +73,7 @@ export function QuotePanel() {
   const parts = useProjectStore((s) => s.parts);
   const updateProject = useProjectStore((s) => s.updateProject);
   const priceBook = useSettingsStore((s) => s.quotePriceBook);
+  const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const doc: QuoteCalcDoc = useMemo(
@@ -103,16 +109,54 @@ export function QuotePanel() {
     patch({ items: [...imported, ...doc.items.filter((item) => !item.sourceRef)] });
   };
 
-  const result = useMemo(() => computeQuoteCalc(doc, priceBook), [doc, priceBook]);
+  // Кількості, які виробнича логіка знає сама (стикування ноги, стики
+  // в площині, підбір текстури). Ручне значення в документі перемагає
+  // авто; порожнє поле повертає авто.
+  const autoServices = useMemo(
+    () => autoQuoteServices(project, getAllProjectDetails(project)),
+    [project],
+  );
+  const effectiveDoc = useMemo(
+    () => ({ ...doc, services: mergeQuoteServices(autoServices, doc.services) }),
+    [doc, autoServices],
+  );
+
+  const result = useMemo(() => computeQuoteCalc(effectiveDoc, priceBook), [effectiveDoc, priceBook]);
   const [pdfBusy, setPdfBusy] = useState(false);
 
-  const handleExportPdf = async () => {
+  // Діалог складу PDF: що включати в документ. Знімки 3D робить прихований
+  // в'ювер у режимі showcase (білий фон, 3 ракурси) — той самий механізм,
+  // що й у PDF розкрою.
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [pdfOptions, setPdfOptions] = useState({
+    includeCalc: true,
+    includeViz: true,
+    includeDetailsList: false,
+    includeDrawings: false,
+  });
+  const [capturing3d, setCapturing3d] = useState(false);
+
+  const runPdfExport = async (snapshots: string[]) => {
+    setCapturing3d(false);
     setPdfBusy(true);
     try {
-      await exportQuotePdf(project, doc, result);
+      const options: QuotePdfOptions = {
+        ...DEFAULT_QUOTE_PDF_OPTIONS,
+        includeCalc: pdfOptions.includeCalc,
+        includeDetailsList: pdfOptions.includeDetailsList,
+        includeDrawings: pdfOptions.includeDrawings,
+        snapshots,
+      };
+      await exportQuotePdf(project, effectiveDoc, result, options, parts, getAllProjectDetails(project));
+      setPdfDialogOpen(false);
     } finally {
       setPdfBusy(false);
     }
+  };
+
+  const handleExportPdf = () => {
+    if (pdfOptions.includeViz) setCapturing3d(true);
+    else void runPdfExport([]);
   };
 
   const isMeasure = doc.method === 'measure_install';
@@ -163,23 +207,27 @@ export function QuotePanel() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={handleExportPdf}
-              disabled={pdfBusy || result.lines.length === 0}
+              onClick={() => setPdfDialogOpen(true)}
+              disabled={result.lines.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-[#0084ff] text-white rounded-md text-sm font-bold hover:bg-[#006bce] transition-colors disabled:bg-slate-300 disabled:cursor-default"
-              title="Фірмовий PDF прорахунку для клієнта"
+              title="Фірмовий PDF прорахунку для клієнта — з вибором складу документа"
             >
-              {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} PDF для клієнта
+              <FileDown className="w-4 h-4" /> PDF для клієнта
             </button>
             <button onClick={exportJson} className="flex items-center gap-2 px-4 py-2 bg-white text-slate-600 border border-slate-300 rounded-md text-sm font-bold hover:bg-slate-50 transition-colors">
               <Download className="w-4 h-4" /> JSON
             </button>
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="flex items-center justify-center w-10 h-10 bg-white text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 hover:text-[#0084ff] transition-colors"
-              title="Налаштування прорахунку: прайс і коди 1С (для старших менеджерів)"
-            >
-              <Settings className="w-5 h-5" />
-            </button>
+            {/* Прайс і коди 1С — адмінське меню: видиме після входу
+                супер-адміна (кнопка з щитом у шапці, PIN-код) */}
+            {isAdminUnlocked && (
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="flex items-center justify-center w-10 h-10 bg-white text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 hover:text-[#0084ff] transition-colors"
+                title="Налаштування прорахунку: прайс і коди 1С (для старших менеджерів)"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -302,6 +350,9 @@ export function QuotePanel() {
             const computed = isArea ? `${itemAreaM2(item).toFixed(3)} м²`
               : isLength ? `${itemLengthM(item).toFixed(2)} м.п.`
               : `${Math.max(1, item.count)} шт`;
+            // Нога окремої номенклатури не має — її площа вливається у
+            // стільницю (Логіка §3). Показуємо це прямо біля цифри.
+            const foldsAway = Boolean(type?.foldInto?.length);
             const imported = Boolean(item.sourceRef);
             return (
               <div key={item.id} className="border border-slate-200 rounded-md p-3 flex flex-col gap-3 bg-slate-50/50">
@@ -348,7 +399,10 @@ export function QuotePanel() {
                     </Field>
                   )}
                   <div className="ml-auto flex items-end gap-3">
-                    <span className="text-sm font-bold text-slate-700 pb-1.5" title="Розрахована кількість">{computed}</span>
+                    <span className="text-sm font-bold text-slate-700 pb-1.5 text-right" title={foldsAway ? 'Нога тарифікується площею в номенклатурі стільниці — окремого рядка не буде' : 'Розрахована кількість'}>
+                      {computed}
+                      {foldsAway && <span className="block text-xs font-normal text-slate-400">→ у площу стільниці</span>}
+                    </span>
                     <button onClick={() => patch({ items: doc.items.filter((other) => other.id !== item.id) })} className="p-2 text-slate-400 hover:text-red-600 transition-colors" title="Видалити виріб">
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -421,23 +475,43 @@ export function QuotePanel() {
           <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 flex flex-col gap-3">
             <h3 className="text-sm font-bold text-slate-700 uppercase">Додаткові послуги</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
-              {QUOTE_SERVICES.map((service) => (
-                <div key={service.id} className="flex items-center justify-between gap-3 py-0.5">
-                  <span className="text-sm text-slate-700">{service.label}</span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <input
-                      className={inputCls}
-                      style={{ width: 80 }}
-                      type="number"
-                      min={0}
-                      value={doc.services[service.id] ?? ''}
-                      onChange={(e) => patch({ services: { ...doc.services, [service.id]: num(e.target.value) } })}
-                      placeholder="0"
-                    />
-                    <span className="text-xs text-slate-400 w-14">{quoteUnitLabel(service.unit)}</span>
+              {QUOTE_SERVICES.map((service) => {
+                // Ручне значення рахується лише коли воно > 0: збережений
+                // нуль — це слід від порожнього поля, а не рішення
+                const isAuto = !(doc.services[service.id] > 0) && (autoServices[service.id] ?? 0) > 0;
+                return (
+                  <div key={service.id} className="flex items-center justify-between gap-3 py-0.5">
+                    <span className="text-sm text-slate-700">
+                      {service.label}
+                      {isAuto && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded bg-[#0084ff]/10 text-[#0084ff] text-[10px] font-bold align-middle" title="Порахувало автоматично з розкрою; впишіть своє значення, щоб перекрити">
+                          авто
+                        </span>
+                      )}
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <input
+                        className={`${inputCls} ${isAuto ? 'border-[#0084ff]/40 bg-[#0084ff]/5' : ''}`}
+                        style={{ width: 80 }}
+                        type="number"
+                        min={0}
+                        value={isAuto ? autoServices[service.id] : (doc.services[service.id] ?? '')}
+                        onChange={(e) => {
+                          const next = { ...doc.services };
+                          // Порожнє поле чи нуль — знімають ручне значення
+                          // й повертають авто (якщо воно є)
+                          const parsed = num(e.target.value);
+                          if (e.target.value.trim() === '' || parsed <= 0) delete next[service.id];
+                          else next[service.id] = parsed;
+                          patch({ services: next });
+                        }}
+                        placeholder="0"
+                      />
+                      <span className="text-xs text-slate-400 w-14">{quoteUnitLabel(service.unit)}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -520,6 +594,64 @@ export function QuotePanel() {
       </div>
 
       <QuoteSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {/* Прихований 3D-в'ювер для зйомки візуалізацій (showcase: білий фон, 3 ракурси) */}
+      {capturing3d && createPortal(
+        <div className="fixed top-0 left-0 w-[1200px] h-[800px] z-[-10] pointer-events-none" style={{ opacity: 0.01 }}>
+          <Suspense fallback={null}>
+            <Viewer3D isCaptureMode capturePreset="showcase" onCaptureReady={(snaps) => void runPdfExport(snaps)} />
+          </Suspense>
+        </div>,
+        document.body,
+      )}
+
+      {pdfDialogOpen && createPortal(
+        <div className="fixed inset-0 bg-black/50 z-[110] flex items-center justify-center p-4 font-sans" onClick={() => !pdfBusy && !capturing3d && setPdfDialogOpen(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-sm flex flex-col overflow-hidden" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-2">
+                <FileDown className="w-5 h-5 text-[#0084ff]" />
+                <h2 className="text-base font-semibold text-gray-800">PDF для клієнта</h2>
+              </div>
+              <button onClick={() => setPdfDialogOpen(false)} className="text-gray-500 hover:text-gray-700 p-1" disabled={pdfBusy || capturing3d}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 flex flex-col gap-3">
+              <p className="text-sm text-slate-600">Що включити в документ:</p>
+              {([
+                ['includeCalc', 'КП — розрахунок вартості', 'Шапка замовлення, вироби, розрахунок'],
+                ['includeViz', '3D візуалізації', '2–3 ракурси виробу на білому фоні'],
+                ['includeDrawings', 'Бланк погодження', 'Контури виробів з розмірами, обробки, підпис замовника'],
+                ['includeDetailsList', 'Список деталей', 'Таблиця з габаритами і площами'],
+              ] as const).map(([key, label, hint]) => (
+                <label key={key} className="flex items-start gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    style={{ width: 16, height: 16 }}
+                    checked={pdfOptions[key]}
+                    onChange={(event) => setPdfOptions((current) => ({ ...current, [key]: event.target.checked }))}
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-800">{label}</span>
+                    <span className="block text-xs text-slate-500">{hint}</span>
+                  </span>
+                </label>
+              ))}
+              <button
+                onClick={handleExportPdf}
+                disabled={pdfBusy || capturing3d || (!pdfOptions.includeCalc && !pdfOptions.includeViz && !pdfOptions.includeDrawings && !pdfOptions.includeDetailsList)}
+                className="mt-2 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0084ff] text-white rounded-md text-sm font-bold hover:bg-[#006bce] transition-colors disabled:bg-slate-300"
+              >
+                {(pdfBusy || capturing3d) ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+                {capturing3d ? 'Знімаю 3D…' : pdfBusy ? 'Формую PDF…' : 'Сформувати PDF'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

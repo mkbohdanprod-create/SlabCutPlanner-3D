@@ -4,6 +4,7 @@ import type { ProductElement } from '../../domain/types';
 import { Detail3DNode } from '../ui/Detail3DPreview';
 import { buildDetailShape, getDetailPointsAndBounds } from '../../engines/shapeBuilder';
 import { getEdgeTransform } from '../../engines/transform3d';
+import { getSinkPartTransform } from '../../engines/sinkAssembly';
 
 export function ProductElement3DNode({
   element,
@@ -82,6 +83,121 @@ export function ProductElement3DNode({
   // мешем із власною текстурою. Один меш не може мати три різні UV зі слябу.
   const segParts = segmentPartsFor ? segmentPartsFor(element.id) : [];
   const isSplit = segParts.length > 1;
+
+  // Мийка — НЕ «розрізана форма»: її деталі (стінки, трикутники дна, злив)
+  // складаються в чашу трансформаціями зі sinkAssembly, спільними з прев'ю
+  // редактора виробу. Без цієї гілки всі 14 партів падали в isSplit і лягали
+  // плоско за координатами розкрою — «розкиданий» вигляд у 3D Підборі.
+  const isSinkElement = detail?.kind === 'sink_rect' || detail?.kind === 'sink_slot';
+
+  // Мийка, ВСТАНОВЛЕНА в цю деталь (нижній монтаж): доповнення зі слотом
+  // sink_<id>. Ребра в неї немає — чаша підвішується під плитою в центрі
+  // вирізу, координати беруться з detail.sinks (те саме джерело, що й
+  // у похідного вирізу). Рекурсія нижче потрапляє в гілку isSinkElement.
+  const renderInstalledSink = (addition: ProductElement) => {
+    const slot = addition.id.split(':').pop() || '';
+    const sinkDef = (detail as { sinks?: Record<string, { x: number; y: number }> })?.sinks?.[slot.slice('sink_'.length)];
+    if (!sinkDef) return null;
+    const s = 0.001;
+    const w = (bounds.maxX - bounds.minX) || 1;
+    const h = (bounds.maxY - bounds.minY) || 1;
+    const thick = (detail.thickness || 20) * s;
+    return (
+      <group key={addition.id} position={[(sinkDef.x - w / 2) * s, -thick / 2, (sinkDef.y - h / 2) * s]}>
+        <ProductElement3DNode
+          element={addition}
+          activeDetailId={activeDetailId}
+          customTextureMapFactory={customTextureMapFactory}
+          segmentPartsFor={segmentPartsFor}
+          textureForPart={textureForPart}
+          mode={mode}
+          theme={theme}
+          textureMode={textureMode}
+        />
+      </group>
+    );
+  };
+
+  if (isSinkElement && segParts.length > 1) {
+    const s = 0.001;
+    const thick = (detail.thickness || 20) * s;
+    const sinkDetail = {
+      geometry: {
+        width: detail.width,
+        height: detail.height,
+        innerVertical: (detail as { innerVertical?: number }).innerVertical,
+        sinkKind: detail.kind === 'sink_slot' ? 'slot' : 'rect',
+      },
+    } as never;
+
+    return (
+      <group position={position} rotation={rotation}>
+        {segParts.map((p: any) => {
+          const transform = getSinkPartTransform(p, sinkDetail, thick);
+          // Підклейки — службові, у збірці не показуються (у розкрої лишаються).
+          if (!transform || transform.hidden || !transform.pos) return null;
+
+          const pts: any[] = p.points || [];
+          if (pts.length < 3) return null;
+          const xs = pts.map((pt: any) => pt.x);
+          const ys = pts.map((pt: any) => pt.y);
+          const minX = Math.min(...xs);
+          const minY = Math.min(...ys);
+          const pw = (p.width || (Math.max(...xs) - minX)) || 1;
+          const ph = (p.height || (Math.max(...ys) - minY)) || 1;
+
+          // Контур у нормалізованих координатах (0..1) — та сама угода, що в
+          // isSplit: UV з ExtrudeGeometry мають збігатися з матрицею текстури
+          // розкрою, розрахованою на part.width/height. Реальний розмір — scale.
+          const shape = new THREE.Shape(
+            pts.map((pt: any) => new THREE.Vector2((pt.x - minX) / pw, (pt.y - minY) / ph))
+          );
+          const holes: any[] = p.holes || [];
+          holes.forEach((hole: any[]) => {
+            if (!Array.isArray(hole) || hole.length < 3) return;
+            const path = new THREE.Path();
+            [...hole].reverse().forEach((pt: any, i: number) => {
+              const nx = (pt.x - minX) / pw;
+              const ny = (pt.y - minY) / ph;
+              if (i === 0) path.moveTo(nx, ny);
+              else path.lineTo(nx, ny);
+            });
+            path.closePath();
+            shape.holes.push(path);
+          });
+
+          const geom = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: false, curveSegments: 24 });
+          geom.scale(pw * s, ph * s, 1);
+          geom.translate((-pw * s) / 2, (-ph * s) / 2, -thick / 2);
+          // rotateX(-π/2): «низ» деталі в 2D → -Z сцени — рівно та сама
+          // орієнтація, що в SinkAssemblyPreview, під яку виміряні пози/кути.
+          geom.rotateX(-Math.PI / 2);
+          geom.computeVertexNormals();
+
+          const tex = textureForPart ? textureForPart(p) : null;
+
+          return (
+            <mesh
+              key={p.id}
+              geometry={geom}
+              position={transform.pos}
+              quaternion={transform.quat}
+              castShadow
+              receiveShadow
+            >
+              <meshPhysicalMaterial
+                color="#ffffff"
+                map={tex || undefined}
+                roughness={0.4}
+                metalness={0.05}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+          );
+        })}
+      </group>
+    );
+  }
 
   if (isSplit) {
     const s = 0.001;
@@ -168,6 +284,7 @@ export function ProductElement3DNode({
             без трансформів, тому панель і ноги падали плоско в нуль. */}
         {element.additions?.map((addition) => {
           const additionSlot = addition.id.split(':').pop() || '';
+          if (additionSlot.startsWith('sink_')) return renderInstalledSink(addition);
           const edgeId = (() => {
             let best = -1;
             let res = additionSlot;
@@ -248,6 +365,7 @@ export function ProductElement3DNode({
         // Брати перший префікс не можна (загубиться вкладеність), останню частину
         // після '_' теж (для Г-зарізу вийде 'lcut1' і ребро не знайдеться).
         const additionSlot = addition.id.split(':').pop() || '';
+        if (additionSlot.startsWith('sink_')) return renderInstalledSink(addition);
         const edgeId = (() => {
           let best = -1;
           let res = additionSlot;
@@ -338,4 +456,4 @@ export function ProductElement3DNode({
       })}
     </group>
   );
-}
+}

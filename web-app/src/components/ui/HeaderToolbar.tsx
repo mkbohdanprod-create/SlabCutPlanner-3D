@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUIStore } from '../../store/useStore';
 import {   Settings, HelpCircle, Wrench,   Bug } from 'lucide-react';
+import { AdminPinButton } from './AdminPinButton';
 
 export function HeaderToolbar() {
   const packingMode = useProjectStore((s) => s.packingMode);
@@ -11,17 +12,24 @@ export function HeaderToolbar() {
   const setIsBugReporterOpen = useUIStore((s) => s.setIsBugReporterOpen);
   const setIsRecordingBug = useUIStore((s) => s.setIsRecordingBug);
   const setIsSettingsOpen = useUIStore((s) => s.setIsSettingsOpen);
+  const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
 
   return (
     <div className="flex items-center gap-1.5 flex-1 justify-end">
 
-      <button 
-        onClick={() => setIsSettingsOpen(true)}
-        className="w-8 h-8 flex items-center justify-center !text-white !bg-[#0084ff] hover:!bg-[#006bce] rounded-sm transition-colors shadow-sm"
-        title="Налаштування"
-      >
-        <Settings className="w-[18px] h-[18px] stroke-[2.5]" />
-      </button>
+      <AdminPinButton />
+
+      {/* Налаштування (прайси, прив'язки послуг) — адмінське меню,
+          видиме лише після входу супер-адміна за PIN-кодом */}
+      {isAdminUnlocked && (
+        <button
+          onClick={() => setIsSettingsOpen(true)}
+          className="w-8 h-8 flex items-center justify-center !text-white !bg-[#0084ff] hover:!bg-[#006bce] rounded-sm transition-colors shadow-sm"
+          title="Налаштування"
+        >
+          <Settings className="w-[18px] h-[18px] stroke-[2.5]" />
+        </button>
+      )}
 
       <button 
         onClick={() => setIsHelpOpen(true)}
@@ -55,4 +63,4 @@ export function HeaderToolbar() {
 
     </div>
   );
-}
+}

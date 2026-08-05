@@ -16,6 +16,9 @@ import { Eye, Edit2, Ruler, Moon, Sun, Image as ImageIcon } from "lucide-react";
 import * as THREE from "three";
 import type { DetailDraft } from "../forms/utils/draftHelpers";
 import { buildDetailShape, buildDetailGeometry } from '../../engines/shapeBuilder';
+import { explodeDetails } from '../../engines/geometry';
+import { getSinkPartTransform } from '../../engines/sinkAssembly';
+import type { Detail } from '../../domain/types';
 import { ProductElement3DNode } from '../3d/ProductElement3DNode';
 import {
   jointAnchorPoints,
@@ -29,6 +32,7 @@ import {
   type JointSideSelection,
 } from '../../domain/joints';
 import { toDetailShape } from '../../domain/elementToDetail';
+import { withSinkCutouts } from '../../domain/productSink';
 import { pointInPolygonStrict } from '../../engines/geometryUtils';
 
 function ProfileMesh({ length, height, depth }: { length: number; height: number; depth: number; }) {
@@ -488,6 +492,9 @@ export function Detail3DNode({
   textureMode?: boolean;
   customTextureMap?: THREE.Texture | null;
 }) {
+  // Мийки, встановлені в деталь, домішують отвір під чашу до вирізів —
+  // плита в 3D одразу з вирізом, хоча в draft.cutouts його не зберігаємо.
+  detail = useMemo(() => withSinkCutouts(detail), [detail]);
   const stoneTexture = useStoneTexture(textureMode);
   const points = useMemo(() => {
     let pts = detail.geometry?.customPoints || [];
@@ -1215,26 +1222,71 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
   const elevationY = (detail.elevation ?? 900) * 0.001;
   const basePos = position ?? [0, 0, 0];
 
+  /**
+   * Стінова панель і фасад висять на стіні — у сцені вони СТОЯТЬ, а не
+   * лежать. Як доповнення стільниці панель уже піднімалась вертикально
+   * (див. ATTACHMENTS нижче), а окремою деталлю лежала площиною —
+   * той самий поворот, лише навколо власного центру.
+   */
+  const standsVertical = detail.type === 'Стінова панель' || detail.type === 'Фасад';
+  const verticalHeight = ((mainBounds.maxY - mainBounds.minY) || 1) * 0.001;
+  const isSink = detail.kind === 'sink_rect' || detail.kind === 'sink_slot';
+
+  const mainNode = isSink ? (
+    <SinkAssemblyPreview detail={detail} textureMode={textureMode} />
+  ) : (
+    <Detail3DNode
+      id="main"
+      detail={detail}
+      isActive={activeDetailId === "main"}
+      mode={mode}
+      editMode={editMode}
+      onCornerClick={onCornerClick}
+      onEdgeClick={onEdgeClick}
+      onPlaneClick={onPlaneClick}
+      onJointClick={onJointClick}
+      onJointSideClick={onJointSideClick}
+      onDetailDoubleClick={onDetailDoubleClick}
+      onDetailClick={onDetailClick}
+      onDetailContextMenu={onDetailContextMenu}
+      theme={theme}
+      textureMode={textureMode}
+      customTextureMap={customTextureMapFactory ? customTextureMapFactory('main') : undefined}
+    />
+  );
+
   return (
     <group position={[basePos[0], basePos[1] + elevationY, basePos[2]]}>
-      <Detail3DNode
-        id="main"
-        detail={detail}
-        isActive={activeDetailId === "main"}
-        mode={mode}
-        editMode={editMode}
-        onCornerClick={onCornerClick}
-        onEdgeClick={onEdgeClick}
-        onPlaneClick={onPlaneClick}
-        onJointClick={onJointClick}
-        onJointSideClick={onJointSideClick}
-        onDetailDoubleClick={onDetailDoubleClick}
-        onDetailClick={onDetailClick}
-        onDetailContextMenu={onDetailContextMenu}
-        theme={theme}
-        textureMode={textureMode}
-        customTextureMap={customTextureMapFactory ? customTextureMapFactory('main') : undefined}
-      />
+      {/* У режимі розмірів креслення лишається площинним — інакше
+          розмірні лінії читалися б збоку */}
+      {standsVertical && mode !== 'dimensions' ? (
+        <group position={[0, verticalHeight / 2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          {mainNode}
+        </group>
+      ) : mainNode}
+
+      {/* Мийки, ВСТАНОВЛЕНІ в деталь (нижній монтаж): чаша висить під
+          плитою на місці вирізу. Виріз у самій плиті домішує Detail3DNode
+          через withSinkCutouts — тут лише сама чаша. */}
+      {!standsVertical && !isSink && mode !== 'dimensions' &&
+        Object.values(detail.sinks ?? {}).map((sink) => {
+          const s = 0.001;
+          const w = (mainBounds.maxX - mainBounds.minX) || 1;
+          const h = (mainBounds.maxY - mainBounds.minY) || 1;
+          const thick = (detail.thickness || 20) * s;
+          const bowlDraft = {
+            kind: sink.kind === 'slot' ? 'sink_slot' : 'sink_rect',
+            width: sink.width,
+            height: sink.height,
+            innerVertical: sink.depth,
+            thickness: detail.thickness || 20,
+          } as unknown as DetailDraft;
+          return (
+            <group key={sink.id} position={[(sink.x - w / 2) * s, -thick / 2, (sink.y - h / 2) * s]}>
+              <SinkAssemblyPreview detail={bowlDraft} textureMode={textureMode} />
+            </group>
+          );
+        })}
 
       {/* ATTACHMENTS (Wall Panels, Legs) */}
       {mainLineSegments.map((item, i) => {
@@ -1383,6 +1435,101 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
                 );
               })()}
           </group>
+        );
+      })}
+    </group>
+  );
+}
+
+/**
+ * Мийка в редакторі виробу — РЕАЛЬНА збірка з деталей розкрою.
+ *
+ * Мийка не суцільна: рушій розкладає її на стінки, трикутники дна,
+ * підклейки й злив. Тут ті самі деталі (`explodeDetails`) ставляться
+ * тими самими трансформаціями, що й у 3D Підборі
+ * (`engines/sinkAssembly`) — щоб редактор показував не «щось схоже»,
+ * а те, що поїде в цех. Кожна деталь — власний меш зі своїм контуром,
+ * тому трикутні скоси дна й отвір зливу видно як є.
+ */
+function SinkAssemblyPreview({ detail, textureMode }: { detail: DetailDraft; textureMode?: boolean }) {
+  const stoneTexture = useStoneTexture(textureMode);
+  const s = 0.001;
+  const thickness = Math.max(1, detail.thickness ?? 20) * s;
+
+  const pieces = useMemo(() => {
+    // Драфт редактора → Деталь → деталі розкрою. Припуски нульові:
+    // у прев'ю показуємо чисту геометрію виробу, без запасу на різ.
+    const asDetail = {
+      id: 'preview-sink',
+      type: 'Мийка',
+      shape: 'Прямокутна',
+      quantity: 1,
+      thickness: detail.thickness ?? 20,
+      geometry: {
+        width: detail.width,
+        height: detail.height,
+        innerVertical: (detail as { innerVertical?: number }).innerVertical,
+        sinkKind: detail.kind === 'sink_slot' ? 'slot' : 'rect',
+      },
+    } as unknown as Detail;
+
+    const parts = explodeDetails([asDetail], {
+      detailLength: 0, detailWidth: 0, elementLength: 0, elementWidth: 0,
+      interPartSpacing: 0, detailSmallCutout: 0, detailLargeCutout: 0,
+      elementSmallCutout: 0, elementLargeCutout: 0, show: false, applyToImports: false,
+    } as never);
+
+    return parts
+      .map((part) => ({ part, transform: getSinkPartTransform(part, asDetail, thickness) }))
+      .filter((item) => item.transform && !item.transform.hidden && item.transform.pos);
+  }, [detail, thickness]);
+
+  return (
+    <group>
+      {pieces.map(({ part, transform }) => {
+        const width = part.width * s;
+        const height = part.height * s;
+        const shape = new THREE.Shape();
+        const points = part.points ?? [];
+        if (points.length >= 3) {
+          shape.moveTo(points[0].x * s - width / 2, -(points[0].y * s) + height / 2);
+          points.slice(1).forEach((point) => {
+            shape.lineTo(point.x * s - width / 2, -(point.y * s) + height / 2);
+          });
+          shape.closePath();
+        } else {
+          shape.moveTo(-width / 2, -height / 2);
+          shape.lineTo(width / 2, -height / 2);
+          shape.lineTo(width / 2, height / 2);
+          shape.lineTo(-width / 2, height / 2);
+          shape.closePath();
+        }
+        // Отвір зливу — своїм контуром, а не «десь по центру»
+        (part.holes ?? []).forEach((hole) => {
+          if (hole.length < 3) return;
+          const path = new THREE.Path();
+          path.moveTo(hole[0].x * s - width / 2, -(hole[0].y * s) + height / 2);
+          hole.slice(1).forEach((point) => path.lineTo(point.x * s - width / 2, -(point.y * s) + height / 2));
+          path.closePath();
+          shape.holes.push(path);
+        });
+
+        const geometry = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, curveSegments: 24 });
+        geometry.translate(0, 0, -thickness / 2);
+        geometry.rotateX(Math.PI / 2);
+        geometry.computeVertexNormals();
+
+        return (
+          <mesh
+            key={part.id}
+            geometry={geometry}
+            position={transform!.pos}
+            quaternion={transform!.quat}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial map={stoneTexture} color="#ffffff" roughness={0.35} metalness={0.05} side={THREE.DoubleSide} />
+          </mesh>
         );
       })}
     </group>
@@ -1684,4 +1831,4 @@ export function useDetailGeometry(detail: any, points: any[], bounds: any) {
   return useMemo(() => {
     return buildDetailGeometry(detail, points, bounds);
   }, [detail, points, bounds]);
-}
+}

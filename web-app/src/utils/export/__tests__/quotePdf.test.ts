@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { renderQuotePdfSvgPages } from '../quotePdf';
+import {
+  renderQuotePdfSvgPages,
+  renderQuoteCalcBodies,
+  renderQuoteVisualizationBody,
+  renderApprovalBodies,
+  assembleQuotePages,
+} from '../quotePdf';
 import { computeQuoteCalc } from '../../../engines/quoteCalc';
 import { createQuoteCalcDoc, type QuoteCalcDoc, type QuoteItem } from '../../../domain/quoteCalc';
 import type { Project } from '../../../domain/types';
@@ -60,6 +66,29 @@ describe('PDF прорахунку', () => {
     expect(page).toContain('1.834 м²');
   });
 
+  it('кожен виріб несе ціну виготовлення за своєю номенклатурою', () => {
+    const order = doc();
+    const [page] = renderQuotePdfSvgPages(project, order, computeQuoteCalc(order));
+    const normalized = page.replace(/[  ]/g, ' ');
+    expect(page).toContain('Вартість, грн');
+    // стільниця: 1.528 м² × 2500 (ручна ціна) = 3820.00
+    expect(normalized).toContain('3 820,00');
+  });
+
+  it('нога показує свою частку за ставкою стільниці з позначкою', () => {
+    const order = doc({
+      items: [
+        item({ dims: { w: 2000, h: 600 }, areaM2: 1.2, sourceRef: 'd1', sourceLabel: 'Стільниця' }),
+        item({ productTypeId: 'leg', areaM2: 0.45, dims: { w: 900 }, sourceRef: 'd2', sourceLabel: 'Опора (B)' }),
+      ],
+      priceOverrides: { 'fab:countertop_plain': 2000 },
+    });
+    const [page] = renderQuotePdfSvgPages(project, order, computeQuoteCalc(order));
+    // 0.45 × 2000 = 900.00 — частка ноги за ставкою стільниці
+    expect(page).toContain('900,00');
+    expect(page).toContain('у складі стільниці');
+  });
+
   it('розрахунок — з цінами і загальною сумою', () => {
     const order = doc();
     const result = computeQuoteCalc(order);
@@ -90,6 +119,119 @@ describe('PDF прорахунку', () => {
       expect(page).not.toContain('без стільниці');
       expect(page).not.toContain('Без ціни');
     });
+  });
+
+  it('сторінка візуалізацій: великий ракурс + два менші, з приміткою', () => {
+    const body = renderQuoteVisualizationBody(project, [
+      'data:image/jpeg;base64,AAA',
+      'data:image/jpeg;base64,BBB',
+      'data:image/jpeg;base64,CCC',
+    ]);
+    expect(body).toContain('ВІЗУАЛІЗАЦІЯ ВИРОБУ');
+    expect(body).toContain('Зображення попередні');
+    expect((body.match(/<image /g) ?? [])).toHaveLength(3);
+  });
+
+  it('один знімок займає всю сторінку', () => {
+    const body = renderQuoteVisualizationBody(project, ['data:image/jpeg;base64,AAA']);
+    expect((body.match(/<image /g) ?? [])).toHaveLength(1);
+    expect(body).toContain('height="1168"'); // 1180 − рамка
+  });
+
+  it('КП + візуалізація нумеруються наскрізно', () => {
+    const bodies = [
+      ...renderQuoteCalcBodies(project, doc(), computeQuoteCalc(doc())),
+      renderQuoteVisualizationBody(project, ['data:image/jpeg;base64,AAA']),
+    ];
+    const pages = assembleQuotePages(bodies);
+    expect(pages).toHaveLength(2);
+    expect(pages[0]).toContain('Сторінка 1 з 2');
+    expect(pages[1]).toContain('Сторінка 2 з 2');
+    expect(pages[1]).toContain('ВІЗУАЛІЗАЦІЯ ВИРОБУ');
+  });
+
+  it('бланк погодження: шапка, контур із літерами сторін, специфікація, підпис', () => {
+    // Стільниця 1000×600 з крайкою R2 по C і підворотом по C (продукт)
+    const projectFull = {
+      orderNumber: '81-1343265',
+      referenceData: { edgeProfiles: [{ id: 'r2_top', label: 'Крайка R2', shortLabel: 'R2', allowance: 2.5 }] },
+    } as unknown as Project;
+    const details = [
+      {
+        id: 'prod_1/element:main/detail:main', slot: 'main', type: 'Стільниця', shape: 'Прямокутна',
+        label: 'Стільниця кухня', thickness: 20, quantity: 1,
+        geometry: {
+          width: 1000, height: 600,
+          corners: { DA: { type: 'radius', radius: 300 } },
+          cutouts: {
+            c1: { id: 'c1', shape: 'rect', x: 200, y: 150, width: 300, height: 200, type: 'custom' },
+            c2: { id: 'c2', shape: 'circle', x: 700, y: 300, diameter: 35, type: 'faucet' },
+          },
+        },
+        edgeProfiles: { C: 'r2_top' },
+      },
+      {
+        id: 'prod_1/element:fold_C/detail:main', slot: 'fold_C', parentDetailSide: 'C', type: 'Підворот',
+        shape: 'Прямокутна', thickness: 20, quantity: 1, geometry: { width: 1000, height: 100 },
+      },
+    ] as unknown as Parameters<typeof renderApprovalBodies>[3];
+    const parts = [
+      {
+        id: 'p1', detailId: 'prod_1/element:main/detail:main', isMain: true, area: 0.6,
+        width: 1000, height: 600,
+        points: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 600 }, { x: 0, y: 600 }],
+        holes: [[{ x: 200, y: 150 }, { x: 500, y: 150 }, { x: 500, y: 350 }, { x: 200, y: 350 }]],
+        shape: 'Прямокутна',
+      },
+    ] as unknown as Parameters<typeof renderApprovalBodies>[2];
+    const order = doc({ contragent: 'ЛИТВИНЧУК АНДРІЙ', contactName: 'Андрій', contactPhone: '+380501112233' });
+
+    const bodies = renderApprovalBodies(projectFull, order, parts, details);
+    const all = bodies.join('');
+    expect(all).toContain('БЛАНК ПОГОДЖЕННЯ ВИРОБУ');
+    expect(all).toContain('ЛИТВИНЧУК АНДРІЙ');
+    expect(all).toContain('Виріб №1 — Стільниця кухня (0.600 м.кв)');
+    expect(all).toContain('B=1000 мм');       // літера сторони з довжиною
+    expect(all).toContain('C=600 мм');
+    expect(all).toContain('підворот');         // позначка всередині контуру
+    expect(all).toContain('Крайка — Крайка R2');
+    expect(all).toContain('Тип елементу виробу');
+    // Радіус кута і вирізи з розмірами — у специфікації
+    expect(all).toContain('Радіус R300');
+    expect(all).toContain('Виріз 300×200 мм');
+    expect(all).toContain('Виріз під змішувач Ø35 мм');
+    // Розмір вирізу підписаний і на кресленні (з отвору парта)
+    expect(all).toContain('300×200');
+    expect(all).toContain('Увага!');
+    expect(all).toContain('видами обробки згоден:');
+  });
+
+  it('бланк: мийка отримує паспорт із трьома проєкціями, а не контур стінки', () => {
+    const details = [
+      {
+        id: 'prod_1/element:sink_1/detail:main', slot: 'sink_1', type: 'Мийка',
+        shape: 'Прямокутна', label: 'Мийка (1)', thickness: 20, quantity: 1,
+        geometry: { width: 500, height: 400, innerVertical: 200, sinkKind: 'rect' },
+      },
+    ] as unknown as Parameters<typeof renderApprovalBodies>[3];
+    const parts = [
+      {
+        id: 'p1', detailId: 'prod_1/element:sink_1/detail:main', isMain: true, area: 0.105,
+        width: 524, height: 200,
+        points: [{ x: 0, y: 0 }, { x: 524, y: 0 }, { x: 524, y: 200 }, { x: 0, y: 200 }],
+        name: 'Мийка (1) 1. задня стінка мийки',
+      },
+    ] as unknown as Parameters<typeof renderApprovalBodies>[2];
+
+    const bodies = renderApprovalBodies(project, doc({}), parts, details);
+    const all = bodies.join('');
+    expect(all).toContain('Виріб №1 — Мийка (1) (0.105 м.кв)');
+    expect(all).toContain('Вид спереду (розріз)');
+    expect(all).toContain('Вид збоку (розріз)');
+    expect(all).toContain('Вид зверху');
+    expect(all).toContain('Кількість');
+    // контур стінки з розкрою НЕ малюється (немає літер сторін цієї стінки)
+    expect(all).not.toContain('A=524 мм');
   });
 
   it('довгий розрахунок розливається на сторінки з нумерацією', () => {

@@ -35,6 +35,7 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
       },
     ],
     "parentAnchor": undefined,
+    "parentDetailId": undefined,
     "parentLabel": "Стільниця 1",
     "points": [
       {
@@ -77,7 +78,7 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
     "elementSide": undefined,
     "height": 620,
     "holes": undefined,
-    "id": "part:det-2:main:body:Стільниця 2.1:0:0",
+    "id": "part:det-2:main:body:Стільниця 2:0:0",
     "isMain": true,
     "name": "Стільниця 2.1",
     "nominalHoles": undefined,
@@ -100,6 +101,7 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
       },
     ],
     "parentAnchor": undefined,
+    "parentDetailId": undefined,
     "parentLabel": "Стільниця 2.1",
     "points": [
       {
@@ -153,7 +155,7 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
     "elementSide": undefined,
     "height": 620,
     "holes": undefined,
-    "id": "part:det-2:main:body:Стільниця 2.2:0:0",
+    "id": "part:det-2:main:body:Стільниця 2:0:620",
     "isMain": true,
     "name": "Стільниця 2.2",
     "nominalHoles": undefined,
@@ -176,6 +178,7 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
       },
     ],
     "parentAnchor": undefined,
+    "parentDetailId": undefined,
     "parentLabel": "Стільниця 2.2",
     "points": [
       {

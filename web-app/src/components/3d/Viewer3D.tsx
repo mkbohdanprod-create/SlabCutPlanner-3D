@@ -7,6 +7,7 @@ import { Evaluator, Brush, SUBTRACTION } from 'three-bvh-csg';
 import {  Vector3 } from 'three';
 import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
 import { buildAssemblyGroups } from '../../engines/grouping3d';
+import { getSinkPartTransform } from '../../engines/sinkAssembly';
 import { useProjectStore } from '../../store/useProjectStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
 import { useUIStore } from '../../store/useStore';
@@ -753,83 +754,6 @@ function TexturedPart({
   );
 }
 
-function getSinkPartTransform(part: DetailPart, detail: Detail | undefined, thickness: number) {
-  if (!detail) return null;
-  const s = 0.001;
-  const g = detail.geometry || {};
-  const isSlot = g.sinkKind === 'slot';
-  
-  const L = (g.width ?? (isSlot ? 550 : 500)) * s;
-  const W = (g.height ?? 400) * s;
-  const D = (g.innerVertical ?? (isSlot ? 100 : 200)) * s;
-  const T = thickness;
-  
-  const name = part.name.toLowerCase();
-  
-  if (part.textureIrrelevant) return { hidden: true };
-  
-  let pos: [number, number, number] | undefined;
-  let quat: THREE.Quaternion | undefined;
-  const euler = new THREE.Euler(0, 0, 0, 'XYZ');
-
-  if (isSlot) {
-      const slope = 0.006; // 6mm slope
-      
-      if (name.includes('нахилене дно')) {
-          const angle = Math.atan2(slope, W - 0.072);
-          euler.set(-angle, 0, 0);
-          pos = [0, -D + T/2 - slope/2, 0.036];
-      } else if (name.includes('трап')) {
-          pos = [0, -D + T/2 - slope, -W/2 + 0.039];
-      } else if (name.includes('стінка біля трапа')) {
-          euler.set(-Math.PI/2, 0, 0);
-          pos = [0, -D + T/2 - slope/2, -W/2 + 0.072];
-      } else if (name.includes('ліва боковина')) {
-          euler.set(0, 0, Math.PI/2);
-          pos = [-L/2 - T/2, -D/2, 0];
-      } else if (name.includes('права боковина')) {
-          euler.set(0, 0, -Math.PI/2);
-          pos = [L/2 + T/2, -D/2, 0];
-      } else if (name.includes(' 3. боковина') || (name.includes('боковина') && !name.includes(' 7.') && !name.includes('ліва') && !name.includes('права'))) {
-          // back wall
-          euler.set(-Math.PI/2, 0, 0);
-          pos = [0, -D/2, -W/2 - T/2];
-      } else if (name.includes(' 7. боковина') || name.includes('передня')) {
-          // front wall
-          euler.set(Math.PI/2, 0, 0);
-          pos = [0, -D/2, W/2 + T/2];
-      }
-  } else {
-      if (name.includes('задня стінка')) {
-          euler.set(-Math.PI/2, 0, 0);
-          pos = [0, -D/2, -W/2 - T/2];
-      } else if (name.includes('передня стінка')) {
-          euler.set(Math.PI/2, 0, 0);
-          pos = [0, -D/2, W/2 + T/2];
-      } else if (name.includes('ліва бокова')) {
-          euler.set(0, 0, Math.PI/2);
-          pos = [-L/2 - T/2, -D/2, 0];
-      } else if (name.includes('права бокова')) {
-          euler.set(0, 0, -Math.PI/2);
-          pos = [L/2 + T/2, -D/2, 0];
-      } else if (name.includes('трикутник')) {
-          if (name.includes('задній')) { euler.set(0, Math.PI, 0); pos = [0, -D + T/2, -W/4]; }
-          else if (name.includes('передній')) { euler.set(0, Math.PI, 0); pos = [0, -D + T/2, W/4]; }
-          else if (name.includes('лівий')) { euler.set(0, 0, 0); pos = [-L/4, -D + T/2, 0]; }
-          else if (name.includes('правий')) { euler.set(0, 0, 0); pos = [L/4, -D + T/2, 0]; }
-      } else if (name.includes('кругла')) {
-          pos = [0, -D + T/2 + 0.001, 0];
-      }
-  }
-
-  if (pos) {
-      quat = new THREE.Quaternion().setFromEuler(euler);
-      return { pos, quat };
-  }
-  
-  return null;
-}
-
 function EdgePartWrapper({ placement, part, slab, parts, mainPart, isSelected, isHovered, onSelect, textureLayouts, originOffset, baseX, baseY, parentBaseX, parentBaseY, foldSides, mainPartWidth, mainPartHeight, mainPosOffset }: any) {
   const s = 0.001;
   const thickness = slab?.thickness ? slab.thickness * s : 0.02;
@@ -1091,6 +1015,33 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, childPlacement
          const fPlacementY = fLayout?.y ?? fp.y;
          const fBaseX = (fPart.importOffsetX ?? 0) + fPlacementX;
          const fBaseY = (fPart.importOffsetY ?? 0) + fPlacementY;
+
+         // Мийка — не стільниця з підворотами: її стінки й трикутники дна
+         // ставляться власними трансформаціями чаші, а не логікою кромки.
+         // Через EdgePartWrapper вони лягали площиною і давали «хрест».
+         if (isSink) {
+           const sinkTransform = getSinkPartTransform(fPart, detail, thickness);
+           if (!sinkTransform) return null;
+           return (
+             <Suspense key={fp.id} fallback={null}>
+               <TexturedPart
+                 placement={fp}
+                 part={fPart}
+                 slab={fSlab}
+                 parts={parts}
+                 detail={detail ?? undefined}
+                 isSelected={isSelected}
+                 isHovered={hovered && !isSelected}
+                 onSelect={select}
+                 originOffset={originOffset}
+                 localTransform={sinkTransform}
+                 baseX={fBaseX}
+                 baseY={fBaseY}
+               />
+             </Suspense>
+           );
+         }
+
          return (
            <Suspense key={fp.id} fallback={null}>
              <EdgePartWrapper 
@@ -1269,23 +1220,49 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, childPlacement
   );
 }
 
-function CaptureController({ onCaptureReady, contentRef }: { onCaptureReady?: (snaps: string[]) => void, contentRef: React.RefObject<THREE.Group | null> }) {
+function CaptureController({ onCaptureReady, contentRef, preset = 'default' }: {
+  onCaptureReady?: (snaps: string[]) => void,
+  contentRef: React.RefObject<THREE.Group | null>,
+  /**
+   * 'default' — один ізометричний знімок для PDF розкрою (як було).
+   * 'showcase' — три ракурси на БІЛОМУ фоні без осей і сірої підлоги:
+   * клієнтська візуалізація для PDF прорахунку.
+   */
+  preset?: 'default' | 'showcase',
+}) {
   const { gl, camera, scene } = useThree();
   useEffect(() => {
     if (!onCaptureReady || !contentRef.current) return;
-    
+
     let mounted = true;
     const timeout = setTimeout(() => {
       if (!mounted) return;
+      const restore: Array<() => void> = [];
       try {
         const captures: string[] = [];
         const originalPos = camera.position.clone();
         const originalQuat = camera.quaternion.clone();
         const cam = camera as THREE.PerspectiveCamera;
 
+        if (preset === 'showcase') {
+          // Чистий білий фон: підлогу й осі ховаємо ЗОВСІМ — інакше сіра
+          // площина 500×500 заповнює кадр із будь-якого ракурсу.
+          const originalBackground = scene.background;
+          scene.background = new THREE.Color('#ffffff');
+          restore.push(() => { scene.background = originalBackground; });
+          scene.traverse((object) => {
+            if ((object.type === 'AxesHelper' || object.name === 'floor-plane') && object.visible) {
+              object.visible = false;
+              restore.push(() => { object.visible = true; });
+            }
+          });
+        }
+
         let distance = 8;
+        const center = new THREE.Vector3(0, 0, 0);
         if (contentRef.current) {
           const box = new THREE.Box3().setFromObject(contentRef.current);
+          box.getCenter(center);
           const size = box.getSize(new THREE.Vector3());
           const maxDim = Math.max(size.x, size.y, size.z, 0.5);
           distance = (maxDim / 2) / Math.tan(25 * Math.PI / 180) * 1.1; // Zoomed in!
@@ -1298,9 +1275,26 @@ function CaptureController({ onCaptureReady, contentRef }: { onCaptureReady?: (s
           captures.push(gl.domElement.toDataURL('image/jpeg', 1.0));
         };
 
-        const distIso = distance * 0.65;
-        takeSnapshot([distIso, distIso, distIso]); // 1 single visual!
+        // Кадр будується від ЦЕНТРУ габаритів виробу, а не від нуля сцени:
+        // зібраний виріб стоїть зі зсувом, і lookAt(0,0,0) різав його кадром.
+        const takeCenteredSnapshot = (direction: [number, number, number]) => {
+          const offset = new THREE.Vector3(...direction).normalize().multiplyScalar(distance * 1.15);
+          cam.position.copy(center).add(offset);
+          cam.lookAt(center);
+          gl.render(scene, cam);
+          captures.push(gl.domElement.toDataURL('image/jpeg', 1.0));
+        };
 
+        const distIso = distance * 0.65;
+        if (preset === 'showcase') {
+          takeCenteredSnapshot([1, 0.62, 1]);      // ізометрія справа
+          takeCenteredSnapshot([-1, 0.55, 1]);     // ізометрія зліва
+          takeCenteredSnapshot([0.08, 0.4, 1.3]);  // фронт з легким підйомом
+        } else {
+          takeSnapshot([distIso, distIso, distIso]); // 1 single visual!
+        }
+
+        restore.reverse().forEach((fn) => fn());
         cam.position.copy(originalPos);
         cam.quaternion.copy(originalQuat);
         gl.render(scene, cam);
@@ -1308,14 +1302,15 @@ function CaptureController({ onCaptureReady, contentRef }: { onCaptureReady?: (s
         onCaptureReady(captures);
       } catch (e) {
         console.error('Capture failed:', e);
+        restore.reverse().forEach((fn) => { try { fn(); } catch { /* вже відновлено */ } });
         onCaptureReady([]);
       }
     }, 1000);
     return () => { mounted = false; clearTimeout(timeout); };
-  }, [gl, camera, scene, contentRef, onCaptureReady]); 
+  }, [gl, camera, scene, contentRef, onCaptureReady, preset]);
   return null;
 }
-export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900 rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode, hideToolbar = false }: { className?: string, onCaptureReady?: (snaps: string[]) => void, isCaptureMode?: boolean, hideToolbar?: boolean } = {}) {
+export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900 rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode, hideToolbar = false, capturePreset = 'default' }: { className?: string, onCaptureReady?: (snaps: string[]) => void, isCaptureMode?: boolean, hideToolbar?: boolean, capturePreset?: 'default' | 'showcase' } = {}) {
   const project = useProjectStore((state) => state.project);
   const parts = useProjectStore((state) => state.parts);
   const is3dGroupingEnabled = useUIStore(s => s.is3dGroupingEnabled);
@@ -1324,11 +1319,10 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
   const contentRef = React.useRef<THREE.Group | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
-  // Кнопку «Анімація (Прототип)» прибрано з інтерфейсу — це недоведений прототип.
-  // Сам компонент лишається в коді: щоб увімкнути, поверніть кнопку або true.
-  const [showAnimationPrototype] = useState(false);
+  const [showAnimationPrototype, setShowAnimationPrototype] = useState(false);
   
   const showEdges = useUIStore(s => s.showEdges);
+  const isAdminUnlocked = useUIStore(s => s.isAdminUnlocked);
   const setShowEdges = useUIStore(s => s.setShowEdges);
   const is3dAssemblyMode = useUIStore(s => s.is3dAssemblyMode);
   const isBacklightMode = useUIStore(s => s.isBacklightMode);
@@ -1359,16 +1353,24 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
                 💡 Підсвітка
               </button>
             )}
+            {/* Анімація і скидання збірки — інструменти супер-адміна
+                (щит у шапці, PIN): прототип не для менеджерів, а скидання
+                руйнівне для розставленої збірки */}
+            {isAdminUnlocked && (
+              <button className={showAnimationPrototype ? 'active !bg-purple-600 !text-white' : ''} onClick={() => setShowAnimationPrototype(!showAnimationPrototype)}>🎬 Анімація (Прототип)</button>
+            )}
             <button onClick={() => setShowHelp(true)}>Інструкція</button>
-            <button onClick={() => {
-              useUIStore.getState().showConfirm({
-                title: 'Скинути збірку',
-                message: 'Ви впевнені, що хочете скинути всі 3D координати і повернути деталі на площину?',
-                confirmText: 'Скинути',
-                isDestructive: true,
-                onConfirm: () => reset3dAssembly()
-              });
-            }}>Скинути збірку</button>
+            {isAdminUnlocked && (
+              <button onClick={() => {
+                useUIStore.getState().showConfirm({
+                  title: 'Скинути збірку',
+                  message: 'Ви впевнені, що хочете скинути всі 3D координати і повернути деталі на площину?',
+                  confirmText: 'Скинути',
+                  isDestructive: true,
+                  onConfirm: () => reset3dAssembly()
+                });
+              }}>Скинути збірку</button>
+            )}
           </div>
         </div>
       )}
@@ -1411,7 +1413,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
           </Center>
 
 
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow raycast={() => null}>
+          <mesh name="floor-plane" rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow raycast={() => null}>
             <planeGeometry args={[500, 500]} />
             <meshStandardMaterial color="#c8c8c8" />
           </mesh>
@@ -1424,7 +1426,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
             mouseButtons={{ LEFT: THREE.MOUSE.NONE, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN }}
             touches={{ ONE: THREE.TOUCH.NONE, TWO: THREE.TOUCH.DOLLY_ROTATE }}
           />
-          {isCaptureMode && <CaptureController onCaptureReady={onCaptureReady} contentRef={contentRef} />}
+          {isCaptureMode && <CaptureController onCaptureReady={onCaptureReady} contentRef={contentRef} preset={capturePreset} />}
         </Canvas>
       </div>
 
@@ -1454,4 +1456,4 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
       )}
     </div>
   );
-}
+}

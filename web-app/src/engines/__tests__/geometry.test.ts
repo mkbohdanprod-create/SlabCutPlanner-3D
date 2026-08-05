@@ -112,9 +112,51 @@ describe('geometry.ts (Safety Net)', () => {
         points: Array.from({length: 12}).map((_, i) => ({x: i*10, y: i%2*10})), // 12 points!
         fold: { sides: ['A'], size: 50, enabled: true }
       }], mockAllowances);
-      
+
       const hasCurvedParts = parts.some(p => p.edgeKind === 'fold' && p.points.length > 4);
       expect(hasCurvedParts).toBe(false);
+    });
+  });
+
+  describe('вирізи на цілих Г/П-подібних', () => {
+    // Виріз існував у 3D, але зникав із розкрою і бланку: гілка wholeDetail
+    // будувала парт без отворів (розрізані стиками сегменти їх отримували).
+    const cutouts = {
+      c1: { id: 'c1', shape: 'rect', x: 200, y: 200, width: 300, height: 200 },
+    } as never;
+
+    it('ціла Г-подібна прорізає виріз отвором у парті', () => {
+      const parts = explodeDetails([{
+        id: 'det-l-whole',
+        type: 'Стільниця',
+        shape: 'Г-подібна',
+        quantity: 1,
+        geometry: {
+          outerWidth: 1500, outerHeight: 1500,
+          innerHorizontal: 600, innerVertical: 600,
+          wholeDetail: true, cutouts,
+        },
+        thickness: 20,
+      } as never], mockAllowances);
+      const main = parts.find(p => p.isMain)!;
+      expect(main.holes?.length ?? 0).toBeGreaterThan(0);
+    });
+
+    it('ціла П-подібна прорізає виріз отвором у парті', () => {
+      const parts = explodeDetails([{
+        id: 'det-u-whole',
+        type: 'Стільниця',
+        shape: 'П-подібна',
+        quantity: 1,
+        geometry: {
+          width: 1800, height: 700,
+          innerCutWidth: 600, innerCutDepth: 300, innerCutOffset: 200,
+          wholeDetail: true, cutouts,
+        },
+        thickness: 20,
+      } as never], mockAllowances);
+      const main = parts.find(p => p.isMain)!;
+      expect(main.holes?.length ?? 0).toBeGreaterThan(0);
     });
   });
 });

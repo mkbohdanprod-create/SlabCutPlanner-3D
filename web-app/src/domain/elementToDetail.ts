@@ -1,5 +1,6 @@
 import type { ShapeKind, DetailShape, DetailGeometry, ElementDefinition, Detail, ProductElement, CutAllowances } from './types';
 import { buildDetailPath } from './ids';
+import { sinkCutoutRecord } from './productSink';
 
 export function toDetailShape(kind: ShapeKind): DetailShape {
   switch (kind) {
@@ -32,13 +33,28 @@ export function buildGeometry(draft: ElementDefinition): DetailGeometry {
     // гілка «деталь цілком», і стик просто зник би з розкрою.
     wholeDetail: 'wholeDetail' in draft ? (draft as any).wholeDetail && !draft.jointDirection && !draft.jointOmegaDirection && !draft.jointLambdaDirection && !draft.manualJoints?.length : undefined,
     corners: draft.corners,
-    cutouts: draft.cutouts,
+    // Мийки, встановлені в деталь, домішують свої отвори до вирізів —
+    // так виріз під чашу потрапляє в розкрій, креслення і бланк погодження
+    // без ручного дублювання (джерело істини — draft.sinks).
+    cutouts: draft.sinks && Object.keys(draft.sinks).length > 0
+      ? { ...(draft.cutouts ?? {}), ...sinkCutoutRecord(draft) }
+      : draft.cutouts,
     jointDirection: draft.jointDirection,
     jointOmegaDirection: draft.jointOmegaDirection,
     jointLambdaDirection: draft.jointLambdaDirection,
     jointOmegaRadiusSide: draft.jointOmegaRadiusSide,
     jointLambdaRadiusSide: draft.jointLambdaRadiusSide,
     manualJoints: draft.manualJoints,
+    /**
+     * Тип мийки. Рушій розкрою розкладає мийку на 13 деталей (стінки,
+     * трикутники дна, підклейки), а 3D збирає її в чашу — і те, і те
+     * вмикається САМЕ цим полем. Без нього мийка з редактора виробу
+     * ставала звичайною плитою: у старому редакторі вона працювала,
+     * бо там geometry збиралась іншим шляхом.
+     */
+    sinkKind: draft.kind === 'sink_rect' ? 'rect'
+      : draft.kind === 'sink_slot' ? 'slot'
+      : undefined,
   };
 }
 
@@ -91,8 +107,15 @@ export function elementToDetail(
     // Якщо скопіювати — legacy-генератор у explodeDetails створить дублікати партів.
     // Для DXF/бланку/ручних деталей legacy-шлях працює як раніше (вони не проходять через цю функцію).
     edgeProfiles: def.edgeProfiles,
-    name: isMain ? (productName || 'Виріб') : (def.type + ' (' + (side || slot || '') + ')'),
-    label: isMain ? (productName || 'Виріб') : (def.type + ' (' + (side || slot || '') + ')'),
+    // Мийка в стільниці — не «бокове» доповнення: сторони в неї немає,
+    // тож ім'я беремо з label (unikальний per мийку — важливо для групування
+    // деталей чаші в 3D за parentLabel).
+    name: isMain ? (productName || 'Виріб')
+      : slot?.startsWith('sink_') ? (def.label || 'Мийка (в стільниці)')
+      : (def.type + ' (' + (side || slot || '') + ')'),
+    label: isMain ? (productName || 'Виріб')
+      : slot?.startsWith('sink_') ? (def.label || 'Мийка (в стільниці)')
+      : (def.type + ' (' + (side || slot || '') + ')'),
     isProduct: isMain,
     skirtings: {},
     wallPanels: {},

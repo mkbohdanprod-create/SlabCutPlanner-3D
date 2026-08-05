@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  autoQuoteServices,
+  mergeQuoteServices,
   computeQuoteCalc,
   itemAreaM2,
   quoteItemsFromProject,
@@ -86,6 +88,29 @@ describe('виготовлення', () => {
     }));
     expect(line(result, 'fab:countertop_thick')!.qty).toBe(1.74); // 1.2 + 0.54
     expect(line(result, 'fab:leg')).toBeUndefined();
+  });
+
+  it('влита нога ВИДИМА: назва рядка стільниці показує її площу', () => {
+    const result = computeQuoteCalc(doc({
+      items: [
+        item({ productTypeId: 'countertop_thick', dims: { w: 2000, h: 600 } }),
+        item({ productTypeId: 'leg', dims: { w: 900, h: 600 } }),
+      ],
+    }));
+    expect(line(result, 'fab:countertop_thick')!.label).toContain('(з ногою 0.54 м²)');
+  });
+
+  it('нога без послуги стикування — нагадування; з послугою — тиша', () => {
+    const withLeg = doc({
+      items: [
+        item({ productTypeId: 'countertop_thick', dims: { w: 2000, h: 600 } }),
+        item({ productTypeId: 'leg', dims: { w: 900, h: 600 } }),
+      ],
+    });
+    expect(computeQuoteCalc(withLeg).warnings.some((warning) => warning.includes('Стикування'))).toBe(true);
+
+    const withService = computeQuoteCalc(doc({ ...withLeg, services: { joint_leg: 0.9 } }));
+    expect(withService.warnings.some((warning) => warning.includes('Стикування “Ноги”'))).toBe(false);
   });
 
   it('нога без стільниці — площа за номенклатурою стільниці з попередженням', () => {
@@ -420,6 +445,85 @@ describe('злиття прайсу (mergeQuotePriceBook)', () => {
     expect(merged.deliveryZones[1]).toBe(150);
     expect(merged.deliveryZones[5]).toBe(0); // доїхала нова зона
     expect(merged.montage.stairs).toBe(0);   // доїхала нова категорія
+  });
+});
+
+describe('авто-заповнення додаткових послуг', () => {
+  const project = (overrides: Record<string, unknown> = {}) =>
+    ({ id: 'proj', details: [], products: [], slabs: [], placements: [], ...overrides }) as never as Parameters<typeof autoQuoteServices>[0];
+
+  const projectWithLeg = (jointOverrides: Record<string, unknown> = {}) => project({
+    products: [{
+      id: 'prod_1',
+      elements: [{
+        id: 'prod_1/element:main',
+        joints: [{
+          id: 'joint_leg_B',
+          a: { elementPath: 'prod_1/element:main', sideId: 'B', from: 0, to: 900 },
+          b: { elementPath: 'prod_1/element:leg_B', sideId: 'A', from: 0, to: 900 },
+          type: 'miter45',
+          ...jointOverrides,
+        }],
+        additions: [],
+      }],
+    }],
+  });
+
+  it('стикування ноги — з довжини стику у виробі, м.п.', () => {
+    const auto = autoQuoteServices(projectWithLeg(), []);
+    expect(auto.joint_leg).toBe(0.9);
+  });
+
+  it('стики в площині: розрізана Г — 1, П — 2, ціла — нічого', () => {
+    const details = [
+      { shape: 'Г-подібна', geometry: {} },
+      { shape: 'П-подібна', geometry: {} },
+      { shape: 'Г-подібна', geometry: { wholeDetail: true } },
+    ] as never;
+    const auto = autoQuoteServices(project(), details);
+    expect(auto.joint_flat).toBe(3); // 1 + 2, ціла не рахується
+  });
+
+  it('підбір текстури — з прапорця проєкту', () => {
+    expect(autoQuoteServices(project({ textureSelectionEnabled: true }), []).texture_match).toBe(1);
+    expect(autoQuoteServices(project(), []).texture_match).toBeUndefined();
+  });
+
+  it('збережений нуль не блокує авто — це слід від порожнього поля', () => {
+    const auto = autoQuoteServices(projectWithLeg(), []);
+    const merged = mergeQuoteServices(auto, { joint_leg: 0, hob_cutout: 0 });
+    expect(merged.joint_leg).toBe(0.9); // авто перемогло залишковий нуль
+    expect(merged.hob_cutout).toBe(0);  // без авто нуль лишається нулем
+  });
+
+  it('ручне значення > 0 перемагає авто', () => {
+    const auto = autoQuoteServices(projectWithLeg(), []);
+    expect(mergeQuoteServices(auto, { joint_leg: 1.4 }).joint_leg).toBe(1.4);
+  });
+
+  it('авто підставляється в розрахунок, а ручне значення його перемагає', () => {
+    const auto = autoQuoteServices(projectWithLeg(), []);
+    // так робить панель: авто під сподом, ручні зверху
+    const withAuto = computeQuoteCalc(doc({
+      items: [item({ dims: { w: 1000, h: 600 } })],
+      services: { ...auto },
+    }));
+    expect(line(withAuto, 'svc:joint_leg')!.qty).toBe(0.9);
+    // нога є, послуга авто-заповнена — нагадування не потрібне
+    const withLegItem = computeQuoteCalc(doc({
+      items: [
+        item({ productTypeId: 'countertop_thick', dims: { w: 2000, h: 600 } }),
+        item({ productTypeId: 'leg', dims: { w: 900, h: 600 } }),
+      ],
+      services: { ...auto },
+    }));
+    expect(withLegItem.warnings.some((warning) => warning.includes('Стикування'))).toBe(false);
+
+    const manual = computeQuoteCalc(doc({
+      items: [item({ dims: { w: 1000, h: 600 } })],
+      services: { ...auto, joint_leg: 1.4 },
+    }));
+    expect(line(manual, 'svc:joint_leg')!.qty).toBe(1.4);
   });
 });
 

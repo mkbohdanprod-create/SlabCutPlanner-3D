@@ -52,6 +52,13 @@ interface UIState {
   highlightedFactRefs: FactRef[] | null;
   highlightedServiceId: string | null;
   setHighlightedService: (serviceId: string | null, refs: FactRef[] | null) => void;
+  /**
+   * Режим супер-адміна: розблоковує приховані адмінські меню (шестерні
+   * налаштувань прайсів). Свідомо НЕ зберігається: перезавантаження
+   * сторінки знову замикає меню — розблокування живе, поки відкрите вікно.
+   */
+  isAdminUnlocked: boolean;
+  setAdminUnlocked: (unlocked: boolean) => void;
   isSettingsOpen: boolean;
   setIsSettingsOpen: (open: boolean) => void;
   isEdgeProfileSettingsOpen: boolean;
@@ -148,6 +155,8 @@ export const useUIStore = create<UIState>((set) => ({
     set({ highlightedServiceId, highlightedFactRefs });
     publishHighlight({ serviceId: highlightedServiceId, refs: highlightedFactRefs });
   },
+  isAdminUnlocked: false,
+  setAdminUnlocked: (isAdminUnlocked) => set({ isAdminUnlocked }),
   isSettingsOpen: false,
   setIsSettingsOpen: (isSettingsOpen) => set({ isSettingsOpen }),
   isEdgeProfileSettingsOpen: false,

@@ -30,7 +30,10 @@ import { mergeQuotePriceBook, type QuotePriceBook } from '../domain/quoteCalc';
  *   · `customRules` — правила, дописані керівником. Живуть самі по собі.
  */
 
-const SETTINGS_VERSION = 3;
+const SETTINGS_VERSION = 4;
+
+/** PIN супер-адміна за замовчуванням — змінюється після першого входу */
+export const DEFAULT_ADMIN_PIN = '1111';
 
 interface SettingsState {
   serviceCatalog: Record<string, ServiceDefinition>;
@@ -38,6 +41,12 @@ interface SettingsState {
   customRules: MappingRule[];
   /** Прайс і коди 1С вкладки «Прорахунок» — редагують старші менеджери */
   quotePriceBook: QuotePriceBook;
+  /**
+   * PIN супер-адміна: за ним ховаються адмінські меню (налаштування
+   * прайсів і прив'язок). Це НЕ безпека, а запобіжник від випадкових
+   * рук: PIN лежить у localStorage відкрито, як і самі налаштування.
+   */
+  adminPin: string;
 
   // ── каталог послуг ─────────────────────────────────────────────────
   updateService: (id: string, updates: Partial<ServiceDefinition>) => void;
@@ -65,6 +74,7 @@ interface SettingsState {
   /** Код 1С за ключем (fab:…, measure:…, svc:… — див. QuotePriceBook.codes1c) */
   setQuoteCode1c: (key: string, code: string) => void;
   resetQuotePriceBook: () => void;
+  setAdminPin: (pin: string) => void;
 
   // ── читання ────────────────────────────────────────────────────────
   getRules: () => MappingRule[];
@@ -92,6 +102,7 @@ export const useSettingsStore = create<SettingsState>()(
       mappingOverrides: {},
       customRules: [],
       quotePriceBook: mergeQuotePriceBook(),
+      adminPin: DEFAULT_ADMIN_PIN,
 
       updateService: (id, updates) => set((state) => {
         if (!state.serviceCatalog[id]) return state;
@@ -223,6 +234,8 @@ export const useSettingsStore = create<SettingsState>()(
 
       resetQuotePriceBook: () => set({ quotePriceBook: mergeQuotePriceBook() }),
 
+      setAdminPin: (pin) => set({ adminPin: pin.trim() || DEFAULT_ADMIN_PIN }),
+
       getRules: () => {
         const state = get();
         const config: MappingConfig = { overrides: state.mappingOverrides, customRules: state.customRules };
@@ -271,6 +284,7 @@ export const useSettingsStore = create<SettingsState>()(
           mappingOverrides: state.mappingOverrides ?? {},
           customRules: Array.isArray(state.customRules) ? state.customRules : [],
           quotePriceBook: mergeQuotePriceBook(state.quotePriceBook),
+          adminPin: typeof state.adminPin === 'string' && state.adminPin ? state.adminPin : DEFAULT_ADMIN_PIN,
         } as SettingsState;
       },
     },

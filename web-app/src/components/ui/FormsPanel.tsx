@@ -80,8 +80,16 @@ export function sideOptionsFor(kind: ShapeKind) {
   return ['A', 'B', 'C', 'D'];
 }
 
+/**
+ * Чи має деталь таблицю «Сторони» (розміри + кромка).
+ *
+ * Раніше тут були лише Стільниця й Опора, і через це стінова панель,
+ * фасад і довільний елемент лишалися БЕЗ полів розмірів — змінити
+ * габарити було нічим. Плоскі деталі з каменю всі мають сторони;
+ * виняток — мийка, у неї власний конструктор із моделями.
+ */
 export function supportsEdges(type: DetailType) {
-  return type === TYPE_COUNTERTOP || type === TYPE_SUPPORT;
+  return type !== TYPE_SINK;
 }
 
 import { RectangleDesigner } from '../forms/shapes/RectangleDesigner';
@@ -110,6 +118,8 @@ import { splitApprovalItemByJoint } from '../../engines/approvalSplit';
 import { ApprovalItemEditors } from '../forms/import/ApprovalItemEditors';
 export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   const { addSlab, addDetail, addDetails, updateDetailRecord, updateAllowances, updateProjectHeader, project, editingDetailId, clearEditDetail } = useProjectStore();
+  // Частина інструментів прихована за супер-адміном (щит у шапці, PIN)
+  const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
   const language = project.uiLanguage ?? 'uk';
   const ui = (value: string) => translateStaticUiText(language, value);
   const [error, setError] = useState('');
@@ -1480,11 +1490,15 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
         {(!activeTab || activeTab === 'details') && (
           <div className="detail-launcher form-zone" style={{ margin: 0 }}>
             <h3>Деталі</h3>
-            <button type="button" className="primary-action detail-open-button" onClick={() => { clearEditDetail(); setDetail(createDraft()); setDetailOpen(true); }}>Додати деталь</button>
-            <button 
-              type="button" 
-              className="primary-action detail-open-button" 
-              style={{ marginTop: '8px', background: '#28a745', borderColor: '#28a745' }} 
+            {/* «Додати деталь» (сира деталь повз редактор виробу) — інструмент
+                супер-адміна; звичайний менеджер працює через «Додати виріб» */}
+            {isAdminUnlocked && (
+              <button type="button" className="primary-action detail-open-button" onClick={() => { clearEditDetail(); setDetail(createDraft()); setDetailOpen(true); }}>Додати деталь</button>
+            )}
+            <button
+              type="button"
+              className="primary-action detail-open-button"
+              style={{ marginTop: '8px', background: '#28a745', borderColor: '#28a745' }}
               onClick={() => { useUIStore.getState().setProductEditorSession({ subDetails: {}, activeDetailId: null } as any); }}
             >
               Додати виріб
@@ -1493,7 +1507,9 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
             <button type="button" disabled={isImporting} onClick={() => approvalInputRef.current?.click()}>
               {isImporting ? 'Обробка бланку (OCR)...' : 'Імпортувати бланк погодження'}
             </button>
-            <button type="button" onClick={() => sketchupInputRef.current?.click()}>Імпортувати зі SketchUp</button>
+            {isAdminUnlocked && (
+              <button type="button" onClick={() => sketchupInputRef.current?.click()}>Імпортувати зі SketchUp</button>
+            )}
             <button type="button" onClick={() => setAllowancesOpen(true)}>Припуски</button>
             <input ref={dxfInputRef} type="file" accept=".dxf,.dwg" hidden onChange={onDxfFile} />
             <input ref={sketchupInputRef} type="file" accept=".json" hidden onChange={onSketchupFile} />
@@ -2237,4 +2253,4 @@ export function DesignerCanvas({ detail, updateDetail, language, onCornerClick, 
 
 function sideClass(side: string, className: string, activeSides: Set<string>) {
   return `${className}${activeSides.has(side) ? ' active' : ''}`;
-}
+}
