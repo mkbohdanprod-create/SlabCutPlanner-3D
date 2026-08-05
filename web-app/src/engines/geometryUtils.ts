@@ -137,8 +137,97 @@ export function sideSegmentOfPart(part: DetailPart, side: string) {
   return { start: part.points[index], end: part.points[(index + 1) % part.points.length] };
 }
 
-/** Довжина сторони парта, мм. Фолбек — середня довжина ребра контуру. */
+/**
+ * Діапазон вершин контуру, який фізично покриває логічна сторона.
+ *
+ * Сторони в `sideSegments` закінчуються там, де починається кутовий
+ * перехід (радіус, фаска, Г-виріз): сама дуга не належить жодній стороні.
+ * Але фреза профілю не зупиняється перед радіусом — кромка йде суцільно
+ * через кут. Тому кожен перехід ділимо навпіл між сусідніми сторонами:
+ * обидві половини разом покривають дугу повністю і сходяться рівно в
+ * одній спільній вершині — без дірок і без подвійного рахунку
+ * (перед: floor(k/2), після: ceil(k/2); floor+ceil = k).
+ *
+ * Повертає індекси вздовж `part.points` У НАПРЯМКУ ОБХОДУ (діапазон може
+ * перетинати початок масиву). Без `sideSegments` (прості форми без
+ * обробки кутів) діапазону немає — там і дуг між сторонами не буває.
+ */
+export function sideContourRange(
+  part: DetailPart,
+  side: string,
+): { startIdx: number; endIdx: number } | undefined {
+  const segments = part.sideSegments;
+  if (!segments) return undefined;
+  const resolved = segments[side] ? side : (part.sideAliases?.[side] ?? side);
+  const segment = segments[resolved];
+  if (!segment) return undefined;
+
+  const n = part.points.length;
+  if (n < 3) return undefined;
+
+  // Кінці сегментів — це завжди точні вершини контуру (їх кладуть туди
+  // будівельники геометрії). Якщо найближча вершина далі за пів міліметра,
+  // це сегмент з іншої системи координат — краще чесно відмовитись,
+  // ніж повернути хибний діапазон і хибну довжину кромки.
+  const TOLERANCE_SQ = 0.25;
+  const nearestIdx = (target: Point): number | undefined => {
+    let best = 0;
+    let bestDist = Infinity;
+    part.points.forEach((point, index) => {
+      const dist = (point.x - target.x) ** 2 + (point.y - target.y) ** 2;
+      if (dist < bestDist) { bestDist = dist; best = index; }
+    });
+    return bestDist <= TOLERANCE_SQ ? best : undefined;
+  };
+
+  const ranges = Object.entries(segments).flatMap(([key, item]) => {
+    const startIdx = nearestIdx(item.start);
+    const endIdx = nearestIdx(item.end);
+    return startIdx === undefined || endIdx === undefined ? [] : [{ key, startIdx, endIdx }];
+  });
+  const mine = ranges.find((item) => item.key === resolved);
+  if (!mine) return undefined;
+  const others = ranges.filter((item) => item.key !== resolved);
+  if (!others.length) return { startIdx: mine.startIdx, endIdx: mine.endIdx };
+
+  const forward = (from: number, to: number) => (to - from + n) % n;
+  const gapBefore = Math.min(...others.map((item) => forward(item.endIdx, mine.startIdx)));
+  const gapAfter = Math.min(...others.map((item) => forward(mine.endIdx, item.startIdx)));
+
+  return {
+    startIdx: (mine.startIdx - Math.floor(gapBefore / 2) + n) % n,
+    endIdx: (mine.endIdx + Math.ceil(gapAfter / 2)) % n,
+  };
+}
+
+/** Точки контуру вздовж сторони разом із половинами сусідніх кутових дуг */
+export function sideContourPath(part: DetailPart, side: string): Point[] | undefined {
+  const range = sideContourRange(part, side);
+  if (!range) return undefined;
+  const n = part.points.length;
+  const path: Point[] = [part.points[range.startIdx]];
+  let index = range.startIdx;
+  let guard = 0;
+  while (index !== range.endIdx && guard <= n) {
+    index = (index + 1) % n;
+    path.push(part.points[index]);
+    guard += 1;
+  }
+  return path;
+}
+
+/**
+ * Довжина сторони парта, мм — уздовж реального контуру, включно з
+ * половинами кутових дуг. Фолбеки: пряма відстань сегмента, далі
+ * середня довжина ребра контуру.
+ */
 export function edgeLengthForSide(part: DetailPart, side: string) {
+  const path = sideContourPath(part, side);
+  if (path && path.length >= 2) {
+    let sum = 0;
+    for (let i = 1; i < path.length; i += 1) sum += pointDistance(path[i - 1], path[i]);
+    if (sum > 0) return sum;
+  }
   const segment = sideSegmentOfPart(part, side);
   if (segment) return pointDistance(segment.start, segment.end);
   const edges = Math.max(1, part.points.length);

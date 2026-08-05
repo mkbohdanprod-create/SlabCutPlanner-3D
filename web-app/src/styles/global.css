@@ -619,3 +619,23 @@ text.dxf-overlay-label, .dxf-edge-overlay text {
   box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
 }
 
+/* Підсвітка ліній, за якими нараховано послугу (клік по рядку кошторису).
+   Помаранчевий навмисно: синій уже означає «вибрано», червоний — конфлікт,
+   а це третій, окремий стан. Пунктир повзе, щоб лінію було видно навіть
+   там, де вона лягає точно на контур деталі. */
+.fact-highlight line,
+.fact-highlight polygon,
+.fact-highlight polyline {
+  fill: none;
+  stroke: #f59e0b;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 14 8;
+  animation: fact-highlight-dash 1.1s linear infinite;
+  paint-order: stroke;
+}
+
+@keyframes fact-highlight-dash {
+  to { stroke-dashoffset: -22; }
+}

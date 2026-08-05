@@ -1,16 +1,18 @@
 // =====================================================================
 //  src/domain/viyarServiceCatalog.ts
-//  Довідник послуг ВіярПро/1С — 100 позицій із їхніми обліковими кодами.
+//  Довідник послуг ВіярПро/1С — 178 позицій з обліковими кодами.
 //
-//  ЗГЕНЕРОВАНО з InstructionsRules/Послуги/excel_dump.csv (вивантаження
-//  файлу «Послуги для ВіярПро (керамограніт_кварцит)»). Руками не правити:
-//  оновиться прайс — перегенерувати. Ціни тут навмисно НЕ зберігаються,
-//  їх виставляє керівник у налаштуваннях.
+//  ЗГЕНЕРОВАНО з двох джерел:
+//    · excel_dump.csv (вивантаження «Послуги для ВіярПро») — 100 позицій;
+//    · SERVICES_LIST.md, розділ «Додані послуги (Актуальні послуги 2026)»
+//      — ділянки PANDA камінь, Косметика, Мийки, Пильний центр, Поклейка
+//      крайки, Полірування, Фанера, Шліфування.
+//  Руками не правити: оновиться прайс — перегенерувати. Ціни тут навмисно
+//  НЕ зберігаються, їх виставляє керівник у налаштуваннях.
 //
-//  Чому це окремий файл, а не частина рушія: геометричне ядро не повинно
-//  знати про ID 219964. Воно рахує виробничі факти, а цей довідник —
-//  просто дані, які керівник підвантажує в каталог і чіпляє до фактів у
-//  «Прив'язках послуг».
+//  У прайсі-джерелі код 224675 зустрічається ДВІЧІ («зведення стика
+//  стільниці з підворотом» і «Стикування зведення фаски на опорі») —
+//  лишається перше входження, дубль пропущено.
 // =====================================================================
 
 import type { ServiceDefinition, ServiceUnit, ServiceCategory } from './services';
@@ -21,7 +23,7 @@ export interface ViyarService {
   name: string;
   unit: ServiceUnit;
   category: ServiceCategory;
-  /** Розділ прайсу: Порізка, Фрезерування, Обробка торців, Додаткові послуги */
+  /** Розділ прайсу або ділянка цеху */
   section: string;
   /** Матеріальна група — номенклатура подвоєна за матеріалом */
   materialGroup?: string;
@@ -130,6 +132,86 @@ export const VIYAR_SERVICES: ViyarService[] = [
   { code: '203136', name: 'Руне доопрацювання декоративного пазування', unit: 'm', category: 'manual', section: 'Додаткові послуги', materialGroup: 'Кварцит' },
   { code: '195724', name: 'Пакування виробу на монтаж', unit: 'm2', category: 'manual', section: 'Додаткові послуги', materialGroup: 'Кварцит' },
   { code: '195727', name: 'Упаковка виробу на переміщення', unit: 'm2', category: 'manual', section: 'Додаткові послуги', materialGroup: 'Кварцит' },
+
+  // ── Актуальні послуги 2026 (розділ «Додані послуги» SERVICES_LIST.md) ──
+  { code: '203116', name: 'Виготовлення кромки AR20 (без полірування)', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Кварцит' },
+  { code: '203117', name: 'Виготовлення кромки ZS20 (без полірування)', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Кварцит' },
+  { code: '203118', name: 'Чистовий Різ 45 товщина 20мм', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Кварцит' },
+  { code: '203103', name: 'Чистовий Різ 45 товщина 20мм', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203086', name: 'Фрезерування торця', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203090', name: 'Виготовлення кромки ZS4(1,5х1,5)', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203092', name: 'Виготовлення кромки ZS6(1,5х1,5)', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203096', name: 'Виготовлення кромки ZS6(3х3)', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203099', name: 'Виготовлення кромки AR20', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203100', name: 'Виготовлення кромки ZS20', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203101', name: 'Чистовий Різ 45 товщина 4мм', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203102', name: 'Чистовий Різ 45 товщина 6мм', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '203104', name: 'Чистовий Різ 45 товщина 12мм', unit: 'm', category: 'machine', section: 'Ділянка: PANDA камінь', materialGroup: 'Керамограніт' },
+  { code: '195723', name: 'Вклейка мийки замовника', unit: 'pcs', category: 'manual', section: 'Ділянка: Косметика', materialGroup: 'Кварцит' },
+  { code: '195389', name: 'Вклейка мийки замовника', unit: 'pcs', category: 'manual', section: 'Ділянка: Косметика', materialGroup: 'Керамограніт' },
+  { code: '195390', name: 'Пакування виробу на монтаж (Керамограніт)', unit: 'm2', category: 'manual', section: 'Ділянка: Косметика', materialGroup: 'Керамограніт' },
+  { code: '224681', name: 'Виготовлення мийки SS01 (кварцит)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Кварцит' },
+  { code: '224682', name: 'Виготовлення мийки SS01 (кварцит)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Кварцит' },
+  { code: '224683', name: 'Виготовлення мийки SS03 (кварцит)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Кварцит' },
+  { code: '224684', name: 'Виготовлення мийки SS03 (кварцит)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Кварцит' },
+  { code: '224685', name: 'Виготовлення мийки WS01 (кварцит)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Кварцит' },
+  { code: '224686', name: 'Виготовлення мийки WS01 (кварцит)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Кварцит' },
+  { code: '224687', name: 'Виготовлення мийки WS03 (кварцит)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Кварцит' },
+  { code: '224670', name: 'Виготовлення мийки WS03 (кварцит)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Керамограніт' },
+  { code: '224666', name: 'Виготовлення мийки SS01 (керамограніт)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Керамограніт' },
+  { code: '224667', name: 'Виготовлення мийки SS01 (керамограніт)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Керамограніт' },
+  { code: '224668', name: 'Виготовлення мийки SS03 (керамограніт)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Керамограніт' },
+  { code: '224669', name: 'Виготовлення мийки SS03 (керамограніт)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Керамограніт' },
+  { code: '224671', name: 'Виготовлення мийки WS02 (керамограніт)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Керамограніт' },
+  { code: '224672', name: 'Виготовлення мийки WS02 (керамограніт)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Керамограніт' },
+  { code: '224673', name: 'Виготовлення мийки CWS04 (керамограніт)', unit: 'pcs', category: 'manual', section: 'Ділянка: Мийки', materialGroup: 'Керамограніт' },
+  { code: '259773', name: 'Комбінована порізка', unit: 'm', category: 'machine', section: 'Ділянка: Пильний центр', materialGroup: 'Кварцит' },
+  { code: '259771', name: 'Комбінована порізка', unit: 'm', category: 'machine', section: 'Ділянка: Пильний центр', materialGroup: 'Керамограніт' },
+  { code: '259774', name: 'Комбінована порізка під кутом', unit: 'm', category: 'machine', section: 'Ділянка: Пильний центр', materialGroup: 'Кварцит' },
+  { code: '259772', name: 'Комбінована порізка під кутом', unit: 'm', category: 'machine', section: 'Ділянка: Пильний центр', materialGroup: 'Керамограніт' },
+  { code: '195700', name: 'Поклейка крайки-опуску', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Кварцит' },
+  { code: '195367', name: 'Поклейка крайки-опуску', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Керамограніт' },
+  { code: '195701', name: 'Поклейка підвороту шириною до 50 мм', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Кварцит' },
+  { code: '195368', name: 'Поклейка підвороту шириною до 50 мм', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Керамограніт' },
+  { code: '195702', name: 'Поклейка підвороту шириною від 50 мм', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Кварцит' },
+  { code: '195369', name: 'Поклейка підвороту шириною від 50 мм', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Керамограніт' },
+  { code: '195703', name: 'Облицювання виробу замовника', unit: 'm2', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Кварцит' },
+  { code: '195370', name: 'Облицювання виробу замовника', unit: 'm2', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Керамограніт' },
+  { code: '224690', name: 'зведення стика стільниці з підворотом', unit: 'pcs', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Кварцит' },
+  { code: '224675', name: 'зведення стика стільниці з підворотом', unit: 'pcs', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Керамограніт' },
+  { code: '224696', name: 'Поклейка крайки-опуску більше 50 мм', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Кварцит' },
+  { code: '224680', name: 'Поклейка крайки-опуску більше 50 мм', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Керамограніт' },
+  { code: '203115', name: 'Формування епоксидного кута (фаска R2)', unit: 'm', category: 'manual', section: 'Ділянка: Поклейка крайки', materialGroup: 'Керамограніт' },
+  { code: '195717', name: 'Обробка крайки "Антик"', unit: 'm', category: 'machine', section: 'Ділянка: Полірування', materialGroup: 'Кварцит' },
+  { code: '203141', name: 'Шліфування тильної сторони кварциту', unit: 'm2', category: 'machine', section: 'Ділянка: Полірування', materialGroup: 'Кварцит' },
+  { code: '203142', name: 'Полірування тильної сторони кварциту', unit: 'm2', category: 'machine', section: 'Ділянка: Полірування', materialGroup: 'Кварцит' },
+  { code: '203143', name: 'Брашування тильноі сторони кварциту', unit: 'm2', category: 'machine', section: 'Ділянка: Полірування', materialGroup: 'Кварцит' },
+  { code: '203114', name: 'Шліфування тильної сторони керамограніту', unit: 'm2', category: 'machine', section: 'Ділянка: Полірування', materialGroup: 'Керамограніт' },
+  { code: '195705', name: 'Вклейка цільної фанери одинарної товщини', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Кварцит' },
+  { code: '195371', name: 'Вклейка цільної фанери одинарної товщини', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Керамограніт' },
+  { code: '195706', name: 'Вклейка фанерного каркасу з фанерного брусу', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Кварцит' },
+  { code: '195707', name: 'Вклейка фанерного коробу', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Кварцит' },
+  { code: '195373', name: 'Вклейка фанерного коробу', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Керамограніт' },
+  { code: '195708', name: 'Фарбування тильної сторони каркасу', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Кварцит' },
+  { code: '195374', name: 'Фарбування тильної сторони каркасу', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Керамограніт' },
+  { code: '195722', name: 'Нанесення термошву на виріб', unit: 'm', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Кварцит' },
+  { code: '195388', name: 'Нанесення термошву на виріб', unit: 'm', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Керамограніт' },
+  { code: '203119', name: 'Вклейка WEDI', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Кварцит' },
+  { code: '203106', name: 'Вклейка WEDI', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Керамограніт' },
+  { code: '224694', name: 'Шліфування фанери', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Кварцит' },
+  { code: '224678', name: 'Шліфування фанери', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Керамограніт' },
+  { code: '195372', name: 'Клейка фанерного каркасу з фанерного брусу', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Керамограніт' },
+  { code: '203105', name: 'Поклейка HPL', unit: 'm2', category: 'manual', section: 'Ділянка: Фанера', materialGroup: 'Керамограніт' },
+  { code: '195711', name: 'Зведення складної фаски при стикуванні виробу', unit: 'pcs', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Кварцит' },
+  { code: '195715', name: 'Нанесення технічної фаски', unit: 'm', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Кварцит' },
+  { code: '195378', name: 'Нанесення технічної фаски', unit: 'm', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Керамограніт' },
+  { code: '195716', name: 'Ручне нанесення фаски 2х2', unit: 'm', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Кварцит' },
+  { code: '195379', name: 'Ручне нанесення фаски 2х2', unit: 'm', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Керамограніт' },
+  { code: '195720', name: '3Д полірування поверхні матеріалу', unit: 'm2', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Кварцит' },
+  { code: '224688', name: 'Допрацювання R2', unit: 'm', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Кварцит' },
+  { code: '224674', name: 'Допрацювання R2', unit: 'm', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Керамограніт' },
+  { code: '224689', name: 'Допрацювання R5-R10', unit: 'm', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Кварцит' },
+  { code: '224693', name: 'Стикування зведення фаски на опорі', unit: 'pcs', category: 'manual', section: 'Ділянка: Шліфування', materialGroup: 'Кварцит' },
 ];
 
 /**

@@ -11,9 +11,22 @@ import {
 // проставлені там, де номенклатура подвоєна.
 
 describe('довідник ВіярПро', () => {
-  it('усі 100 позицій на місці', () => {
-    expect(VIYAR_SERVICE_COUNT).toBe(100);
-    expect(VIYAR_SERVICES).toHaveLength(100);
+  it('178 позицій: 100 зі старого прайсу + 78 актуальних 2026', () => {
+    expect(VIYAR_SERVICE_COUNT).toBe(178);
+    expect(VIYAR_SERVICES).toHaveLength(178);
+  });
+
+  it('послуги 2026 на місці: PANDA, пильний центр, полірування', () => {
+    const byCode = (code: string) => VIYAR_SERVICES.find((i) => i.code === code);
+    expect(byCode('203099')?.name).toContain('AR20');          // кромка AR20 на керамограніті
+    expect(byCode('259771')?.name).toContain('Комбінована');   // диск + вода одним вектором
+    expect(byCode('195717')?.name).toContain('Антик');         // алмазні щітки
+    expect(byCode('203118')?.materialGroup).toBe('Кварцит');   // чистовий 45 т.20
+    expect(byCode('203103')?.materialGroup).toBe('Керамограніт');
+  });
+
+  it('код 224675 у прайсі-джерелі задубльований — у каталозі рівно один', () => {
+    expect(VIYAR_SERVICES.filter((i) => i.code === '224675')).toHaveLength(1);
   });
 
   it('облікові коди унікальні', () => {
@@ -83,8 +96,8 @@ describe('перетворення в каталог', () => {
     });
   });
 
-  it('каталог містить рівно 100 записів', () => {
-    expect(Object.keys(viyarCatalog())).toHaveLength(100);
+  it('каталог містить рівно 178 записів', () => {
+    expect(Object.keys(viyarCatalog())).toHaveLength(178);
   });
 
   it('назви не порожні', () => {

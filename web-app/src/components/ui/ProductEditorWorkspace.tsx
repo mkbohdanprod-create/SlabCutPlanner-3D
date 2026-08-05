@@ -139,7 +139,11 @@ export function buildProductFromSession(
     
     if (isSkirting) {
       jType = 'glued'; jDominant = 'a'; jTexture = true;
-    } else if (isLeg || isWallPanel) {
+    } else if (isLeg) {
+      // Нога (опора) — «водоспад»: клеїться під 45°, як підворот.
+      // Звідси різ під 45 на обох деталях стику і склейка під 45 у кошторисі.
+      jType = 'miter45'; jDominant = 'a'; jTexture = false;
+    } else if (isWallPanel) {
       jType = 'butt'; jDominant = 'a'; jTexture = false;
     }
     

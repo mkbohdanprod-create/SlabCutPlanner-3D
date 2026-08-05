@@ -131,6 +131,28 @@ export const DEFAULT_MAPPING_RULES: MappingRule[] = [
     note: 'До цього профілю в довіднику не було жодної послуги — торець рахувався безкоштовно',
   },
 
+  // Виробничі профілі (AR12, D20, ZS20…) — внутрішня ціна одна на всіх,
+  // точні облікові коди дає набір прив'язок ВіярПро при перемиканні.
+  { id: 'edge:ar_12→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'ar_12', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:t_12→EDGE_PROFILE_MILL', factKind: 'edge', variant: 't_12', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:z_12→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'z_12', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:zs_12→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'zs_12', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:zs_4→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'zs_4', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:zs_6_15→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'zs_6_15', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:zs_6_3→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'zs_6_3', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:ar_20→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'ar_20', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:d_20→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'd_20', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:h_40→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'h_40', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:r_10→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'r_10', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:r_3→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'r_3', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:r_5→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'r_5', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:t_20→EDGE_PROFILE_MILL', factKind: 'edge', variant: 't_20', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:xd_20→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'xd_20', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:z_20→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'z_20', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:zs_20→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'zs_20', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:edge_45→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'edge_45', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'edge:antik→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'antik', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1, enabled: true, source: 'builtin' },
+
   {
     id: 'edge_manual_finish→EDGE_MANUAL_FINISH',
     factKind: 'edge_manual_finish', serviceId: 'EDGE_MANUAL_FINISH', multiplier: 1,
@@ -253,7 +275,7 @@ export function resolveMapping(
         existing.quantity += quantity;
         if (!existing.ruleIds.includes(rule.id)) existing.ruleIds.push(rule.id);
         if (!existing.factKinds.includes(fact.kind)) existing.factKinds.push(fact.kind);
-        if (fact.ref) existing.refs.push(fact.ref);
+        if (fact.ref) existing.refs.push({ ...fact.ref, factKind: fact.kind });
       } else {
         byService.set(rule.serviceId, {
           serviceId: rule.serviceId,
@@ -261,7 +283,7 @@ export function resolveMapping(
           quantity,
           ruleIds: [rule.id],
           factKinds: [fact.kind],
-          refs: fact.ref ? [fact.ref] : [],
+          refs: fact.ref ? [{ ...fact.ref, factKind: fact.kind }] : [],
         });
       }
     });

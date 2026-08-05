@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useUIStore } from './store/useStore';
+import { useUIStore, type PaneView } from './store/useStore';
 import { useProjectStore } from './store/useProjectStore';
 import { Sidebar } from './components/ui/Sidebar';
 import { Sidebar3D } from './components/ui/Sidebar3D';
@@ -148,12 +148,18 @@ function App() {
   }
 
   if (popupActiveView) {
-    const activeView = popupActiveView === 'true' ? '3d' : popupActiveView;
+    // ?popup= приходить із адресного рядка, тобто ззовні. Старі значення
+    // ('true', '3d-preview') лишились у збережених посиланнях, а невідоме
+    // краще звести до розкрою, ніж показати порожнє вікно.
+    const POPUP_VIEWS: PaneView[] = ['2d', '3d', 'texture', 'estimate', 'quote'];
+    const activeView: PaneView = POPUP_VIEWS.includes(popupActiveView as PaneView)
+      ? (popupActiveView as PaneView)
+      : (popupActiveView === 'true' || popupActiveView === '3d-preview' ? '3d' : '2d');
     return (
       <div className="flex h-screen w-full flex-col bg-[var(--bg-main)] font-sans">
         <LanguageDomTranslator />
-        <WorkspacePane 
-          view={activeView as any} 
+        <WorkspacePane
+          view={activeView}
           onChangeView={(newView) => {
             if (newView === 'split') return; // Split mode is disabled in popup
             setPopupActiveView(newView);
@@ -465,11 +471,13 @@ function App() {
           {mainView === 'split' ? (
             <div className="flex-1 flex flex-row w-full h-full min-h-0 overflow-hidden relative workspace-container">
               <div style={{ width: `${splitRatio}%`, minWidth: '20%' }} className="flex flex-col h-full min-h-0">
-                <WorkspacePane 
-                  view={splitLeftView} 
-                  onChangeView={setSplitLeftView as any} 
-                  isSplitModeActive={true} 
-                  onToggleSplit={() => setMainView(splitLeftView)} 
+                <WorkspacePane
+                  view={splitLeftView}
+                  // «Спліт» усередині спліта — це вихід із нього, ним
+                  // займається onToggleSplit; сюди він не доходить.
+                  onChangeView={(next) => { if (next !== 'split') setSplitLeftView(next); }}
+                  isSplitModeActive={true}
+                  onToggleSplit={() => setMainView(splitLeftView)}
                 />
               </div>
               
@@ -496,20 +504,20 @@ function App() {
               />
               
               <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden" style={{ minWidth: '20%' }}>
-                <WorkspacePane 
-                  view={splitRightView} 
-                  onChangeView={setSplitRightView as any} 
-                  isSplitModeActive={true} 
-                  onToggleSplit={() => setMainView(splitRightView)} 
+                <WorkspacePane
+                  view={splitRightView}
+                  onChangeView={(next) => { if (next !== 'split') setSplitRightView(next); }}
+                  isSplitModeActive={true}
+                  onToggleSplit={() => setMainView(splitRightView)}
                 />
               </div>
             </div>
           ) : (
-            <WorkspacePane 
-              view={mainView as any} 
-              onChangeView={setMainView} 
-              isSplitModeActive={false} 
-              onToggleSplit={() => setMainView('split')} 
+            <WorkspacePane
+              view={mainView}
+              onChangeView={setMainView}
+              isSplitModeActive={false}
+              onToggleSplit={() => setMainView('split')}
             />
           )}
         </div>

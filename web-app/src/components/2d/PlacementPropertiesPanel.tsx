@@ -2,6 +2,7 @@ import { useProjectStore } from '../../store/useProjectStore';
 import { Settings, Link as LinkIcon, Unlink } from 'lucide-react';
 import type { EdgeTreatment, EdgeProcessing } from '../../domain/types';
 import { edgeToolOutMm } from '../../domain/allowances';
+import { edgeProfilesForMaterial } from '../../utils/edgeProfiles';
 
 export function PlacementPropertiesPanel() {
   const { project, selectedPlacementIds, updatePlacement } = useProjectStore();
@@ -11,7 +12,8 @@ export function PlacementPropertiesPanel() {
   const placement = project.placements.find(p => p.id === selectedPlacementIds[0]);
   if (!placement) return null;
 
-  const edgeProfiles = project.referenceData?.edgeProfiles || [];
+  // Серія 12 — лише керамограніт, серія 20 — лише кварцит
+  const edgeProfiles = edgeProfilesForMaterial(project.referenceData?.edgeProfiles, project.projectMaterial);
 
   const handleUpdate = (side: string, updates: Partial<EdgeTreatment>) => {
     const currentEdges = placement.edgeProfiles || {};

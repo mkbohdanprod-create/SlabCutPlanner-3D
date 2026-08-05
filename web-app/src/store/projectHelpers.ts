@@ -1,11 +1,42 @@
 import type { DetailPart, Placement, Project } from '../domain/types';
-import { DEFAULT_ALLOWANCES, defaultCommercialQuoteSettings } from '../domain/defaults';
+import { DEFAULT_ALLOWANCES, defaultCommercialQuoteSettings, mergeBuiltinEdgeProfiles, referenceData } from '../domain/defaults';
 import { explodeDetails } from '../engines/geometry';
 import { detectConflicts } from '../engines/packing';
 
+/**
+ * Нога (опора) клеїться під 45° — «водоспад». Старі проєкти створені до
+ * цього правила несуть на стику ноги type:'butt': інтерфейс вибору типу
+ * стику не мав, тож це не могло бути свідомим рішенням користувача —
+ * мігруємо мовчки. Стики бортиків, панелей і підворотів не чіпаємо.
+ */
+function fixLegJoints(products: Project['products']): Project['products'] {
+  if (!products?.length) return products ?? [];
+  const fixElement = (element: any): any => ({
+    ...element,
+    joints: (element.joints ?? []).map((joint: any) => (
+      typeof joint?.id === 'string' && joint.id.startsWith('joint_leg_') && joint.type === 'butt'
+        ? { ...joint, type: 'miter45' }
+        : joint
+    )),
+    additions: (element.additions ?? []).map(fixElement),
+  });
+  return products.map((product) => ({
+    ...product,
+    elements: (product.elements ?? []).map(fixElement),
+  }));
+}
+
 export function normalizeProject(project: Project): Project {
-  return { 
-    ...project, 
+  return {
+    ...project,
+    products: fixLegJoints(project.products),
+    // Довідник профілів їде разом із проєктом — доливаємо нові вбудовані,
+    // інакше старі проєкти ніколи не побачать AR12/D20/ZS20 у випадачках.
+    referenceData: {
+      ...referenceData,
+      ...(project.referenceData ?? {}),
+      edgeProfiles: mergeBuiltinEdgeProfiles(project.referenceData?.edgeProfiles),
+    },
     uiLanguage: project.uiLanguage ?? 'uk', 
     textureFrames: project.textureFrames ?? [], 
     manualDimensions: project.manualDimensions ?? [], 

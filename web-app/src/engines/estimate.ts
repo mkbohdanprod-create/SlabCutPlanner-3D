@@ -182,6 +182,8 @@ export function factBelongsToDetail(fact: ProductionFact, detailId: string): boo
   const target = toSlot(detailId);
   if (ref.detailId && (ref.detailId === detailId || toSlot(ref.detailId) === target)) return true;
   if (ref.elementPath && toSlot(ref.elementPath) === target) return true;
+  // Стик належить обом деталям — друга прив'язка теж рахується.
+  if (ref.elementPathB && toSlot(ref.elementPathB) === target) return true;
   return false;
 }
 

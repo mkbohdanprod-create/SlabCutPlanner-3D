@@ -1,4 +1,5 @@
 import  { useEffect, useRef, useState } from 'react';
+import { edgeProfilesForMaterial } from '../../utils/edgeProfiles';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUIStore } from '../../store/useStore';
 import { Scissors } from 'lucide-react';
@@ -17,7 +18,7 @@ export function EdgeContextMenu({ x, y, edgeId, onClose, onSelect, onSelectProfi
   const [mode, setMode] = useState<'main' | 'profiles'>('main');
   const project = useProjectStore(s => s.project);
   const setIsEdgeProfileSettingsOpen = useUIStore(s => s.setIsEdgeProfileSettingsOpen);
-  const edgeProfiles = project.referenceData?.edgeProfiles ?? [];
+  const edgeProfiles = edgeProfilesForMaterial(project.referenceData?.edgeProfiles, project.projectMaterial);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

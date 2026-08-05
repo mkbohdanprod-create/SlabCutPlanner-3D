@@ -190,7 +190,10 @@ export function ServiceMappingPanel() {
           title="Кошторис показуватиме коди 1С замість внутрішніх. Частина прив'язок — трактування, звірте їх."
         >
           <BookMarked className="w-4 h-4" />
-          Перевести на коди ВіярПро
+          {rules.some((rule) => rule.id.startsWith('viyar:') && rule.enabled)
+            && rules.some((rule) => rule.id.startsWith('viyar:') && !rule.enabled)
+            ? 'Оновити коди ВіярПро'
+            : 'Перевести на коди ВіярПро'}
         </button>
         <button
           onClick={() => {

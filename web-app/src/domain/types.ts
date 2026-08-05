@@ -102,6 +102,12 @@ export interface EdgeProfileDef {
   shortLabel: string;
   description: string;
   allowance: number;
+  /**
+   * Матеріальна група профілю. Серія 12 існує лише на керамограніті,
+   * серія 20 — на кварциті (AR20/ZS20 — виняток, є на обох). Порожньо =
+   * профіль доступний на будь-якому матеріалі.
+   */
+  materialGroup?: string;
   operations?: EdgeProfileOperation[];
 }
 
@@ -198,7 +204,17 @@ export type EdgeProfileType =
   | 'half_bullnose'
   | 'full_bullnose'
   | 'sharknose'
-  | 'straight_edge';
+  | 'straight_edge'
+  // ── виробничі профілі з прайсу ВіярПро ──
+  // серія 12 — керамограніт
+  | 'd_12' | 'ar_12' | 't_12' | 'z_12' | 'zs_12'
+  // тонкий керамограніт (PANDA)
+  | 'zs_4' | 'zs_6_15' | 'zs_6_3'
+  // серія 20 — кварцит (AR20/ZS20 існують і на керамограніті)
+  | 'ar_20' | 'd_20' | 'h_40' | 'r_10' | 'r_3' | 'r_5'
+  | 't_20' | 'xd_20' | 'z_20' | 'zs_20'
+  // спільне
+  | 'edge_45' | 'antik';
 
 export type EdgeProfileSelection = Record<string, EdgeProfileType | undefined>;
 
@@ -584,5 +600,7 @@ export interface Project {
   allowances: CutAllowances;
   commercialQuote: CommercialQuoteSettings;
   assembly?: AssemblyState;
+  /** Прорахунок для клієнта (вкладка «Прорахунок») — окремий документ зі своєю математикою */
+  quoteCalc?: import('./quoteCalc').QuoteCalcDoc;
 }
 

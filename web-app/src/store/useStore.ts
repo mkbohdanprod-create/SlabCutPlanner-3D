@@ -1,18 +1,31 @@
 import { create } from 'zustand';
 import type { ViewMode } from '../domain/types';
+import type { FactRef } from '../engines/productionFacts';
 import type { ProductEditorSession } from '../components/forms/utils/draftHelpers';
+import { publishHighlight, subscribeHighlight } from './highlightSync';
 
+
+/**
+ * Вкладка робочої області. Один список замість чотирьох копій union'а —
+ * інакше кожна нова вкладка означає правку в п'ятьох файлах, і десь її
+ * забудуть (саме так «Прорахунок» ледь не лишився без режиму «Спліт»).
+ *
+ *  · estimate — послуги для виробництва (внутрішній BOM)
+ *  · quote    — прорахунок для клієнта
+ */
+export type PaneView = '2d' | '3d' | 'texture' | 'estimate' | 'quote';
+export type MainView = PaneView | 'split';
 
 interface UIState {
-  mainView: '2d' | '3d' | 'texture' | 'split' | 'estimate';
+  mainView: MainView;
   splitRatio: number;
   setSplitRatio: (ratio: number) => void;
-  splitLeftView: '2d' | '3d' | 'texture' | 'estimate';
-  setSplitLeftView: (view: '2d' | '3d' | 'texture' | 'estimate') => void;
-  splitRightView: '2d' | '3d' | 'texture' | 'estimate';
-  setSplitRightView: (view: '2d' | '3d' | 'texture' | 'estimate') => void;
+  splitLeftView: PaneView;
+  setSplitLeftView: (view: PaneView) => void;
+  splitRightView: PaneView;
+  setSplitRightView: (view: PaneView) => void;
   viewMode: ViewMode;
-  setMainView: (view: '2d' | '3d' | 'texture' | 'split' | 'estimate') => void;
+  setMainView: (view: MainView) => void;
   setViewMode: (mode: ViewMode) => void;
   is3dAssemblyMode: boolean;
   set3dAssemblyMode: (enabled: boolean) => void;
@@ -29,6 +42,16 @@ interface UIState {
   setShowEdges: (show: boolean) => void;
   isAddProductMode: boolean;
   setAddProductMode: (enabled: boolean) => void;
+  /**
+   * Що підсвітити на карті крою: посилання з рядка кошторису.
+   * Живе в глобальному сторі, бо в режимі «Спліт» кошторис і розкрій —
+   * два незалежні інстанси WorkspacePane, і локальний стан їх не зв'яже.
+   * Між ОКРЕМИМИ вікнами розходиться через BroadcastChannel — див.
+   * highlightSync.ts; там же пояснено, чому це окремий канал.
+   */
+  highlightedFactRefs: FactRef[] | null;
+  highlightedServiceId: string | null;
+  setHighlightedService: (serviceId: string | null, refs: FactRef[] | null) => void;
   isSettingsOpen: boolean;
   setIsSettingsOpen: (open: boolean) => void;
   isEdgeProfileSettingsOpen: boolean;
@@ -119,8 +142,21 @@ export const useUIStore = create<UIState>((set) => ({
   },
   showConfirm: (options) => set({ confirmState: { ...options, isOpen: true } }),
   hideConfirm: () => set((state) => ({ confirmState: { ...state.confirmState, isOpen: false } })),
+  highlightedFactRefs: null,
+  highlightedServiceId: null,
+  setHighlightedService: (highlightedServiceId, highlightedFactRefs) => {
+    set({ highlightedServiceId, highlightedFactRefs });
+    publishHighlight({ serviceId: highlightedServiceId, refs: highlightedFactRefs });
+  },
   isSettingsOpen: false,
   setIsSettingsOpen: (isSettingsOpen) => set({ isSettingsOpen }),
   isEdgeProfileSettingsOpen: false,
   setIsEdgeProfileSettingsOpen: (isEdgeProfileSettingsOpen) => set({ isEdgeProfileSettingsOpen })
 }));
+
+// Підсвітка з іншого вікна лягає НАПРЯМУ через setState, а не через
+// setHighlightedService: інакше кожне вікно ретранслювало б отримане
+// назад у канал, і два вікна зациклилися б.
+export const stopHighlightSync = subscribeHighlight(({ serviceId, refs }) => {
+  useUIStore.setState({ highlightedServiceId: serviceId, highlightedFactRefs: refs });
+});

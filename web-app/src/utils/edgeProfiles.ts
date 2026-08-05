@@ -1,6 +1,6 @@
 import type { DetailPart, EdgeProfileSelection, EdgeProfileType, Point, Rotation } from '../domain/types';
 import { polygonBounds, rotatePoint, rotatedPoints } from '../lib/project';
-import { pointInPolygonStrict as pointInPolygon } from '../engines/geometryUtils';
+import { pointInPolygonStrict as pointInPolygon, sideContourRange } from '../engines/geometryUtils';
 
 export const DEFAULT_EDGE_PROFILE: EdgeProfileType = 'polished_straight';
 
@@ -20,7 +20,29 @@ function rotateLocalPoint(point: Point, rotation: Rotation, part: DetailPart) {
   return { x: rotated.x - bounds.minX, y: rotated.y - bounds.minY };
 }
 
-function logicalSegmentForSide(part: DetailPart, side: string, rotation: Rotation) {
+/**
+ * Профілі торця, доступні на матеріалі проєкту.
+ *
+ * Серія 12 фізично існує лише на керамограніті, серія 20 — на кварциті
+ * (SERVICES_ARCHITECTURE_LOGIC §4). Показувати кварцитний H40 на
+ * керамограніті означає прийняти замовлення, яке цех не виконає.
+ * Поки матеріал не обрано — показуємо все.
+ */
+export function edgeProfilesForMaterial<T extends { materialGroup?: string }>(
+  profiles: T[] | undefined,
+  material?: string | null,
+): T[] {
+  const all = profiles ?? [];
+  if (!material) return all;
+  return all.filter((profile) => !profile.materialGroup || profile.materialGroup === material);
+}
+
+/**
+ * Сегмент логічної сторони у координатах, ВЖЕ повернутих під розкрій.
+ * Експортовано, щоб підсвітка на карті крою малювала рівно ту саму лінію,
+ * по якій нараховано послугу.
+ */
+export function logicalSegmentForSide(part: DetailPart, side: string, rotation: Rotation) {
   if (part.sideSegments?.[side]) {
     return {
       start: rotateLocalPoint(part.sideSegments[side].start, rotation, part),
@@ -48,15 +70,22 @@ function logicalSegmentForSide(part: DetailPart, side: string, rotation: Rotatio
   return { start: points[index], end: points[(index + 1) % points.length] };
 }
 
-function insetPathForSide(segment: { start: Point; end: Point }, polygon: Point[], offset: number): Point[] {
+function insetPathForSide(
+  segment: { start: Point; end: Point },
+  polygon: Point[],
+  offset: number,
+  range?: { startIdx: number; endIdx: number },
+): Point[] {
   if (polygon.length < 3) return [segment.start, segment.end];
 
-  const startIdx = polygon.reduce((best, p, i) => {
+  // Явний діапазон (сторона + половини кутових дуг) надійніший за пошук
+  // найближчих вершин: він знає точні індекси і завжди йде вперед по обходу.
+  const startIdx = range?.startIdx ?? polygon.reduce((best, p, i) => {
     const dist = Math.hypot(p.x - segment.start.x, p.y - segment.start.y);
     return dist < best.dist ? { i, dist } : best;
   }, { i: 0, dist: Infinity }).i;
 
-  const endIdx = polygon.reduce((best, p, i) => {
+  const endIdx = range?.endIdx ?? polygon.reduce((best, p, i) => {
     const dist = Math.hypot(p.x - segment.end.x, p.y - segment.end.y);
     return dist < best.dist ? { i, dist } : best;
   }, { i: 0, dist: Infinity }).i;
@@ -73,8 +102,8 @@ function insetPathForSide(segment: { start: Point; end: Point }, polygon: Point[
     i = (i - 1 + polygon.length) % polygon.length;
     backwardSteps++;
   }
-  
-  const step = forwardSteps <= backwardSteps ? 1 : -1;
+
+  const step = range ? 1 : (forwardSteps <= backwardSteps ? 1 : -1);
   const stepsCount = step === 1 ? forwardSteps : backwardSteps;
 
   const midSeqIdx = (startIdx + Math.floor(stepsCount / 2) * step + polygon.length) % polygon.length;
@@ -129,6 +158,35 @@ function insetPathForSide(segment: { start: Point; end: Point }, polygon: Point[
   return insetPathPoints;
 }
 
+/**
+ * Повна лінія сторони на контурі в повернутих координатах: пряма ділянка
+ * плюс половини сусідніх кутових дуг — рівно той шлях, за яким рушій
+ * фактів рахує метри кромки. Для простих форм без обробки кутів — просто
+ * відрізок сторони.
+ */
+export function sideContourPolyline(
+  part: DetailPart,
+  side: string,
+  rotation: Rotation,
+): Point[] | undefined {
+  const range = sideContourRange(part, side);
+  if (range) {
+    const polygon = rotatedPoints(part, rotation);
+    const n = polygon.length;
+    const path: Point[] = [polygon[range.startIdx]];
+    let index = range.startIdx;
+    let guard = 0;
+    while (index !== range.endIdx && guard <= n) {
+      index = (index + 1) % n;
+      path.push(polygon[index]);
+      guard += 1;
+    }
+    return path;
+  }
+  const segment = logicalSegmentForSide(part, side, rotation);
+  return segment ? [segment.start, segment.end] : undefined;
+}
+
 export function edgeMarkersForPart(
   part: DetailPart,
   profiles: EdgeProfileSelection | undefined,
@@ -156,7 +214,9 @@ export function edgeMarkersForPart(
 
       const segment = logicalSegmentForSide(part, side, rotation);
       if (!segment) return undefined;
-      const points = insetPathForSide(segment, polygon, offset);
+      // Позначка накриває і половини сусідніх кутових дуг — рівно ту
+      // довжину, за якою рушій фактів рахує метри профілю.
+      const points = insetPathForSide(segment, polygon, offset, sideContourRange(part, side));
       const middleIdx = Math.floor(points.length / 2);
       return {
         side,

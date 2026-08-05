@@ -24,6 +24,7 @@ import { SlabLayer } from "./board/SlabLayer";
 import { PartShape } from "./board/PartShape";
 import { PlacementStateBadges } from "./board/PlacementStateBadges";
 import { EdgeProfileMarks } from "./board/EdgeProfileMarks";
+import { FactHighlight } from "./board/FactHighlight";
 import { SelectionRect } from "./board/SelectionRect";
 import { GroupDragPreview, PlacementDragGhost } from "./board/DragPreviews";
 import { ManualDimensions, SlabDimensionHints, SlabMagnifierWindow } from "./board/BoardOverlays";
@@ -71,6 +72,8 @@ export function SlabBoard() {
     setSelectedPlacementIds,
   } = useProjectStore();
   const { viewMode, setViewMode } = useUIStore();
+  // Що підсвітити: приходить із кліку по рядку кошторису (у т.ч. у «Спліті»).
+  const highlightedFactRefs = useUIStore((s) => s.highlightedFactRefs);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const unplacedRevealTimer = useRef<number | undefined>(undefined);
   const unplacedRevealPoint = useRef<{ x: number; y: number } | undefined>(undefined);
@@ -998,7 +1001,24 @@ export function SlabBoard() {
                     });
                   }}>
                     <PartShape part={part} placement={placement} scale={scale} viewMode={viewMode} showAllowance={project.allowances.show} sawOvercut={project.referenceData?.serviceParams?.sawOvercut} />
-                    <EdgeProfileMarks part={part} placement={placement} profiles={placement.edgeProfiles} scale={scale} />
+                    {/* Кромки виробу живуть на ДЕТАЛІ (задані в редакторі виробу),
+                        а перевизначення — на розміщенні. Раніше бралися лише
+                        placement.edgeProfiles, тому позначки R2/D12 на картах
+                        крою виробів не малювались узагалі, хоча послуга в
+                        кошторисі нараховувалась. */}
+                    <EdgeProfileMarks
+                      part={part}
+                      placement={placement}
+                      profiles={
+                        placement.edgeProfiles && Object.keys(placement.edgeProfiles).length > 0
+                          ? placement.edgeProfiles
+                          : (detail?.edgeProfiles as never)
+                      }
+                      scale={scale}
+                    />
+                    {highlightedFactRefs && (
+                      <FactHighlight part={part} placement={placement} refs={highlightedFactRefs} scale={scale} />
+                    )}
                     <g
                       className="part-label-hit"
                       onMouseEnter={(event) => armLabelHover(part.id, event)}

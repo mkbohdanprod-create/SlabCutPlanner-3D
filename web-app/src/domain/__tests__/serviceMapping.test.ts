@@ -299,3 +299,29 @@ describe('набір прив’язок до облікових кодів', ()
     });
   });
 });
+
+// ── Різ під 45° на стику — облікові коди, не внутрішній CUT_45 ──────
+
+describe('різ під 45° на стику', () => {
+  const enabled = VIYAR_MAPPING_RULES.map((rule) => ({ ...rule, enabled: true }));
+
+  it('на керамограніті стик 1.1 м дає 195303 з подвоєнням', () => {
+    const lines = resolveMapping([fact('joint_length', 1.1, 'miter45')], enabled, 'Керамограніт');
+    expect(lines.find((l) => l.serviceId === '195303')?.quantity).toBeCloseTo(2.2, 4);
+  });
+
+  it('на кварциті той самий стик дає 195665', () => {
+    const lines = resolveMapping([fact('joint_length', 1.1, 'miter45')], enabled, 'Кварцит');
+    expect(lines.find((l) => l.serviceId === '195665')?.quantity).toBeCloseTo(2.2, 4);
+    expect(lines.find((l) => l.serviceId === '195303')).toBeUndefined();
+  });
+
+  it('внутрішній CUT_45 стику вимикається при переході — інакше подвійне нарахування', () => {
+    expect(INTERNAL_RULES_REPLACED_BY_VIYAR).toContain('joint:miter45→CUT_45');
+  });
+
+  it('кути в штуках вимикаються: їхні метри вже входять у криволінійну порізку', () => {
+    expect(INTERNAL_RULES_REPLACED_BY_VIYAR).toContain('corner:radius→CORNER_RADIUS');
+    expect(INTERNAL_RULES_REPLACED_BY_VIYAR).toContain('corner:chamfer→CORNER_CHAMFER');
+  });
+});

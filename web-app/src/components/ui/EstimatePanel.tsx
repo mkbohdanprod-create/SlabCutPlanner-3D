@@ -4,18 +4,18 @@ import { getAllProjectDetails } from '../../store/projectHelpers';
 import { computeEstimate, CATEGORY_LABELS, type EstimateLine } from '../../engines/estimate';
 import { FileText, Download, AlertTriangle, List, Layers, BookMarked } from 'lucide-react';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useUIStore } from '../../store/useStore';
 import { ManufacturabilityNotice } from './ManufacturabilityNotice';
 
 /**
- * Кошторис проєкту.
+ * Послуги для виробництва (BOM).
  *
- * Рахує рівно те саме, що комерційна пропозиція: геометрія → виробничі
- * факти → прив'язки → ціни. Раніше тут була окрема математика, яка
- * брала номінальні width/height елемента, тому для Г-подібної деталі
- * площа й периметр були неправильні за побудовою.
- *
- * Два подання: повний перелік для виробництва і згорнутий по групах —
- * той, що йде клієнту.
+ * Внутрішній документ: повний перелік операцій з обліковими кодами,
+ * за яким цех знає, що робити. Клієнтський бік живе окремо — у вкладці
+ * «Прорахунок» (QuotePanel); спільне в них джерело, а не оформлення:
+ * геометрія → виробничі факти → прив'язки → ціни. Раніше тут була
+ * окрема математика, яка брала номінальні width/height елемента, тому
+ * для Г-подібної деталі площа й периметр були неправильні за побудовою.
  */
 export function EstimatePanel() {
   const project = useProjectStore((s) => s.project);
@@ -26,6 +26,11 @@ export function EstimatePanel() {
   const getRules = useSettingsStore((s) => s.getRules);
 
   const [grouped, setGrouped] = useState(false);
+
+  // Клік по рядку підсвічує на карті крою саме ті лінії, за якими послугу
+  // нараховано. Працює і в «Спліті», бо стан живе в глобальному сторі.
+  const highlightedServiceId = useUIStore((s) => s.highlightedServiceId);
+  const setHighlightedService = useUIStore((s) => s.setHighlightedService);
 
   // Чи переведено розрахунок на облікові коди. Якщо ні — кошторис показує
   // внутрішні коди, і про це треба сказати прямо: інакше виглядає так,
@@ -72,8 +77,15 @@ export function EstimatePanel() {
     URL.revokeObjectURL(url);
   };
 
-  const renderRow = (line: EstimateLine, key: string) => (
-    <tr key={key} className="hover:bg-slate-50/50 transition-colors">
+  const renderRow = (line: EstimateLine, key: string) => {
+    const isActive = highlightedServiceId === line.serviceId;
+    return (
+    <tr
+      key={key}
+      onClick={() => setHighlightedService(isActive ? null : line.serviceId, isActive ? null : line.refs)}
+      title="Показати на карті крою, за якими лініями нараховано"
+      className={`cursor-pointer transition-colors ${isActive ? 'bg-amber-50 ring-1 ring-amber-300' : 'hover:bg-slate-50/50'}`}
+    >
       <td className="px-6 py-3 text-slate-400 font-mono text-xs">{line.externalId || line.serviceId}</td>
       <td className="px-6 py-3 font-medium text-slate-800">{line.name}</td>
       <td className="px-6 py-3 text-right font-medium text-slate-700">{line.quantity.toFixed(2)}</td>
@@ -81,7 +93,8 @@ export function EstimatePanel() {
       <td className="px-6 py-3 text-right text-slate-600">{line.unitPrice.toFixed(2)}</td>
       <td className="px-6 py-3 text-right font-bold text-slate-800">{line.total.toFixed(2)}</td>
     </tr>
-  );
+    );
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50 p-6 overflow-auto">
@@ -94,8 +107,8 @@ export function EstimatePanel() {
               <FileText className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-800">Кошторис проєкту (BOM)</h2>
-              <p className="text-sm text-slate-500">Розрахунок із геометрії розкрою: {estimate.facts.length} виробничих фактів</p>
+              <h2 className="text-xl font-bold text-slate-800">Послуги для виробництва (BOM)</h2>
+              <p className="text-sm text-slate-500">Розрахунок із геометрії розкрою: {estimate.facts.length} виробничих фактів · клік по рядку підсвічує лінії на карті крою</p>
             </div>
           </div>
 

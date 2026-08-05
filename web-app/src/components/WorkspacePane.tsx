@@ -1,17 +1,18 @@
 import { Suspense, memo } from 'react';
-import { Layers, Image, Box, Eye, Columns, Loader2, ExternalLink, FileText } from 'lucide-react';
-import { useUIStore } from '../store/useStore';
+import { Layers, Image, Box, Eye, Columns, Loader2, ExternalLink, FileText, Calculator } from 'lucide-react';
+import { useUIStore, type MainView, type PaneView } from '../store/useStore';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import { SlabBoard } from './2d/SlabBoard';
 import { TextureLayoutPanel } from './ui/TextureLayoutPanel';
 import { UnplacedPartsPanel } from './ui/UnplacedPartsPanel';
 import { Viewer3D } from './3d/Viewer3DLazy';
 import { EstimatePanel } from './ui/EstimatePanel';
+import { QuotePanel } from './ui/QuotePanel';
 import { PlacementPropertiesPanel } from './2d/PlacementPropertiesPanel';
 
 interface WorkspacePaneProps {
-  view: '2d' | 'texture' | '3d' | 'estimate';
-  onChangeView: (view: '2d' | 'texture' | '3d' | 'estimate' | 'split') => void;
+  view: PaneView;
+  onChangeView: (view: MainView) => void;
   isSplitModeActive: boolean;
   onToggleSplit: () => void;
 }
@@ -24,11 +25,16 @@ export const WorkspacePane = memo(function WorkspacePane({
 }: WorkspacePaneProps) {
   const isFloatingPreviewOpen = useUIStore((s) => s.isFloatingPreviewOpen);
   const is3dAssemblyMode = useUIStore((s) => s.is3dAssemblyMode);
+  // Документи (кошторис, прорахунок) не мають плаваючого 3D-прев'ю поверх себе,
+  // тож на них вкладка «3D Прев'ю» не має підсвічуватись активною.
+  const isDocumentView = view === 'estimate' || view === 'quote';
 
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col h-full bg-[#f0f3f5]">
       {/* Canvas Tabs */}
-      <div className="flex items-end z-10 relative bg-[#f0f3f5] pt-2 px-4 border-b border-[var(--border-color)] shrink-0">
+      {/* overflow-x-auto: у «Спліті» панель удвічі вужча, а вкладок сім —
+          хай краще прокручуються, ніж стискаються в нечитабельні обрубки. */}
+      <div className="flex items-end z-10 relative bg-[#f0f3f5] pt-2 px-4 border-b border-[var(--border-color)] shrink-0 overflow-x-auto custom-scrollbar">
         <button
           onClick={() => {
             onChangeView('2d');
@@ -79,8 +85,8 @@ export const WorkspacePane = memo(function WorkspacePane({
             useUIStore.getState().setFloatingPreviewMode('3d');
             useUIStore.getState().setFloatingPreviewOpen(true);
           }}
-          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 ${
-            isFloatingPreviewOpen && view !== 'estimate'
+          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 shrink-0 whitespace-nowrap ${
+            isFloatingPreviewOpen && !isDocumentView
               ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]'
               : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
           }`}
@@ -93,18 +99,34 @@ export const WorkspacePane = memo(function WorkspacePane({
             onChangeView('estimate');
             useUIStore.getState().setFloatingPreviewOpen(false);
           }}
-          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 ${
+          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 shrink-0 whitespace-nowrap ${
             view === 'estimate'
               ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]'
               : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
           }`}
           style={{ fontFamily: 'Roboto, sans-serif' }}
+          title="Повний перелік операцій із кодами — для виробництва"
         >
-          <FileText className="w-4 h-4" /> Кошторис
+          <FileText className="w-4 h-4" /> Послуги для виробництва
+        </button>
+        <button
+          onClick={() => {
+            onChangeView('quote');
+            useUIStore.getState().setFloatingPreviewOpen(false);
+          }}
+          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 shrink-0 whitespace-nowrap ${
+            view === 'quote'
+              ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]'
+              : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
+          }`}
+          style={{ fontFamily: 'Roboto, sans-serif' }}
+          title="Розрахунок вартості для клієнта"
+        >
+          <Calculator className="w-4 h-4" /> Прорахунок
         </button>
         <button
           onClick={onToggleSplit}
-          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 ${
+          className={`px-6 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-1 shrink-0 whitespace-nowrap ${
             isSplitModeActive
               ? 'bg-white border border-[var(--border-color)] border-b-white text-[var(--accent-color)] shadow-[0_-2px_4px_rgba(0,0,0,0.03)]'
               : 'bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0]'
@@ -122,7 +144,7 @@ export const WorkspacePane = memo(function WorkspacePane({
             url.searchParams.set('popup', isFloatingPreviewOpen ? '3d-preview' : view);
             window.open(url.toString(), 'SlabCutPlannerPopup', 'width=1200,height=800');
           }}
-          className="px-4 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-auto bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0] hover:text-[var(--accent-color)]"
+          className="px-4 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 relative top-[1px] ml-auto shrink-0 bg-[#e2e6ea] border border-[#dce1e6] border-b-[var(--border-color)] text-[#6b778c] hover:bg-[#d5dbe0] hover:text-[var(--accent-color)]"
           title="Відкрити поточний вид в окремому вікні"
         >
           <ExternalLink className="w-4 h-4" />
@@ -156,6 +178,12 @@ export const WorkspacePane = memo(function WorkspacePane({
           <div className="flex flex-col h-full relative">
             <ErrorBoundary componentName="EstimatePanel">
               <EstimatePanel />
+            </ErrorBoundary>
+          </div>
+        ) : view === 'quote' ? (
+          <div className="flex flex-col h-full relative overflow-y-auto custom-scrollbar">
+            <ErrorBoundary componentName="QuotePanel">
+              <QuotePanel />
             </ErrorBoundary>
           </div>
         ) : (

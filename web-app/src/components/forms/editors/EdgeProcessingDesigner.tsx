@@ -1,4 +1,5 @@
 import type { EdgeFeature, EdgeProfileType, EdgeProfileSelection } from '../../../domain/types';
+import { edgeProfilesForMaterial } from '../../../utils/edgeProfiles';
 import { Field } from '../utils/sharedInputs';
 import { DEFAULT_EDGE_PROFILE } from '../../../utils/edgeProfiles';
 import { useProjectStore } from '../../../store/useProjectStore';
@@ -30,7 +31,8 @@ export function EdgeProcessingDesigner({
   
   const project = useProjectStore(s => s.project);
   const setIsEdgeProfileSettingsOpen = useUIStore(s => s.setIsEdgeProfileSettingsOpen);
-  const availableProfiles = project.referenceData?.edgeProfiles ?? [];
+  // Профілі фільтруються за матеріалом проєкту: серія 12 — керамограніт, 20 — кварцит
+  const availableProfiles = edgeProfilesForMaterial(project.referenceData?.edgeProfiles, project.projectMaterial);
 
   const toggleAllSidesProfile = (checked: boolean) => {
     const nextProfiles = { ...edgeProfiles };

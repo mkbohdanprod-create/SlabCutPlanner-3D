@@ -70,12 +70,29 @@ export type ProductionFactKind =
   | 'waste_area';
 
 export interface FactRef {
+  /**
+   * Вид факту. Сам рушій його не заповнює — це робить шар прив'язок,
+   * щоб підсвітка на карті крою знала, ЩО малювати: різ пилою — це
+   * осьові ділянки контуру, різ водою — навпаки, тільки криві.
+   */
+  factKind?: ProductionFactKind;
   detailId?: string;
   partId?: string;
   productId?: string;
   elementPath?: string;
   side?: string;
   cornerId?: string;
+  /**
+   * Друга прив'язка стику. Стик живе на ДВОХ деталях одночасно, і
+   * підсвітка має показати лінію на обох — а не обводити цілі контури.
+   */
+  elementPathB?: string;
+  sideB?: string;
+  /** Ділянка стику вздовж сторони, мм від початку сторони */
+  fromMm?: number;
+  toMm?: number;
+  fromMmB?: number;
+  toMmB?: number;
   cutoutIndex?: number;
   slabId?: string;
 }
@@ -301,7 +318,19 @@ export function extractProductionFacts(
 
       const lengthMm = jointLengthMm(joint);
       if (lengthMm <= 0) return;
-      const ref: FactRef = { productId, elementPath: path };
+      // Прив'язки СТОРІН, а не елемент-власник стику: підсвітці на карті
+      // крою потрібно знати, де саме на кожній із двох деталей він проходить.
+      const ref: FactRef = {
+        productId,
+        elementPath: joint.a?.elementPath ?? path,
+        side: joint.a?.sideId,
+        fromMm: joint.a ? Math.min(joint.a.from, joint.a.to) : undefined,
+        toMm: joint.a ? Math.max(joint.a.from, joint.a.to) : undefined,
+        elementPathB: joint.b?.elementPath,
+        sideB: joint.b?.sideId,
+        fromMmB: joint.b ? Math.min(joint.b.from, joint.b.to) : undefined,
+        toMmB: joint.b ? Math.max(joint.b.from, joint.b.to) : undefined,
+      };
 
       push({ kind: 'joint_length', qty: mm2m(lengthMm), unit: 'm', variant: joint.type, ref });
       push({

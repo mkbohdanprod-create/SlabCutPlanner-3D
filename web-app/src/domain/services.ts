@@ -63,6 +63,10 @@ export const DEFAULT_SERVICE_CATALOG: Record<string, ServiceDefinition> = {
   // Торець D-12: профіль у довіднику був, послуги під нього — ні
   EDGE_D12: { id: 'EDGE_D12', name: 'Фрезерування крайки D-12', unit: 'm', price: 550, category: 'machine' },
 
+  // Узагальнене фрезерування виробничого профілю (AR12, T20, ZS20…) —
+  // внутрішня ціна до переходу на облікові коди
+  EDGE_PROFILE_MILL: { id: 'EDGE_PROFILE_MILL', name: 'Фрезерування крайки (профіль)', unit: 'm', price: 550, category: 'machine' },
+
   // Ручна доводка торця — галочка на стороні деталі
   EDGE_MANUAL_FINISH: { id: 'EDGE_MANUAL_FINISH', name: 'Ручна доводка торця', unit: 'm', price: 300, category: 'manual' },
 
