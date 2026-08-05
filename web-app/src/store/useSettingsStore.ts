@@ -12,6 +12,7 @@ import {
   type MappingProblem,
   type MappingRule,
 } from '../domain/serviceMapping';
+import { mergeQuotePriceBook, type QuotePriceBook } from '../domain/quoteCalc';
 
 /**
  * Налаштування прайсу й прив'язок послуг до обробок.
@@ -29,12 +30,14 @@ import {
  *   · `customRules` — правила, дописані керівником. Живуть самі по собі.
  */
 
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 
 interface SettingsState {
   serviceCatalog: Record<string, ServiceDefinition>;
   mappingOverrides: Record<string, MappingOverride>;
   customRules: MappingRule[];
+  /** Прайс і коди 1С вкладки «Прорахунок» — редагують старші менеджери */
+  quotePriceBook: QuotePriceBook;
 
   // ── каталог послуг ─────────────────────────────────────────────────
   updateService: (id: string, updates: Partial<ServiceDefinition>) => void;
@@ -55,6 +58,13 @@ interface SettingsState {
   addRule: (rule: Omit<MappingRule, 'source'>) => void;
   removeRule: (ruleId: string) => void;
   resetMapping: () => void;
+
+  // ── прайс прорахунку ───────────────────────────────────────────────
+  /** Частковий патч верхнього рівня; вкладені об'єкти передаються цілком */
+  updateQuotePriceBook: (patch: Partial<QuotePriceBook>) => void;
+  /** Код 1С за ключем (fab:…, measure:…, svc:… — див. QuotePriceBook.codes1c) */
+  setQuoteCode1c: (key: string, code: string) => void;
+  resetQuotePriceBook: () => void;
 
   // ── читання ────────────────────────────────────────────────────────
   getRules: () => MappingRule[];
@@ -81,6 +91,7 @@ export const useSettingsStore = create<SettingsState>()(
       serviceCatalog: { ...DEFAULT_SERVICE_CATALOG },
       mappingOverrides: {},
       customRules: [],
+      quotePriceBook: mergeQuotePriceBook(),
 
       updateService: (id, updates) => set((state) => {
         if (!state.serviceCatalog[id]) return state;
@@ -199,6 +210,19 @@ export const useSettingsStore = create<SettingsState>()(
 
       resetMapping: () => set({ mappingOverrides: {}, customRules: [] }),
 
+      updateQuotePriceBook: (patch) => set((state) => ({
+        quotePriceBook: { ...state.quotePriceBook, ...patch },
+      })),
+
+      setQuoteCode1c: (key, code) => set((state) => {
+        const codes1c = { ...state.quotePriceBook.codes1c };
+        if (code.trim()) codes1c[key] = code.trim();
+        else delete codes1c[key];
+        return { quotePriceBook: { ...state.quotePriceBook, codes1c } };
+      }),
+
+      resetQuotePriceBook: () => set({ quotePriceBook: mergeQuotePriceBook() }),
+
       getRules: () => {
         const state = get();
         const config: MappingConfig = { overrides: state.mappingOverrides, customRules: state.customRules };
@@ -212,6 +236,7 @@ export const useSettingsStore = create<SettingsState>()(
         serviceCatalog: get().serviceCatalog,
         mappingOverrides: get().mappingOverrides,
         customRules: get().customRules,
+        quotePriceBook: get().quotePriceBook,
       }, null, 2),
 
       importSettings: (json) => {
@@ -222,6 +247,7 @@ export const useSettingsStore = create<SettingsState>()(
             serviceCatalog: mergeBuiltinServices(parsed.serviceCatalog),
             mappingOverrides: parsed.mappingOverrides ?? {},
             customRules: Array.isArray(parsed.customRules) ? parsed.customRules : [],
+            quotePriceBook: mergeQuotePriceBook(parsed.quotePriceBook),
           });
           return { ok: true };
         } catch (error) {
@@ -237,12 +263,14 @@ export const useSettingsStore = create<SettingsState>()(
         // CUT_WATERJET, HOLE_LARGE, EDGE_D12, JOINT_SAWCUT, MATERIAL_SLAB —
         // без цього злиття не з'явилися б у тих, хто вже щось налаштував,
         // і половина таблиці відповідності мовчки не спрацювала б.
+        // v3 додав прайс прорахунку (quotePriceBook) — те саме злиття.
         const state = (persisted ?? {}) as Partial<SettingsState>;
         return {
           ...state,
           serviceCatalog: mergeBuiltinServices(state.serviceCatalog),
           mappingOverrides: state.mappingOverrides ?? {},
           customRules: Array.isArray(state.customRules) ? state.customRules : [],
+          quotePriceBook: mergeQuotePriceBook(state.quotePriceBook),
         } as SettingsState;
       },
     },

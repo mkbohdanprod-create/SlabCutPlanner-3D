@@ -8,6 +8,7 @@ import {
 import {
   createQuoteCalcDoc,
   DEFAULT_QUOTE_PRICE_BOOK,
+  mergeQuotePriceBook,
   type QuoteCalcDoc,
   type QuoteItem,
 } from '../../domain/quoteCalc';
@@ -265,6 +266,160 @@ describe('послуги, ціни, підсумок', () => {
       items: [item({ dims: { w: 1000, h: 600 }, areaM2: 0.55 })],
     }));
     expect(line(result, 'fab:countertop_plain')!.qty).toBe(0.55);
+  });
+});
+
+describe('вбудований довідник 1С «Виготовлення …»', async () => {
+  const { QUOTE_1C_FABRICATION, fabrication1cCode } = await import('../../domain/quote1cCatalog');
+
+  it('70 позицій, коди унікальні', () => {
+    expect(QUOTE_1C_FABRICATION).toHaveLength(70);
+    expect(new Set(QUOTE_1C_FABRICATION.map((item) => item.code)).size).toBe(70);
+  });
+
+  it('контрольні коди з оригінального переліку на місці', () => {
+    // Розгортка «база+зсув» мусить збігатися з переліком 1С позиція в позицію
+    const byCode = new Map(QUOTE_1C_FABRICATION.map((item) => [item.code, item.name]));
+    expect(byCode.get('292335')).toBe('Виготовлення стільниці з потовщенням (керамограніт Laminam)');
+    expect(byCode.get('292356')).toBe('Виготовлення стільниці без потовщень (керамограніт Під проект)');
+    expect(byCode.get('292372')).toBe('Виготовлення стінової панелі (штучний кварцит TermopalStone)');
+    expect(byCode.get('292388')).toBe('Виготовлення мийки (натуральний камінь Під проект)');
+    expect(byCode.get('292404')).toBe('Виготовлення раковини (акриловий камінь Grandex)');
+  });
+
+  it('кожен матеріал має «Під проект» для всіх п\'яти видів', () => {
+    const fallbacks = QUOTE_1C_FABRICATION.filter((item) => item.manufacturer === 'Під проект');
+    expect(fallbacks).toHaveLength(20); // 4 матеріали × 5 видів
+  });
+
+  it('точний виробник знаходиться, невідомий лягає на «Під проект»', () => {
+    expect(fabrication1cCode('countertop_thick', 'Керамограніт', 'Laminam')?.code).toBe('292335');
+    expect(fabrication1cCode('countertop_plain', 'Керамограніт', 'Невідомий')?.code).toBe('292356');
+    expect(fabrication1cCode('sink', 'Акриловий камінь', '')?.code).toBe('292393');
+  });
+
+  it('обидві товщини панелі — одна номенклатура 1С', () => {
+    expect(fabrication1cCode('wall_panel_ge12', 'Керамограніт', 'Laminam')?.code).toBe('292337');
+    expect(fabrication1cCode('wall_panel_lt12', 'Керамограніт', 'Laminam')?.code).toBe('292337');
+  });
+
+  it('типи без номенклатури 1С чесно повертають undefined', () => {
+    expect(fabrication1cCode('windowsill', 'Керамограніт', 'Laminam')).toBeUndefined();
+    expect(fabrication1cCode('facade', 'Керамограніт', 'Laminam')).toBeUndefined();
+  });
+});
+
+describe('коди 1С', () => {
+  it('виготовлення отримує вбудований код без жодних налаштувань', () => {
+    const result = computeQuoteCalc(doc({
+      manufacturer: 'Laminam',
+      items: [item({ productTypeId: 'countertop_thick', dims: { w: 1000, h: 600 } })],
+    }));
+    expect(line(result, 'fab:countertop_thick')!.code).toBe('292335');
+  });
+
+  it('«Під проект» іншого матеріалу — інший код (кварцит проти керамограніту)', () => {
+    const quartz = computeQuoteCalc(doc({
+      materialType: 'Штучний кварцит',
+      manufacturer: 'Під проект',
+      items: [item({ dims: { w: 1000, h: 600 } })],
+    }));
+    expect(line(quartz, 'fab:countertop_plain')!.code).toBe('292376');
+
+    const ceramic = computeQuoteCalc(doc({
+      manufacturer: 'Під проект',
+      items: [item({ dims: { w: 1000, h: 600 } })],
+    }));
+    expect(line(ceramic, 'fab:countertop_plain')!.code).toBe('292356');
+  });
+
+  it('ручний код із точним ключем «тип:матеріал:виробник» перекриває довідник', () => {
+    const prices = book();
+    prices.codes1c = { 'fab:countertop_plain:Керамограніт:Laminam': '999111' };
+    const result = computeQuoteCalc(doc({
+      manufacturer: 'Laminam',
+      items: [item({ dims: { w: 1000, h: 600 } })],
+    }), prices);
+    expect(line(result, 'fab:countertop_plain')!.code).toBe('999111');
+  });
+
+  it('ціна пари «матеріал:виробник» перемагає ціну виробника і базову', () => {
+    const prices = book();
+    prices.fabrication.countertop_plain = 1000;
+    prices.fabricationByManufacturer.countertop_plain = {
+      'Під проект': 2000,
+      'Штучний кварцит:Під проект': 3000,
+    };
+    const result = computeQuoteCalc(doc({
+      materialType: 'Штучний кварцит',
+      manufacturer: 'Під проект',
+      items: [item({ dims: { w: 1000, h: 1000 } })],
+    }), prices);
+    expect(line(result, 'fab:countertop_plain')!.sum).toBe(3000);
+  });
+
+  it('код виробника перемагає базовий код типу — це різні номенклатури', () => {
+    const prices = book();
+    prices.codes1c = { 'fab:countertop_plain': '100001', 'fab:countertop_plain:Laminam': '100777' };
+    const generic = computeQuoteCalc(doc({ items: [item({ dims: { w: 1000, h: 600 } })] }), prices);
+    expect(line(generic, 'fab:countertop_plain')!.code).toBe('100001');
+
+    const laminam = computeQuoteCalc(doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 600 } })] }), prices);
+    expect(line(laminam, 'fab:countertop_plain')!.code).toBe('100777');
+  });
+
+  it('замір, монтаж, виїзд і послуги отримують коди за своїми ключами', () => {
+    const prices = book();
+    prices.codes1c = {
+      'measure:Керамограніт': '200100',
+      'montage:countertop_plain': '200200',
+      'delivery:3': '200303',
+      'svc:hob_cutout': '200400',
+      sheet: '200500',
+    };
+    const result = computeQuoteCalc(doc({
+      method: 'measure_install',
+      address: 'адреса',
+      deliveryZone: 3,
+      items: [item({ dims: { w: 1000, h: 600 } })],
+      services: { hob_cutout: 1 },
+      materialSheets: 1,
+    }), prices);
+    expect(line(result, 'measure')!.code).toBe('200100');
+    expect(line(result, 'montage:countertop_plain')!.code).toBe('200200');
+    expect(line(result, 'delivery')!.code).toBe('200303');
+    expect(line(result, 'svc:hob_cutout')!.code).toBe('200400');
+    expect(line(result, 'material:sheets')!.code).toBe('200500');
+  });
+
+  it('тип без номенклатури 1С їде без коду — нічого не вигадуємо', () => {
+    const result = computeQuoteCalc(doc({
+      items: [item({ productTypeId: 'windowsill', dims: { l: 1500 } })],
+    }));
+    expect(line(result, 'fab:windowsill')!.code).toBeUndefined();
+  });
+});
+
+describe('злиття прайсу (mergeQuotePriceBook)', () => {
+  it('порожнє збереження дає повні замовчування', () => {
+    const merged = mergeQuotePriceBook(undefined);
+    expect(merged.montage.countertop_plain).toBe(0);
+    expect(merged.deliveryZones).toHaveLength(6);
+    expect(merged.codes1c).toEqual({});
+  });
+
+  it('виставлені ціни й коди не перетираються, нові поля доїжджають', () => {
+    const merged = mergeQuotePriceBook({
+      fabrication: { countertop_plain: 4800 },
+      codes1c: { 'svc:hob_cutout': '300100' },
+      deliveryZones: [0, 150],
+      // montage відсутній у збереженні — має прийти із замовчувань
+    } as never);
+    expect(merged.fabrication.countertop_plain).toBe(4800);
+    expect(merged.codes1c['svc:hob_cutout']).toBe('300100');
+    expect(merged.deliveryZones[1]).toBe(150);
+    expect(merged.deliveryZones[5]).toBe(0); // доїхала нова зона
+    expect(merged.montage.stairs).toBe(0);   // доїхала нова категорія
   });
 });
 

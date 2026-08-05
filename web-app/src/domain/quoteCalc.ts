@@ -21,12 +21,16 @@ export const QUOTE_MATERIAL_TYPES = [
 ] as const;
 export type QuoteMaterialType = (typeof QUOTE_MATERIAL_TYPES)[number];
 
-/** Стартовий перелік; «Інший» дозволяє ввести вручну, поки довідник не наповнено */
+/**
+ * Виробники за номенклатурами 1С «Виготовлення …». «Під проект» —
+ * офіційний фолбек кожного матеріалу: на нього лягає все, чого в
+ * переліку немає (див. domain/quote1cCatalog.ts).
+ */
 export const DEFAULT_MANUFACTURERS: Record<QuoteMaterialType, string[]> = {
-  'Керамограніт': ['Laminam', 'Florim', 'Neolith', 'Інший'],
-  'Штучний кварцит': ['Silestone', 'Caesarstone', 'Technistone', 'Vicostone', 'Інший'],
-  'Натуральний камінь': ['Граніт', 'Мармур', 'Кварцит натуральний', 'Інший'],
-  'Акриловий камінь': ['Corian', 'HI-MACS', 'Staron', 'Grandex', 'Інший'],
+  'Керамограніт': ['Laminam', 'Supernova', 'Inalco', 'Marazzi', 'Під проект'],
+  'Штучний кварцит': ['Avant', 'Caesarstone', 'TermopalStone', 'Під проект'],
+  'Натуральний камінь': ['Antolini', 'Під проект'],
+  'Акриловий камінь': ['Getacore', 'Grandex', 'Під проект'],
 };
 
 /** Тип поверхні — лише для акрилового каменю (ТЗ §8) */
@@ -151,9 +155,9 @@ export const DELIVERY_ZONES = [0, 1, 2, 3, 4, 5] as const;
 
 /**
  * Ціни за замовчуванням — нулі: реальний прайс наповнюють старші
- * менеджери (окремий редактор — наступний крок). Поки що менеджер може
- * вписати ціну прямо в рядок розрахунку — вона зберігається в документі
- * як priceOverrides і має пріоритет над прайсом.
+ * менеджери в налаштуваннях прорахунку (шестерня у вкладці). Менеджер
+ * на місці може вписати ціну прямо в рядок розрахунку — вона
+ * зберігається в документі як priceOverrides і має пріоритет над прайсом.
  */
 export interface QuotePriceBook {
   /** Виготовлення: тип виробу → базова ціна за одиницю (ТЗ: своя номенклатура на виробника) */
@@ -174,6 +178,19 @@ export interface QuotePriceBook {
   services: Record<string, number>;
   /** Матеріал, грн/лист */
   sheet: number;
+  /**
+   * РУЧНІ коди номенклатур 1С — перекривають вбудований довідник
+   * (domain/quote1cCatalog.ts, 70 позицій «Виготовлення …»).
+   *
+   * Ключі:
+   *   fab:{тип}:{матеріал}:{виробник} — точна номенклатура
+   *     («Під проект» повторюється в усіх матеріалах, тому матеріал
+   *      у ключі обов'язковий для розрізнення)
+   *   fab:{тип}:{виробник} і fab:{тип} — спрощені фолбеки
+   *   measure:{тип матеріалу} · montage:{категорія} · delivery:{зона}
+   *   pyramid:{довжина} · box · sheet · svc:{послуга}
+   */
+  codes1c: Record<string, string>;
 }
 
 export const DEFAULT_QUOTE_PRICE_BOOK: QuotePriceBook = {
@@ -192,7 +209,42 @@ export const DEFAULT_QUOTE_PRICE_BOOK: QuotePriceBook = {
   boxPerM2: 0,
   services: {},
   sheet: 0,
+  codes1c: {},
 };
+
+export const QUOTE_MONTAGE_LABELS: Record<MontageCategory, string> = {
+  countertop_plain: 'Монтаж стільниць без потовщень',
+  countertop_thick: 'Монтаж стільниць з потовщенням',
+  wall_panel: 'Монтаж стінових панелей',
+  windowsill: 'Монтаж підвіконь',
+  stairs: 'Монтаж сходів',
+};
+
+/** Усі відомі виробники — для редактора цін по виробниках */
+export const ALL_MANUFACTURERS: string[] = Array.from(new Set(
+  Object.values(DEFAULT_MANUFACTURERS).flat(),
+));
+
+/**
+ * Злиття збереженого прайсу з вбудованими замовчуваннями: нові поля
+ * (нова категорія монтажу, нова послуга) доїжджають до тих, хто вже
+ * щось зберіг, а виставлені ціни й коди — не перетираються.
+ */
+export function mergeQuotePriceBook(saved?: Partial<QuotePriceBook> | null): QuotePriceBook {
+  const base = DEFAULT_QUOTE_PRICE_BOOK;
+  return {
+    fabrication: { ...base.fabrication, ...(saved?.fabrication ?? {}) },
+    fabricationByManufacturer: { ...base.fabricationByManufacturer, ...(saved?.fabricationByManufacturer ?? {}) },
+    measure: { ...base.measure, ...(saved?.measure ?? {}) },
+    montage: { ...base.montage, ...(saved?.montage ?? {}) },
+    deliveryZones: base.deliveryZones.map((value, zone) => saved?.deliveryZones?.[zone] ?? value),
+    pyramid: { ...base.pyramid, ...(saved?.pyramid ?? {}) },
+    boxPerM2: saved?.boxPerM2 ?? base.boxPerM2,
+    services: { ...base.services, ...(saved?.services ?? {}) },
+    sheet: saved?.sheet ?? base.sheet,
+    codes1c: { ...base.codes1c, ...(saved?.codes1c ?? {}) },
+  };
+}
 
 // ── Документ прорахунку ─────────────────────────────────────────────
 

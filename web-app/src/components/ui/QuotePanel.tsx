@@ -1,7 +1,10 @@
-import { useMemo } from 'react';
-import { Calculator, Plus, Trash2, AlertTriangle, Download, RefreshCw } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Calculator, Plus, Trash2, AlertTriangle, Download, RefreshCw, FileDown, Loader2, Settings } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
+import { exportQuotePdf } from '../../utils/export/quotePdf';
+import { QuoteSettingsModal } from './QuoteSettingsModal';
 import {
   computeQuoteCalc,
   itemAreaM2,
@@ -64,6 +67,8 @@ export function QuotePanel() {
   const project = useProjectStore((s) => s.project);
   const parts = useProjectStore((s) => s.parts);
   const updateProject = useProjectStore((s) => s.updateProject);
+  const priceBook = useSettingsStore((s) => s.quotePriceBook);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const doc: QuoteCalcDoc = useMemo(
     () => ({ ...createQuoteCalcDoc(), ...(project.quoteCalc ?? {}) }),
@@ -98,7 +103,17 @@ export function QuotePanel() {
     patch({ items: [...imported, ...doc.items.filter((item) => !item.sourceRef)] });
   };
 
-  const result = useMemo(() => computeQuoteCalc(doc), [doc]);
+  const result = useMemo(() => computeQuoteCalc(doc, priceBook), [doc, priceBook]);
+  const [pdfBusy, setPdfBusy] = useState(false);
+
+  const handleExportPdf = async () => {
+    setPdfBusy(true);
+    try {
+      await exportQuotePdf(project, doc, result);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   const isMeasure = doc.method === 'measure_install';
   const isSinkOnly = doc.method === 'sink_only';
@@ -146,9 +161,26 @@ export function QuotePanel() {
               <p className="text-sm text-slate-500">Спрощений розрахунок замовлення · окремо від виробничого BOM</p>
             </div>
           </div>
-          <button onClick={exportJson} className="flex items-center gap-2 px-4 py-2 bg-[#0084ff] text-white rounded-md text-sm font-bold hover:bg-[#006bce] transition-colors">
-            <Download className="w-4 h-4" /> Експорт JSON
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportPdf}
+              disabled={pdfBusy || result.lines.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0084ff] text-white rounded-md text-sm font-bold hover:bg-[#006bce] transition-colors disabled:bg-slate-300 disabled:cursor-default"
+              title="Фірмовий PDF прорахунку для клієнта"
+            >
+              {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} PDF для клієнта
+            </button>
+            <button onClick={exportJson} className="flex items-center gap-2 px-4 py-2 bg-white text-slate-600 border border-slate-300 rounded-md text-sm font-bold hover:bg-slate-50 transition-colors">
+              <Download className="w-4 h-4" /> JSON
+            </button>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="flex items-center justify-center w-10 h-10 bg-white text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 hover:text-[#0084ff] transition-colors"
+              title="Налаштування прорахунку: прайс і коди 1С (для старших менеджерів)"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Замовлення */}
@@ -486,6 +518,8 @@ export function QuotePanel() {
           </table>
         </div>
       </div>
+
+      <QuoteSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
@@ -502,7 +536,10 @@ function FragmentGroup({ label, lines, onPrice }: {
       </tr>
       {lines.map((line) => (
         <tr key={line.id} className="hover:bg-slate-50/50">
-          <td className="px-6 py-2.5 font-medium text-slate-800">{line.label}</td>
+          <td className="px-6 py-2.5 font-medium text-slate-800">
+            {line.code && <span className="font-mono text-xs text-slate-400 mr-2">{line.code}</span>}
+            {line.label}
+          </td>
           <td className="px-4 py-2.5 text-right text-slate-700">{line.qty}</td>
           <td className="px-4 py-2.5 text-center text-slate-500">{quoteUnitLabel(line.unit)}</td>
           <td className="px-4 py-2.5 text-right">

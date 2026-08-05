@@ -1,6 +1,7 @@
 import {
   DEFAULT_QUOTE_PRICE_BOOK,
   PYRAMID_LENGTHS,
+  QUOTE_MONTAGE_LABELS,
   QUOTE_SERVICES,
   QUOTE_UNIT_LABELS,
   quoteProductType,
@@ -12,6 +13,7 @@ import {
   type QuoteUnit,
 } from '../domain/quoteCalc';
 import type { Detail, DetailPart } from '../domain/types';
+import { fabrication1cCode } from '../domain/quote1cCatalog';
 
 /**
  * Движок прорахунку для клієнта.
@@ -44,6 +46,8 @@ export interface QuoteCalcLine {
   /** Ціна взята з ручного поля, а не з прайсу */
   overridden: boolean;
   sum: number;
+  /** Код номенклатури 1С з налаштувань прорахунку (codes1c) */
+  code?: string;
 }
 
 export interface QuoteCalcResult {
@@ -98,8 +102,15 @@ export function suggestPyramidLength(items: QuoteItem[]): number {
   return PYRAMID_LENGTHS.find((length) => length >= longest) ?? PYRAMID_LENGTHS[PYRAMID_LENGTHS.length - 1];
 }
 
-function fabricationPrice(book: QuotePriceBook, productTypeId: string, manufacturer: string): number {
-  return book.fabricationByManufacturer[productTypeId]?.[manufacturer]
+/**
+ * Ціна виготовлення: точна пара «матеріал:виробник» → просто виробник →
+ * базова ціна типу. Ключ із матеріалом потрібен, бо «Під проект» існує
+ * в кожному матеріалі з різними цінами.
+ */
+function fabricationPrice(book: QuotePriceBook, productTypeId: string, material: string, manufacturer: string): number {
+  const byManufacturer = book.fabricationByManufacturer[productTypeId];
+  return byManufacturer?.[`${material}:${manufacturer}`]
+    ?? byManufacturer?.[manufacturer]
     ?? book.fabrication[productTypeId]
     ?? 0;
 }
@@ -118,6 +129,7 @@ export function computeQuoteCalc(
     qty: number,
     unit: QuoteUnit,
     bookPrice: number,
+    code?: string,
   ) => {
     if (qty <= 0) return;
     const override = doc.priceOverrides[id];
@@ -128,8 +140,11 @@ export function computeQuoteCalc(
       unitPrice: round2(unitPrice),
       overridden: override !== undefined,
       sum: round2(qty * unitPrice),
+      ...(code ? { code } : {}),
     });
   };
+  const code1c = (key: string, fallbackKey?: string) =>
+    book.codes1c?.[key] || (fallbackKey ? book.codes1c?.[fallbackKey] : undefined) || undefined;
 
   // ── 1. Виготовлення ────────────────────────────────────────────────
   //  Групуємо кількості за номенклатурами (типами виробів): «2 стільниці
@@ -172,23 +187,30 @@ export function computeQuoteCalc(
     const type = quoteProductType(typeId);
     if (!type) return;
     const manufacturerSuffix = doc.manufacturer ? ` — ${doc.manufacturer}` : '';
+    // Код: ручне налаштування (від точного ключа до загального), а коли
+    // його немає — вбудований довідник 1С («Виготовлення … Laminam»;
+    // невідомий виробник лягає на «Під проект» свого матеріалу).
+    const builtinCode = fabrication1cCode(typeId, doc.materialType, doc.manufacturer)?.code;
     push(
       `fab:${typeId}`, 'fabrication',
       `Виготовлення: ${type.label}${manufacturerSuffix}`,
       qty, type.unit,
-      fabricationPrice(book, typeId, doc.manufacturer),
+      fabricationPrice(book, typeId, doc.materialType, doc.manufacturer),
+      code1c(`fab:${typeId}:${doc.materialType}:${doc.manufacturer}`)
+        ?? code1c(`fab:${typeId}:${doc.manufacturer}`, `fab:${typeId}`)
+        ?? builtinCode,
     );
   });
 
   // ── 2. Матеріал: лист/півлиста ─────────────────────────────────────
   if (doc.materialSheets > 0) {
     const decor = doc.decorCode ? `, декор ${doc.decorCode}` : '';
-    push('material:sheets', 'material', `Матеріал: ${doc.materialType}${decor}`, doc.materialSheets, 'sheet', book.sheet);
+    push('material:sheets', 'material', `Матеріал: ${doc.materialType}${decor}`, doc.materialSheets, 'sheet', book.sheet, code1c('sheet'));
   }
 
   // ── 3. Замір, монтаж, виїзд — лише «з заміром та монтажем» ────────
   if (doc.method === 'measure_install') {
-    push('measure', 'montage', `Замір (${doc.materialType})`, 1, 'service', book.measure[doc.materialType] ?? 0);
+    push('measure', 'montage', `Замір (${doc.materialType})`, 1, 'service', book.measure[doc.materialType] ?? 0, code1c(`measure:${doc.materialType}`));
 
     // Монтаж рахує ПЛОЩУ ВИГОТОВЛЕННЯ (з ногами й опусками всередині),
     // тому кількості беремо з уже згрупованих fabQty, а не з items.
@@ -200,19 +222,12 @@ export function computeQuoteCalc(
       bucket.qty += qty;
       montageQty.set(type.montage, bucket);
     });
-    const montageLabels: Record<MontageCategory, string> = {
-      countertop_plain: 'Монтаж стільниць без потовщень',
-      countertop_thick: 'Монтаж стільниць з потовщенням',
-      wall_panel: 'Монтаж стінових панелей',
-      windowsill: 'Монтаж підвіконь',
-      stairs: 'Монтаж сходів',
-    };
     montageQty.forEach((bucket, category) => {
-      push(`montage:${category}`, 'montage', montageLabels[category], bucket.qty, bucket.unit, book.montage[category] ?? 0);
+      push(`montage:${category}`, 'montage', QUOTE_MONTAGE_LABELS[category], bucket.qty, bucket.unit, book.montage[category] ?? 0, code1c(`montage:${category}`));
     });
 
     if (doc.deliveryZone > 0) {
-      push('delivery', 'montage', `Виїзд на адресу (зона ${doc.deliveryZone})`, 1, 'service', book.deliveryZones[doc.deliveryZone] ?? 0);
+      push('delivery', 'montage', `Виїзд на адресу (зона ${doc.deliveryZone})`, 1, 'service', book.deliveryZones[doc.deliveryZone] ?? 0, code1c(`delivery:${doc.deliveryZone}`, 'delivery'));
     }
     if (!doc.address) warnings.push('Спосіб «з заміром та монтажем», а адресу не вказано');
   }
@@ -220,20 +235,20 @@ export function computeQuoteCalc(
   // ── 4. Додаткові послуги ───────────────────────────────────────────
   QUOTE_SERVICES.forEach((service) => {
     const qty = doc.services[service.id] ?? 0;
-    if (qty > 0) push(`svc:${service.id}`, 'services', service.label, qty, service.unit, book.services[service.id] ?? 0);
+    if (qty > 0) push(`svc:${service.id}`, 'services', service.label, qty, service.unit, book.services[service.id] ?? 0, code1c(`svc:${service.id}`));
   });
 
   // ── 5. Пакування — лише «за кресленням» (Логіка §1) ───────────────
   if (doc.method === 'drawing') {
     if (doc.packaging.pyramidQty > 0) {
       const length = doc.packaging.pyramidLength || suggestPyramidLength(doc.items);
-      push('pack:pyramid', 'packaging', `Дерев'яна піраміда ${length} мм`, doc.packaging.pyramidQty, 'pcs', book.pyramid[length] ?? 0);
+      push('pack:pyramid', 'packaging', `Дерев'яна піраміда ${length} мм`, doc.packaging.pyramidQty, 'pcs', book.pyramid[length] ?? 0, code1c(`pyramid:${length}`));
       if (longestDimensionMm(doc.items) > length) {
         warnings.push(`Найдовша деталь ${longestDimensionMm(doc.items)} мм не влазить у піраміду ${length} мм`);
       }
     }
     if (doc.packaging.boxM2 > 0) {
-      push('pack:box', 'packaging', 'Пакування в короб', doc.packaging.boxM2, 'm2', book.boxPerM2);
+      push('pack:box', 'packaging', 'Пакування в короб', doc.packaging.boxM2, 'm2', book.boxPerM2, code1c('box'));
     }
   }
 
