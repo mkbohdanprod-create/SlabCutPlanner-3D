@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { DetailDraft } from '../components/forms/utils/draftHelpers';
+import { cutoutCenter } from '../domain/cutoutAnchor';
+import { anchorContextFor } from '../domain/elementToDetail';
 
 export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any) {
   const shape = new THREE.Shape();
@@ -308,20 +310,13 @@ export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any
 
     if (detail.cutouts) {
       Object.values(detail.cutouts).forEach((cutout) => {
-        let cx = cutout.x / w;
-        let cy = cutout.y / h;
-
-        const bindPt = points.find((p) => p.id === cutout.bindCorner);
-        if (bindPt) {
-          const ptNx = (bindPt.x - bounds.minX) / (w || 1);
-          const ptNy = (bindPt.y - bounds.minY) / (h || 1);
-
-          const dirX = ptNx <= 0.5 ? 1 : -1;
-          const dirY = ptNy <= 0.5 ? 1 : -1;
-
-          cx = ptNx + dirX * (cutout.x / w);
-          cy = ptNy + dirY * (cutout.y / h);
-        }
+        // Прив'язку рахує спільний резолвер — той самий, яким користується
+        // розкрій. Раніше тут жила власна копія математики, і вона мовчки не
+        // працювала: точки контуру не несуть імен кутів, тому пошук bindCorner
+        // ніколи не знаходив кут і виріз лягав від початку координат.
+        const { cx: absX, cy: absY } = cutoutCenter(cutout, anchorContextFor(detail as never));
+        const cx = (absX - bounds.minX) / (w || 1);
+        const cy = (absY - bounds.minY) / (h || 1);
 
         const hole = new THREE.Path();
         if (cutout.shape === "circle") {

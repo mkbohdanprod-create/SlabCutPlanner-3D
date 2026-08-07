@@ -17,6 +17,8 @@ import { flattenProductToDetails } from '../../store/projectHelpers';
 import { uid } from '../../domain/defaults';
 import { toDetailShape, buildGeometry } from '../../domain/elementToDetail';
 import { sinkAdditionElements, createProductSink } from '../../domain/productSink';
+import { METAL_PROFILES, DEFAULT_METAL_PROFILE_ID, metalProfileById, pieceSurfaceM2, kgPerMeter } from '../../domain/metalProfiles';
+import { metalSegmentElements, metalChainWeightKg, nextSegmentId } from '../../domain/metalChain';
 import type { ProductSinkDef } from '../../domain/types';
 import type { Product, ProductElement, Joint } from '../../domain/types';
 
@@ -34,6 +36,7 @@ import { CutoutProcessingModal } from './CutoutProcessingModal';
 import { Circle, Square, PlusSquare, Box, GripHorizontal, FileText, CornerDownRight, Plus } from 'lucide-react';
 import { CreateProductModal } from './CreateProductModal';
 import { ElementSettingsModal } from './ElementSettingsModal';
+import { MetalTemplateModal } from './MetalTemplateModal';
 import { Detail2DBlueprint } from './Detail2DBlueprint';
 import { getDetailPointsAndBounds, buildDetailShape } from '../../engines/shapeBuilder';
 
@@ -118,6 +121,8 @@ export function buildProductFromSession(
     // (напр., із сесії відкритого старого виробу) — пропускаємо, інакше
     // мийка дублюється при кожному повторному збереженні.
     if (id.startsWith('sink_')) return;
+    // Сегменти ланцюга профілів — так само похідні (від mainDetail.metalSegments)
+    if (id.startsWith('mseg_')) return;
 
     const elementId = buildElementPath(productId, id);
     const isSkirting = id.startsWith('skirting_');
@@ -186,6 +191,15 @@ export function buildProductFromSession(
     sinkAdditionElements(productId, session.mainDetail).forEach((sinkEl) => {
       productElements.push(sinkEl);
       allElements.push(sinkEl);
+    });
+  }
+
+  // Ланцюг профілів (метал): кожен сегмент — похідна деталь розкрою.
+  // 3D малює ланцюг сам із metalSegments базового елемента, тому ці
+  // елементи існують ЛИШЕ заради розкрою/відомості й у 3D не рендеряться.
+  if (session.mainDetail?.kind === 'metal_profile') {
+    metalSegmentElements(productId, session.mainDetail).forEach((segmentEl) => {
+      rootElement.additions.push(segmentEl);
     });
   }
 
@@ -299,6 +313,7 @@ export function ProductEditorWorkspace() {
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [detailContextMenu, setDetailContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [detailPassportModalOpen, setDetailPassportModalOpen] = useState<{ detailId: string, initialTab: 'passport' | 'settings' } | null>(null);
+  const [metalTemplateModalOpen, setMetalTemplateModalOpen] = useState(false);
   
   const showEdges = useUIStore(s => s.showEdges);
 
@@ -325,6 +340,7 @@ export function ProductEditorWorkspace() {
     : (session.subDetails[session.activeDetailId!] ?? findGeneratedDraft(session.activeDetailId!));
 
   const isSinkDetail = detail?.kind === 'sink_rect' || detail?.kind === 'sink_slot';
+  const isMetalDetail = detail?.kind === 'metal_profile';
 
   const updateDetail = (patch: Partial<DetailDraft>) => {
     if (!detail) return;
@@ -560,31 +576,31 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
       {/* Split Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Canvas Area */}
-        <div className="flex-1 p-6 flex flex-col overflow-hidden relative gap-4">
-          <div className="flex items-center gap-2">
+        <div className="flex-1 flex flex-col overflow-hidden relative">
+          <div className="absolute top-4 left-4 z-10 flex rounded-md shadow-sm border p-1 gap-1 bg-white border-[#c6d3dd]">
             <button
               onClick={() => setViewMode('2d')}
-              className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${
+              className={`px-4 py-1.5 rounded-sm text-sm font-medium transition-colors ${
                 viewMode === '2d'
-                  ? 'bg-white text-[#0084ff] shadow-sm border border-[#c6d3dd]'
-                  : 'bg-transparent text-slate-500 hover:bg-slate-200'
+                  ? 'bg-[#e0f0ff] text-[#0084ff]'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
               }`}
             >
               2D Креслення
             </button>
             <button
               onClick={() => setViewMode('3d')}
-              className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${
+              className={`px-4 py-1.5 rounded-sm text-sm font-medium transition-colors ${
                 viewMode === '3d'
-                  ? 'bg-white text-[#0084ff] shadow-sm border border-[#c6d3dd]'
-                  : 'bg-transparent text-slate-500 hover:bg-slate-200'
+                  ? 'bg-[#e0f0ff] text-[#0084ff]'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
               }`}
             >
               3D Модель
             </button>
           </div>
           
-          <div className="flex-1 relative bg-[#eaf0f4] rounded-md overflow-hidden border border-[#c6d3dd] shadow-inner flex flex-col">
+          <div className="flex-1 relative bg-[#eaf0f4] overflow-hidden flex flex-col">
             {viewMode === '2d' ? (
               detail ? (
                 <div className="flex-1 w-full relative flex flex-col">
@@ -706,6 +722,25 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           initialTab={detailPassportModalOpen.initialTab}
           onClose={() => setDetailPassportModalOpen(null)}
           onSave={handlePassportSave}
+        />
+      )}
+
+      {metalTemplateModalOpen && (
+        <MetalTemplateModal
+          initialProfileId={(detail as { metalProfileId?: string } | undefined)?.metalProfileId ?? DEFAULT_METAL_PROFILE_ID}
+          onClose={() => setMetalTemplateModalOpen(false)}
+          onApply={(result, profileId) => {
+            // Шаблон переписує ланцюг цілком: база = перший матеріальний хід,
+            // height = висота перерізу (нею база лягає смужкою в розкрій).
+            const profile = metalProfileById(profileId);
+            updateDetail({
+              metalProfileId: profileId,
+              width: result.baseLength,
+              height: profile?.h ?? detail?.height,
+              metalSegments: result.segments,
+            } as never);
+            setMetalTemplateModalOpen(false);
+          }}
         />
       )}
 
@@ -1032,6 +1067,14 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                                       const nextSinks = { ...session.mainDetail?.sinks };
                                       delete nextSinks[additionSlot.slice('sink_'.length)];
                                       setSession({ ...session, mainDetail: { ...session.mainDetail!, sinks: nextSinks }, activeDetailId: isAddActive ? 'main' : session.activeDetailId });
+                                    } else if (additionSlot.startsWith('mseg_')) {
+                                      // Сегмент ланцюга профілів: джерело — mainDetail.metalSegments
+                                      const segId = additionSlot.slice('mseg_'.length);
+                                      setSession({
+                                        ...session,
+                                        mainDetail: { ...session.mainDetail!, metalSegments: (session.mainDetail?.metalSegments ?? []).filter((item) => item.id !== segId) },
+                                        activeDetailId: isAddActive ? 'main' : session.activeDetailId,
+                                      });
                                     } else {
                                       const newSubDetails = { ...session.subDetails };
                                       delete newSubDetails[additionSlot];
@@ -1121,7 +1164,144 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   (довжина, ширина, глибина), а кромки й кути на неї не
                   накладаються. Тому для неї показуємо конструктор мийки
                   замість таблиці сторін. */}
-              {isSinkDetail ? (
+              {isMetalDetail ? (
+                <Accordion title="Профіль металопрокату" defaultOpen={true}>
+                  <div className="p-4 flex flex-col gap-3 bg-white">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-slate-600">Типорозмір</label>
+                      <select
+                        value={(detail as { metalProfileId?: string }).metalProfileId ?? DEFAULT_METAL_PROFILE_ID}
+                        onChange={(e) => {
+                          const profile = metalProfileById(e.target.value);
+                          // height = висота перерізу: нею деталь лягає смужкою в розкрій
+                          updateDetail({ metalProfileId: e.target.value, height: profile?.h ?? detail.height } as never);
+                        }}
+                        className="border border-slate-300 rounded-sm h-8 px-2 bg-white text-sm"
+                      >
+                        {METAL_PROFILES.map((profile) => (
+                          <option key={profile.id} value={profile.id}>{profile.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-slate-600">Довжина відрізка, мм</label>
+                      <input
+                        type="number"
+                        min={10}
+                        value={detail.width}
+                        onChange={(e) => updateDetail({ width: Math.max(10, Number(e.target.value) || 0) })}
+                        className="border border-slate-300 rounded-sm h-8 px-2 text-sm font-bold w-40"
+                      />
+                    </div>
+                    {/* Ланцюг: проєктування «від торця» — наступний профіль
+                        продовжує попередній прямо або з поворотом 90°/45°.
+                        Джерело істини — metalSegments; розкрій і 3D похідні. */}
+                    {/* Шаблони: генератор пише готовий ланцюг (рама/ферма/опора/мийка) —
+                        далі його можна докручувати тими самими сегментами. */}
+                    <button
+                      onClick={() => setMetalTemplateModalOpen(true)}
+                      className="px-3 py-1.5 text-xs font-bold text-white bg-[#0084ff] hover:bg-[#006fd6] rounded-sm transition-colors"
+                    >
+                      Шаблони виробів: рама · ферма · опора · мийка
+                    </button>
+                    <div className="flex flex-col gap-2 pt-2 border-t border-slate-200">
+                      <span className="text-xs font-bold text-slate-700">Продовження ланцюга</span>
+                      {(() => {
+                        // Нумеруємо тільки матеріальні сегменти: переміщення (gap) — службові
+                        let materialNo = 1;
+                        return (detail.metalSegments ?? []).map((segment) => {
+                          const label = segment.gap ? 'Переміщення (без матеріалу)' : `Сегмент ${(materialNo += 1)}`;
+                          return { segment, label };
+                        });
+                      })().map(({ segment, label }) => (
+                        <div key={segment.id} className={`p-2 border border-slate-200 rounded-sm flex flex-col gap-2 ${segment.gap ? 'bg-white opacity-60' : 'bg-slate-50'}`}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-[#1f2d3a]">{label}</span>
+                            <button
+                              onClick={() => updateDetail({ metalSegments: (detail.metalSegments ?? []).filter((item) => item.id !== segment.id) })}
+                              className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
+                              title="Видалити сегмент"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <div className="flex gap-2">
+                            <select
+                              value={segment.turn}
+                              onChange={(e) => updateDetail({ metalSegments: (detail.metalSegments ?? []).map((item) => item.id === segment.id ? { ...item, turn: e.target.value as typeof segment.turn } : item) })}
+                              className="flex-1 border border-slate-300 rounded-sm h-7 px-1 bg-white text-xs"
+                            >
+                              <option value="straight">Прямо</option>
+                              <option value="up">Вгору</option>
+                              <option value="down">Вниз</option>
+                              <option value="left">Вліво</option>
+                              <option value="right">Вправо</option>
+                            </select>
+                            <select
+                              value={segment.angle}
+                              disabled={segment.turn === 'straight'}
+                              onChange={(e) => updateDetail({ metalSegments: (detail.metalSegments ?? []).map((item) => item.id === segment.id ? { ...item, angle: Number(e.target.value) } : item) })}
+                              className="w-16 border border-slate-300 rounded-sm h-7 px-1 bg-white text-xs disabled:opacity-40"
+                            >
+                              <option value={90}>90°</option>
+                              <option value={45}>45°</option>
+                              {/* Кути з шаблонів (розкоси ферми) — довільні; показуємо як є */}
+                              {![90, 45].includes(segment.angle) && (
+                                <option value={segment.angle}>{Math.round(segment.angle * 10) / 10}°</option>
+                              )}
+                            </select>
+                            <input
+                              type="number"
+                              min={0}
+                              value={segment.length}
+                              onChange={(e) => updateDetail({ metalSegments: (detail.metalSegments ?? []).map((item) => item.id === segment.id ? { ...item, length: Math.max(segment.gap ? 0 : 10, Number(e.target.value) || 0) } : item) })}
+                              className="w-20 border border-slate-300 rounded-sm h-7 px-1 text-xs font-bold"
+                              title="Довжина, мм"
+                            />
+                          </div>
+                          {!segment.gap && (
+                            <select
+                              value={segment.profileId ?? ''}
+                              onChange={(e) => updateDetail({ metalSegments: (detail.metalSegments ?? []).map((item) => item.id === segment.id ? { ...item, profileId: e.target.value || undefined } : item) })}
+                              className="border border-slate-300 rounded-sm h-7 px-1 bg-white text-xs"
+                            >
+                              <option value="">Профіль як у базового</option>
+                              {METAL_PROFILES.map((profile) => (
+                                <option key={profile.id} value={profile.id}>{profile.label}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => updateDetail({
+                          metalSegments: [
+                            ...(detail.metalSegments ?? []),
+                            { id: nextSegmentId(detail), length: 1000, turn: (detail.metalSegments?.length ? 'up' : 'up') as 'up', angle: 90 },
+                          ],
+                        })}
+                        className="px-3 py-1.5 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
+                      >
+                        + Продовжити профіль від торця
+                      </button>
+                    </div>
+                    {(() => {
+                      const totalWeight = metalChainWeightKg(detail) * (detail.quantity || 1);
+                      const profile = metalProfileById((detail as { metalProfileId?: string }).metalProfileId ?? DEFAULT_METAL_PROFILE_ID);
+                      if (!profile) return null;
+                      const qty = detail.quantity || 1;
+                      const surface = pieceSurfaceM2(profile, detail.width || 0) * qty;
+                      const segmentCount = 1 + (detail.metalSegments?.filter((segment) => !segment.gap).length ?? 0);
+                      return (
+                        <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-sm px-3 py-2 flex flex-col gap-1">
+                          <span>Відрізків у ланцюгу: <b>{segmentCount}</b> · Маса разом: <b>{totalWeight.toFixed(2)} кг</b> (× {qty} шт)</span>
+                          <span>База: {kgPerMeter(profile).toFixed(2)} кг/м · фарбування бази: {surface.toFixed(3)} м²</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </Accordion>
+              ) : isSinkDetail ? (
                 <Accordion title="Розміри мийки" defaultOpen={true}>
                   <div className="p-3 bg-white">
                     <SinkDesigner detail={detail} updateDetail={(patch) => updateDetail(patch)} />
@@ -1147,8 +1327,8 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                 </div>
               )}
 
-          {/* Кути й вирізи існують на плоскій деталі; у мийки їх нема */}
-          {!isSinkDetail && (
+          {/* Кути й вирізи існують на плоскій деталі; у мийки й металопрокату їх нема */}
+          {!isSinkDetail && !isMetalDetail && (
           <>
           <Accordion title="Обробка кутів (Радіуси)">
             <div className="p-4 flex flex-col gap-2">
@@ -1369,7 +1549,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
             </div>
           </Accordion>
 
-          {isMainActive && !isSinkDetail && (
+          {isMainActive && !isSinkDetail && !isMetalDetail && (
           <Accordion title="Встановлення мийки в виріб">
             <div className="flex flex-col gap-3">
               {Object.values(detail.sinks ?? {}).map((sink) => {
@@ -1404,10 +1584,28 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                       <option value="slot">Щілинна чаша</option>
                     </select>
 
+                    {/* Прив'язка чаші — та сама механіка, що у вирізів: менеджер
+                        обирає кут деталі й міряє від нього до кута чаші. */}
+                    <label className="flex flex-col gap-0.5 text-[11px] text-slate-500 font-medium">
+                      Прив'язка до кута
+                      <select
+                        value={sink.bindCorner ?? ''}
+                        onChange={(e) => patchSink({ bindCorner: e.target.value })}
+                        className="px-2 py-1 text-xs border border-slate-300 rounded-sm bg-white text-slate-800 font-bold"
+                      >
+                        <option value="">Лівий верхній</option>
+                        {getCornersForKind(detail.kind).map((corner) => (
+                          <option key={corner} value={corner}>{corner}</option>
+                        ))}
+                      </select>
+                    </label>
+
                     <div className="grid grid-cols-2 gap-2">
+                      {/* Чаша міряється так само, як виріз: від прив'язаного
+                          кута деталі до кута чаші, а не до її центру. */}
                       {([
-                        ['Центр по X, мм', 'x'],
-                        ['Центр по Y, мм', 'y'],
+                        ['Від кута по X, мм', 'x'],
+                        ['Від кута по Y, мм', 'y'],
                         ['Довжина чаші, мм', 'width'],
                         ['Ширина чаші, мм', 'height'],
                         ['Глибина чаші, мм', 'depth'],
@@ -1455,6 +1653,21 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           </Accordion>
           )}
             </>
+          ) : session.activeDetailId?.startsWith('mseg_') ? (
+            <div className="p-8 text-center text-slate-500 flex flex-col gap-2 items-center justify-center h-full">
+              <Box className="w-8 h-8 text-slate-300" />
+              <span className="font-medium text-slate-600">Це сегмент ланцюга профілів</span>
+              <p className="text-sm mt-2">
+                Напрямок, кут і довжина редагуються на базовому профілі —
+                розділ «Профіль металопрокату».
+              </p>
+              <button
+                onClick={() => setSession({ ...session, activeDetailId: 'main' })}
+                className="mt-4 px-4 py-1.5 text-sm font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
+              >
+                Перейти до базового профілю
+              </button>
+            </div>
           ) : session.activeDetailId?.startsWith('sink_') ? (
             <div className="p-8 text-center text-slate-500 flex flex-col gap-2 items-center justify-center h-full">
               <Box className="w-8 h-8 text-slate-300" />
@@ -1496,6 +1709,18 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           onClose={() => setAddElementModalOpen(false)}
           onSave={(draft, name) => {
             setSession({ ...session, mainDetail: { ...draft, label: name }, activeDetailId: 'main' });
+            setAddElementModalOpen(false);
+          }}
+          onApplyTemplate={(tpl) => {
+            // Шаблон приносить готову сесію: головна деталь + суб-деталі за
+            // слотами. Наявні субдеталі сесії зберігаємо (та сама семантика,
+            // що й у onSave, який теж не чіпає subDetails).
+            setSession({
+              ...session,
+              mainDetail: tpl.mainDetail,
+              subDetails: { ...session.subDetails, ...tpl.subDetails },
+              activeDetailId: 'main',
+            });
             setAddElementModalOpen(false);
           }}
         />

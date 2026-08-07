@@ -1303,4 +1303,4 @@ export function SlabBoard() {
       )}
     </section>
   );
-}
+}

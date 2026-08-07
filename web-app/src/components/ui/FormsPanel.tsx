@@ -32,7 +32,7 @@ const rectDetailTemplateSrc = new URL('../../assets/rect-detail-template.svg', i
 const lDetailTemplateSrc = new URL('../../assets/l-detail-template.svg', import.meta.url).href;
 
 import type { ShapeKind, CircleSizeMode, DetailDraft } from '../forms/utils/draftHelpers';
-import { detailTypes, TYPE_COUNTERTOP,  TYPE_SINK, TYPE_SUPPORT, SHAPE_RECT, SHAPE_L, SHAPE_U, SHAPE_CIRCLE,  baseDesigns, sinkDesigns, allSides, curveSides,  createDraft, defaultsForKind,   draftFromDetail } from '../forms/utils/draftHelpers';
+import { visibleDetailTypes, TYPE_COUNTERTOP,  TYPE_SINK, TYPE_SUPPORT, TYPE_METAL, SHAPE_RECT, SHAPE_L, SHAPE_U, SHAPE_CIRCLE,  baseDesigns, sinkDesigns, metalDesigns, allSides, curveSides,  createDraft, defaultsForKind,   draftFromDetail } from '../forms/utils/draftHelpers';
 
 
 function ImportedDetailPreview({ detail, linkedElements }: { detail: Detail; linkedElements: Detail[] }) {
@@ -65,12 +65,13 @@ function ImportedDetailPreview({ detail, linkedElements }: { detail: Detail; lin
 
 export function designsForType(type: DetailType) {
   if (type === TYPE_SINK) return sinkDesigns;
+  if (type === TYPE_METAL) return metalDesigns;
   if (type === TYPE_COUNTERTOP) return baseDesigns;
   return baseDesigns.filter((item) => item.kind === 'rect');
 }
 
 export function designForKind(kind: ShapeKind) {
-  return [...baseDesigns, ...sinkDesigns].find((item) => item.kind === kind) ?? baseDesigns[0];
+  return [...baseDesigns, ...sinkDesigns, ...metalDesigns].find((item) => item.kind === kind) ?? baseDesigns[0];
 }
 
 export function sideOptionsFor(kind: ShapeKind) {
@@ -89,7 +90,7 @@ export function sideOptionsFor(kind: ShapeKind) {
  * виняток — мийка, у неї власний конструктор із моделями.
  */
 export function supportsEdges(type: DetailType) {
-  return type !== TYPE_SINK;
+  return type !== TYPE_SINK && type !== TYPE_METAL;
 }
 
 import { RectangleDesigner } from '../forms/shapes/RectangleDesigner';
@@ -1594,7 +1595,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
             </div>
 
             <div className="designer-select-row">
-              <Field label="Тип"><select value={detail.type} onChange={(e) => setType(e.target.value as DetailType)}>{detailTypes.map((type) => <option key={type} value={type}>{ui(type)}</option>)}</select></Field>
+              <Field label="Тип"><select value={detail.type} onChange={(e) => setType(e.target.value as DetailType)}>{visibleDetailTypes(isAdminUnlocked, detail.type).map((type) => <option key={type} value={type}>{ui(type)}</option>)}</select></Field>
               <Field label="Форма"><select value={detail.kind} disabled={isImportedDetailEdit} onChange={(e) => updateDetail({ kind: e.target.value as ShapeKind })}>{designs.map((design) => <option key={design.kind} value={design.kind}>{ui(design.label)}</option>)}</select></Field>
             </div>
 
@@ -1751,7 +1752,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
                         </Field>
                         <Field label="Тип">
                           <select value={item.type} onChange={(event) => updateApprovalItem(item.id, { type: event.target.value as DetailType })}>
-                            {detailTypes.map((type) => <option key={type} value={type}>{ui(type)}</option>)}
+                            {visibleDetailTypes(isAdminUnlocked, item.type).map((type) => <option key={type} value={type}>{ui(type)}</option>)}
                           </select>
                         </Field>
                         <Field label="Форма">
@@ -2010,7 +2011,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
                     </Field>
                     <Field label="Тип">
                       <select value={contour.type} onChange={(event) => updateDxfPreviewItem(contour.id, { type: event.target.value as DetailType })}>
-                        {detailTypes.map((type) => <option key={type} value={type}>{ui(type)}</option>)}
+                        {visibleDetailTypes(isAdminUnlocked, contour.type).map((type) => <option key={type} value={type}>{ui(type)}</option>)}
                       </select>
                     </Field>
                     <Field label="Форма">
@@ -2247,10 +2248,17 @@ export function DesignerCanvas({ detail, updateDetail, language, onCornerClick, 
       {detail.kind === 'u' && <UDesigner detail={detail} updateDetail={updateDetail} activeSides={activeSides} onSideClick={toggleSide} />}
       {detail.kind === 'rect' && <RectangleDesigner detail={detail} updateDetail={updateDetail} activeSides={activeSides} onSideClick={toggleSide} language={language} onCornerClick={onCornerClick} onCutoutClick={onCutoutClick} />}
       {(detail.kind === 'sink_rect' || detail.kind === 'sink_slot') && <SinkDesigner detail={detail} updateDetail={updateDetail} />}
+      {detail.kind === 'metal_profile' && (
+        /* Металопрокат: 2D-креслення профілю не малюємо — розміри
+           редагуються в панелі «Профіль металопрокату» праворуч. */
+        <div className="p-6 text-sm text-slate-500 text-center">
+          Відрізок профілю. Типорозмір і довжина — у панелі властивостей праворуч.
+        </div>
+      )}
     </section>
   );
 }
 
 function sideClass(side: string, className: string, activeSides: Set<string>) {
   return `${className}${activeSides.has(side) ? ' active' : ''}`;
-}
+}

@@ -1,4 +1,5 @@
 import type { DetailDraft } from '../../../domain/types';
+import { cutoutCenter } from '../../../domain/cutoutAnchor';
 import type { UiLanguage } from '../../../store/useDictionaryStore';
 import {     TemplateInput,    CornerMarker } from './SvgComponents';
 import { translateStaticUiText } from '../../../i18n';
@@ -40,20 +41,20 @@ export function RectangleDesigner({ detail, updateDetail, activeSides, onSideCli
         {detail.cutouts && Object.values(detail.cutouts).map(cutout => {
           const corner = cornersSvgMap[cutout.bindCorner];
           if (!corner) return null;
-          
-          let cx = corner.x;
-          let cy = corner.y;
-          
+
+          // Позицію рахує спільний резолвер прив'язки — тут була третя копія
+          // тієї самої математики, і вона ставила мітку на кут вирізу, а не
+          // на його центр.
           const svgW = 448; // 606 - 158
           const svgH = 197; // 232 - 35
-          
-          const dx = (cutout.x / (detail.width || 1)) * svgW;
-          const dy = (cutout.y / (detail.height || 1)) * svgH;
-
-          if (cutout.bindCorner === 'DA') { cx += dx; cy += dy; }
-          else if (cutout.bindCorner === 'AB') { cx -= dx; cy += dy; }
-          else if (cutout.bindCorner === 'BC') { cx -= dx; cy -= dy; }
-          else if (cutout.bindCorner === 'CD') { cx += dx; cy -= dy; }
+          const { cx: absX, cy: absY } = cutoutCenter(cutout, {
+            shape: 'Прямокутна',
+            geometry: detail as never,
+            width: detail.width || 1,
+            height: detail.height || 1,
+          });
+          const cx = cornersSvgMap.DA.x + (absX / (detail.width || 1)) * svgW;
+          const cy = cornersSvgMap.DA.y + (absY / (detail.height || 1)) * svgH;
 
           return (
             <div 

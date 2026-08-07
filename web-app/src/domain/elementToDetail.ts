@@ -1,6 +1,23 @@
 import type { ShapeKind, DetailShape, DetailGeometry, ElementDefinition, Detail, ProductElement, CutAllowances } from './types';
 import { buildDetailPath } from './ids';
 import { sinkCutoutRecord } from './productSink';
+import { toCenterCutouts } from './cutoutAnchor';
+
+/**
+ * Контекст, у якому рахується прив'язка вирізу до кута деталі.
+ * Габарит беремо той самий, що й побудова контуру, — інакше кут AB
+ * опиниться не там, де його намалювали.
+ */
+export function anchorContextFor(draft: ElementDefinition) {
+  const any = draft as any;
+  const shape = toDetailShape(draft.kind);
+  // Габарит — описаний прямокутник форми. Коло і еліпс теж мають бути тут:
+  // без цього виріз на круглій стільниці мірявся б від «кута» деталі
+  // з нульовою шириною і летів у край.
+  const width = any.outerWidth ?? draft.width ?? any.diameter ?? any.ellipseWidth ?? 0;
+  const height = any.outerHeight ?? any.height ?? any.diameter ?? any.ellipseHeight ?? 0;
+  return { shape, geometry: any, width, height };
+}
 
 export function toDetailShape(kind: ShapeKind): DetailShape {
   switch (kind) {
@@ -36,9 +53,15 @@ export function buildGeometry(draft: ElementDefinition): DetailGeometry {
     // Мийки, встановлені в деталь, домішують свої отвори до вирізів —
     // так виріз під чашу потрапляє в розкрій, креслення і бланк погодження
     // без ручного дублювання (джерело істини — draft.sinks).
-    cutouts: draft.sinks && Object.keys(draft.sinks).length > 0
-      ? { ...(draft.cutouts ?? {}), ...sinkCutoutRecord(draft) }
-      : draft.cutouts,
+    // Прив'язка по куту знімається ТУТ, на межі «редактор → розкрій»: далі за
+    // течією (рушій, креслення, бланк) усі чекають абсолютний центр вирізу.
+    // Одна точка переведення — щоб карта крою і поле в редакторі не розійшлись.
+    cutouts: toCenterCutouts(
+      draft.sinks && Object.keys(draft.sinks).length > 0
+        ? { ...(draft.cutouts ?? {}), ...sinkCutoutRecord(draft) }
+        : draft.cutouts,
+      anchorContextFor(draft),
+    ),
     jointDirection: draft.jointDirection,
     jointOmegaDirection: draft.jointOmegaDirection,
     jointLambdaDirection: draft.jointLambdaDirection,
@@ -55,6 +78,8 @@ export function buildGeometry(draft: ElementDefinition): DetailGeometry {
     sinkKind: draft.kind === 'sink_rect' ? 'rect'
       : draft.kind === 'sink_slot' ? 'slot'
       : undefined,
+    /** Металопрокат: id профілю вмикає метал-гілку розкрою і 3D */
+    metalProfileId: draft.kind === 'metal_profile' ? (draft as { metalProfileId?: string }).metalProfileId : undefined,
   };
 }
 

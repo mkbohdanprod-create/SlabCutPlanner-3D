@@ -1,5 +1,6 @@
 import React from 'react';
-import { X, Check } from 'lucide-react';
+import { DraggableDialog } from './DraggableDialog';
+import { Check } from 'lucide-react';
 import type { CornerProcessing, CornerProcessingType } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import type { UiLanguage } from '../../store/useDictionaryStore';
@@ -33,18 +34,7 @@ export function CornerProcessingModal({ cornerId, initialData, onSave, onClose, 
   };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/20">
-      <div 
-        className="bg-[#c6e6fc] shadow-2xl rounded-sm w-[320px] flex flex-col"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="bg-[#1f93ef] text-white px-4 py-2 flex items-center justify-between">
-          <h2 className="font-bold text-sm">Обробка кутів</h2>
-          <button onClick={onClose} className="hover:bg-white/20 p-1 rounded-full transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <DraggableDialog title="Обробка кутів" onClose={onClose} width={320}>
         <div className="p-4 flex flex-col gap-4 text-[13px] text-slate-800">
           <div className="flex flex-col gap-1">
             <label className="text-slate-600 font-medium">Тип обробки</label>
@@ -146,7 +136,6 @@ export function CornerProcessingModal({ cornerId, initialData, onSave, onClose, 
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </DraggableDialog>
   );
-}
+}

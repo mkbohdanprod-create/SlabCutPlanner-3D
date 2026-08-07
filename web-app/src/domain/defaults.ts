@@ -2,7 +2,7 @@ import type { Project, ReferenceData, CommercialQuoteSettings } from './types';
 
 export const referenceData: ReferenceData = {
   materials: ['Керамограніт', 'Кварцит', 'Натуральний камінь', 'Акрил', 'Компакт-плита'],
-  detailTypes: ['Стільниця', 'Стінова панель', 'Мийка', 'Фасад', 'Опора', 'Довільний елемент'],
+  detailTypes: ['Стільниця', 'Стінова панель', 'Мийка', 'Фасад', 'Опора', 'Довільний елемент', 'Металопрокат'],
   detailShapes: ['Прямокутна', 'Г-подібна', 'П-подібна', 'Кругла', 'Овальна'],
   slabSizes: [
     { width: 3200, height: 1600 },

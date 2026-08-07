@@ -6,6 +6,7 @@ import { pointsBounds } from './geometryUtils';
 import { DEFAULT_ALLOWANCES } from '../domain/defaults';
 import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
 import { jointAnchorPoints, reflexJointShift, snapJointPosition } from '../domain/joints';
+import { metalProfileById, pieceWeightKg } from '../domain/metalProfiles';
 
 function createGeometryEngine(activeAllowances: CutAllowances) {
 const SHAPE_LABELS = new Set([
@@ -856,19 +857,14 @@ function buildHolesFromCutouts(
   const holes: Point[][] = [];
   if (!cutouts || Object.keys(cutouts).length === 0) return holes;
 
+  // Сюди вирізи приходять уже з АБСОЛЮТНИМ центром: прив'язку до кута знімає
+  // `buildGeometry` через `domain/cutoutAnchor.ts`. Тут своєї математики
+  // прив'язки бути не повинно — раніше вона тут була, шукала кут за іменем
+  // точки контуру, а точки контуру імен кутів не несуть (тільки sideId), тому
+  // гілка ніколи не спрацьовувала і виріз мовчки лягав від початку координат.
   Object.values(cutouts).forEach((c) => {
     let cx = c.x;
     let cy = c.y;
-
-    if (c.bindCorner) {
-      const bindPt = contourPoints.find((p) => p.id === c.bindCorner);
-      if (bindPt) {
-        const dirX = bindPt.x <= width / 2 ? 1 : -1;
-        const dirY = bindPt.y <= height / 2 ? 1 : -1;
-        cx = bindPt.x + dirX * c.x;
-        cy = bindPt.y + dirY * c.y;
-      }
-    }
 
     cx += shiftX;
     cy += shiftY;
@@ -1859,6 +1855,20 @@ function explodeDetails(details: Detail[]): DetailPart[] {
 
       if (g.sinkKind === 'rect') {
         pushRectSinkParts(parts, detail, parentLabel);
+        continue;
+      }
+
+      // Металопрокат (MVP Viyar Metal): відрізок профілю йде в розкрій
+      // однією смужкою «довжина × висота перерізу» — 1D-розкрій хлистів
+      // поверх наявного пакувальника. Маса — прямо в назві, щоб менеджер
+      // бачив вагу без калькулятора.
+      if (g.metalProfileId) {
+        const profile = metalProfileById(g.metalProfileId);
+        const lengthMm = Math.max(1, g.width ?? 1000);
+        const heightMm = Math.max(1, profile?.h ?? g.height ?? 40);
+        const weight = profile ? pieceWeightKg(profile, lengthMm) : 0;
+        const name = `${profile?.label ?? 'Профіль'} — ${Math.round(lengthMm)} мм${weight ? ` (${weight.toFixed(2)} кг)` : ''}`;
+        parts.push(buildRectPart(detail, name, lengthMm, heightMm, true, parentLabel));
         continue;
       }
 

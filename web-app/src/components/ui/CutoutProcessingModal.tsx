@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
-import { X, Check, ArrowLeftRight, ArrowUpDown } from 'lucide-react';
+import { Check, ArrowLeftRight, ArrowUpDown } from 'lucide-react';
+import { DraggableDialog } from './DraggableDialog';
 import type { SurfaceCutout } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import type { UiLanguage } from '../../store/useDictionaryStore';
@@ -49,20 +50,10 @@ export function CutoutProcessingModal({ initialData, corners, onSave, onClose, l
   };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/20">
-      <div 
-        className="bg-[#c6e6fc] shadow-2xl rounded-sm w-[360px] flex flex-col"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="bg-[#1f93ef] text-white px-4 py-2 flex items-center justify-between">
-          <h2 className="font-bold text-sm">
-            {shape === 'circle' ? ui('Круглий виріз') : ui('Прямокутний виріз')}
-          </h2>
-          <button onClick={onClose} className="hover:bg-white/20 p-1 rounded-full transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <DraggableDialog
+      title={shape === 'circle' ? ui('Круглий виріз') : ui('Прямокутний виріз')}
+      onClose={onClose}
+    >
         <div className="bg-[#cc0000] text-white text-xs font-bold px-4 py-1.5 flex items-center">
           Підказка: Мінімальний радіус для обробки кута - 5 мм
         </div>
@@ -94,10 +85,20 @@ export function CutoutProcessingModal({ initialData, corners, onSave, onClose, l
             </select>
           </div>
 
+          {/* Прямокутник міряється до КУТА вирізу (рулеткою, як у цеху), коло —
+              до ЦЕНТРУ отвору (у кола кута немає, на кресленнях так і задають).
+              Підпис прибирає найчастіше питання менеджера: «це до центру чи до краю?» */}
+          <div className="text-[11px] leading-tight text-slate-600 bg-white/70 rounded-sm px-2 py-1">
+            {ui('Відстань від кута')} <b>{bindCorner || '—'}</b>{' '}
+            {shape === 'circle' ? ui('до центру отвору') : ui('до найближчого кута вирізу')}
+          </div>
+
           <div className="flex gap-4">
             <div className="flex flex-col gap-1 flex-1">
               <label className="text-slate-600 font-medium">
-                {ui(`Координата по ${bindCorner.charAt(0) || 'X'}`)}
+                {shape === 'circle'
+                  ? ui(`Центр по ${bindCorner.charAt(0) || 'X'}`)
+                  : ui(`Від кута по ${bindCorner.charAt(0) || 'X'}`)}
               </label>
               <div className="relative flex items-center">
                 <input 
@@ -111,7 +112,9 @@ export function CutoutProcessingModal({ initialData, corners, onSave, onClose, l
             </div>
             <div className="flex flex-col gap-1 flex-1">
               <label className="text-slate-600 font-medium">
-                {ui(`Координата по ${bindCorner.charAt(1) || 'Y'}`)}
+                {shape === 'circle'
+                  ? ui(`Центр по ${bindCorner.charAt(1) || 'Y'}`)
+                  : ui(`Від кута по ${bindCorner.charAt(1) || 'Y'}`)}
               </label>
               <div className="relative flex items-center">
                 <input 
@@ -226,7 +229,6 @@ export function CutoutProcessingModal({ initialData, corners, onSave, onClose, l
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </DraggableDialog>
   );
 }

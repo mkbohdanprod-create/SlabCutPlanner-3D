@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import type { DetailDraft } from '../../forms/utils/draftHelpers';
+import type { DetailDraft } from '../forms/utils/draftHelpers';
+import { getSideSize } from '../forms/utils/draftHelpers';
 import { EdgeProfileIcon } from '../forms/editors/EdgeProcessingDesigner';
 import type { EdgeProfileType, EdgeProfileDef, MaterialType } from '../../../domain/types';
 
@@ -12,47 +12,11 @@ interface DimensionsTableProps {
 }
 
 export function DimensionsTable({ draft, updateDetail, sides, edgeProfiles, material }: DimensionsTableProps) {
-  const getSideLength = (side: string): number => {
-    if (draft.kind === 'rect' || draft.kind === 'sink_rect' || draft.kind === 'sink_slot') {
-      if (side === 'A' || side === 'C') return draft.width;
-      if (side === 'B' || side === 'D') return draft.height;
-    }
-    
-    if (draft.kind === 'l') {
-      const { outerWidth = 1200, outerHeight = 1200, innerHorizontal = 600, innerVertical = 600 } = draft;
-      switch (side) {
-        case 'A': return outerWidth;
-        case 'B': return innerVertical;
-        case 'C': return Math.max(1, outerWidth - innerHorizontal);
-        case 'D': return Math.max(1, outerHeight - innerVertical);
-        case 'E': return innerHorizontal;
-        case 'F': return outerHeight;
-      }
-    }
-    
-    if (draft.kind === 'u') {
-      const w = draft.width || 2400;
-      const leftH = draft.leftLegHeight ?? (draft.height || 1200);
-      const rightH = draft.rightLegHeight ?? (draft.height || 1200);
-      const maxH = Math.max(leftH, rightH);
-      const cutW = draft.innerCutWidth || 1200;
-      const cutD = draft.innerCutDepth || 600;
-      const cutOff = draft.innerCutOffset || 600;
-      const topBarHeight = Math.max(0, maxH - cutD);
-      
-      switch (side) {
-        case 'A': return w;
-        case 'B': return rightH;
-        case 'C': return Math.max(1, w - cutOff - cutW);
-        case 'D': return Math.max(1, rightH - topBarHeight);
-        case 'E': return cutW;
-        case 'F': return Math.max(1, leftH - topBarHeight);
-        case 'G': return cutOff;
-        case 'H': return leftH;
-      }
-    }
-    return 0;
-  };
+  // Довжину сторони рахує СПІЛЬНА getSideSize із draftHelpers — тут жила її
+  // повна копія, і на Г-подібній вони розійшлися (B і D навхрест). Дві копії
+  // одного мапінгу — це і є механізм таких багів: виправляють одну, друга
+  // лишається. Тому копію видалено, а не полагоджено.
+  const getSideLength = (side: string): number => getSideSize(draft, side);
 
   const handleSizeChange = (side: string, val: number) => {
     if (val < 1) val = 1;
@@ -63,12 +27,14 @@ export function DimensionsTable({ draft, updateDetail, sides, edgeProfiles, mate
     }
     
     if (draft.kind === 'l') {
+      // Дзеркало getSideSize: B — коротка права сторона (outerHeight − innerVertical),
+      // D — внутрішня вертикаль вирізу. Редагування B тягне габарит, D — виріз.
       let { outerWidth = 1200, outerHeight = 1200, innerHorizontal = 600, innerVertical = 600 } = draft;
       switch (side) {
         case 'A': outerWidth = val; break;
-        case 'B': innerVertical = val; break;
+        case 'B': outerHeight = val + innerVertical; break;
         case 'C': outerWidth = val + innerHorizontal; break;
-        case 'D': outerHeight = val + innerVertical; break;
+        case 'D': innerVertical = val; break;
         case 'E': innerHorizontal = val; break;
         case 'F': outerHeight = val; break;
       }

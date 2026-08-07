@@ -1456,4 +1456,4 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
       )}
     </div>
   );
-}
+}

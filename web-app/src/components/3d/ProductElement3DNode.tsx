@@ -5,6 +5,7 @@ import { Detail3DNode } from '../ui/Detail3DPreview';
 import { buildDetailShape, getDetailPointsAndBounds } from '../../engines/shapeBuilder';
 import { getEdgeTransform } from '../../engines/transform3d';
 import { getSinkPartTransform } from '../../engines/sinkAssembly';
+import { sinkCenter } from '../../domain/productSink';
 
 export function ProductElement3DNode({
   element,
@@ -96,14 +97,18 @@ export function ProductElement3DNode({
   // у похідного вирізу). Рекурсія нижче потрапляє в гілку isSinkElement.
   const renderInstalledSink = (addition: ProductElement) => {
     const slot = addition.id.split(':').pop() || '';
-    const sinkDef = (detail as { sinks?: Record<string, { x: number; y: number }> })?.sinks?.[slot.slice('sink_'.length)];
+    const sinkDef = (detail as unknown as { sinks?: Record<string, import('../../domain/types').ProductSinkDef> })?.sinks?.[slot.slice('sink_'.length)];
     if (!sinkDef) return null;
     const s = 0.001;
     const w = (bounds.maxX - bounds.minX) || 1;
     const h = (bounds.maxY - bounds.minY) || 1;
     const thick = (detail.thickness || 20) * s;
+    // Центр чаші рахує спільний sinkCenter — та сама формула, що в отвору.
+    // sink.x/y — це відступ від кута до КУТА чаші, а не центр; читати їх
+    // напряму тут не можна (чаша повисне зі зсувом від власного вирізу).
+    const { cx, cy } = sinkCenter(detail as never, sinkDef);
     return (
-      <group key={addition.id} position={[(sinkDef.x - w / 2) * s, -thick / 2, (sinkDef.y - h / 2) * s]}>
+      <group key={addition.id} position={[(cx - w / 2) * s, -thick / 2, (cy - h / 2) * s]}>
         <ProductElement3DNode
           element={addition}
           activeDetailId={activeDetailId}
@@ -456,4 +461,4 @@ export function ProductElement3DNode({
       })}
     </group>
   );
-}
+}

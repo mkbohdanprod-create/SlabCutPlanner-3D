@@ -8,7 +8,7 @@ export type UiLanguage = 'uk' | 'en' | 'pl';
 export type Rotation = number;
 export type DefectShapeType = 'rect' | 'circle' | 'triangle' | 'polygon';
 
-export type ShapeKind = 'rect' | 'circle' | 'ellipse' | 'l' | 'u' | 'sink_rect' | 'sink_slot';
+export type ShapeKind = 'rect' | 'circle' | 'ellipse' | 'l' | 'u' | 'sink_rect' | 'sink_slot' | 'metal_profile';
 export type CircleSizeMode = 'diameter' | 'radius';
 
 export interface ElementDefinition {
@@ -56,6 +56,27 @@ export interface ElementDefinition {
   wallPanels: Record<string, WallPanel>;
   legs: Record<string, Leg>;
   customServices?: CustomService[];
+  /** Металопрокат (MVP Viyar Metal): id профілю з сортаменту. Довжина відрізка — width. */
+  metalProfileId?: string;
+  /**
+   * Ланцюг профілів «від торця»: сегменти, що продовжують базовий відрізок
+   * (прямо / вгору / вниз / вліво / вправо, кут 90°/45°). Джерело істини —
+   * тут; деталі розкрою (mseg_*) і 3D-ланцюг — похідні. Див. domain/metalChain.
+   */
+  metalSegments?: Array<{
+    id: string;
+    length: number;
+    turn: 'straight' | 'up' | 'down' | 'left' | 'right';
+    angle: number;
+    profileId?: string;
+    /**
+     * Переміщення «пером угору»: черепашка повертає і йде, але матеріалу
+     * немає — ні деталі розкрою, ні маси, ні меша в 3D. Так шаблони
+     * (рама, ферма, опора) описують РОЗІРВАНІ конструкції одним ланцюгом,
+     * не заводячи другого джерела істини.
+     */
+    gap?: boolean;
+  }>;
   /**
    * Мийки, встановлені У виріб (нижній монтаж). Живуть на стільниці:
    * позиціонуються як виріз (центр чаші в координатах деталі), а далі з них
@@ -71,9 +92,14 @@ export interface ProductSinkDef {
   id: string;
   /** Прямокутна чи щілинна — той самий поділ, що й в окремої мийки */
   kind: 'rect' | 'slot';
-  /** Центр чаші від лівого краю деталі, мм */
+  /**
+   * Кут деталі, від якого міряється чаша ('AB', 'BC', …).
+   * Порожньо або відсутнє — від лівого верхнього кута.
+   */
+  bindCorner?: string;
+  /** Відступ від прив'язаного кута деталі до КУТА чаші, мм (як у вирізів) */
   x: number;
-  /** Центр чаші від верхнього краю деталі, мм */
+  /** Відступ по другій осі, мм */
   y: number;
   /** Внутрішня довжина чаші, мм */
   width: number;
@@ -324,6 +350,12 @@ export interface SurfaceCutout {
   shape: 'circle' | 'rect';
   type: 'custom' | 'socket' | 'faucet';
   bindCorner: string;
+  /**
+   * Відступ від прив'язаного кута деталі, мм: для прямокутника — до найближчого
+   * КУТА вирізу, для кола — до ЦЕНТРУ отвору (у кола кута немає).
+   * Переведення в центр, з яким працює рушій, — тільки через
+   * `domain/cutoutAnchor.ts`.
+   */
   x: number;
   y: number;
   radius?: number;
@@ -397,6 +429,8 @@ export interface DetailGeometry {
   ellipseWidth?: number;
   ellipseHeight?: number;
   sinkKind?: 'rect' | 'slot';
+  /** Металопрокат: id профілю з сортаменту (вмикає гілку металу в розкрої та 3D) */
+  metalProfileId?: string;
   wholeDetail?: boolean;
   jointDirection?: 'horizontal' | 'vertical';
   jointBaseEdge?: 'A' | 'B' | 'C' | 'D';

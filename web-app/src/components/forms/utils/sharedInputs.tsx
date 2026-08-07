@@ -24,6 +24,7 @@ export function ShapeIcon({ kind }: { kind: ShapeKind }) {
       {kind === 'u' && <path d="M17 14 H63 V39 H50 V25 H30 V39 H17 Z" />}
       {kind === 'sink_rect' && <><rect x="16" y="13" width="48" height="30" rx="3" /><circle cx="40" cy="28" r="5" /></>}
       {kind === 'sink_slot' && <><rect x="15" y="15" width="50" height="26" rx="3" /><rect x="25" y="24" width="30" height="8" rx="2" /></>}
+      {kind === 'metal_profile' && <><rect x="12" y="20" width="56" height="16" rx="1" /><rect x="16" y="24" width="48" height="8" rx="1" fill="#dcebf5" /></>}
     </svg>
   );
 }

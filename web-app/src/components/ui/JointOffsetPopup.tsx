@@ -1,6 +1,7 @@
 import React from 'react';
 import type { CornerProcessing, Point } from '../../domain/types';
 import { manualJointPosition, type JointSideSelection } from '../../domain/joints';
+import { useCloseOnOutsideClick } from './useCloseOnOutsideClick';
 
 interface JointOffsetPopupProps {
   x: number;
@@ -42,15 +43,7 @@ export function JointOffsetPopup({
     inputRef.current?.select();
   }, []);
 
-  React.useEffect(() => {
-    // Затримка, щоб клік, яким віконечко відкрили, не закрив його одразу.
-    const timer = setTimeout(() => {
-      const handleClickOutside = () => onCancel();
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
-    }, 10);
-    return () => clearTimeout(timer);
-  }, [onCancel]);
+  useCloseOnOutsideClick(onCancel);
 
   const { requested, snapped } = manualJointPosition(anchors, corners, {
     axis: joint.axis,
@@ -80,8 +73,15 @@ export function JointOffsetPopup({
         Між сторонами <b>{joint.sideId}</b> і <b>{joint.oppositeSideId}</b>
       </div>
 
+      {/* Підписуємо СТОРОНУ, а не кут: рулетку кладуть на край плити, а не в ріг.
+          Число те саме — опорний кут лежить на цій же стороні, — тому змінився
+          лише підпис, математика в manualJointPosition незмінна. */}
       <label className="block text-xs text-slate-500 mb-1">
-        {joint.anchorCorner ? <>Відступ від кута <b>{joint.anchorCorner}</b></> : 'Відступ від краю деталі'}
+        {joint.referenceSideId
+          ? <>Відступ від сторони <b>{joint.referenceSideId}</b></>
+          : joint.anchorCorner
+            ? <>Відступ від кута <b>{joint.anchorCorner}</b></>
+            : 'Відступ від краю деталі'}
       </label>
       <div className="flex items-center gap-2 mb-2">
         <input

@@ -65,6 +65,11 @@ interface UIState {
   setIsEdgeProfileSettingsOpen: (open: boolean) => void;
   productEditorSession: ProductEditorSession | null;
   setProductEditorSession: (session: ProductEditorSession | null) => void;
+  /** Ctrl+Z всередині редактора виробу: знімки сесії (лише реальні дії) */
+  sessionHistory: ProductEditorSession[];
+  sessionFuture: ProductEditorSession[];
+  undoSession: () => void;
+  redoSession: () => void;
   editingDetailId: string | null;
   setEditingDetailId: (id: string | null) => void;
   isQuoteOpen: boolean;
@@ -97,6 +102,9 @@ interface UIState {
   hideConfirm: () => void;
 }
 
+/** Мітка часу останньої зміни сесії — для злиття серій швидких правок в один крок */
+let sessionBurstAt = 0;
+
 export const useUIStore = create<UIState>((set) => ({
   mainView: '2d',
   splitRatio: 50,
@@ -123,7 +131,61 @@ export const useUIStore = create<UIState>((set) => ({
   isAddProductMode: false,
   setAddProductMode: (enabled) => set({ isAddProductMode: enabled }),
   productEditorSession: null,
-  setProductEditorSession: (session) => set({ productEditorSession: session }),
+  /**
+   * Кожна зміна сесії редактора йде через цей сеттер — тому історія Ctrl+Z
+   * для редактора живе прямо тут, без обходу всіх місць редагування.
+   *
+   * Що є кроком, а що ні (рішення власника 07.08):
+   *  · крок — лише РЕАЛЬНА дія: змінився mainDetail або subDetails
+   *    (розмір, стик, виріз, додане доповнення…);
+   *  · зміна активної деталі (клік по дереву чи по 3D) — НЕ крок:
+   *    порівнюємо посилання, selection-only оновлення проходить повз стек;
+   *  · швидкі послідовні зміни (набір числа клавішами) зливаються в один
+   *    крок: поки між змінами менше 800 мс, знімок не додається — відкат
+   *    повертає стан до початку серії, а не по одній цифрі.
+   *  · вхід у редактор і вихід із нього скидають стек: історія живе рівно
+   *    одну сесію редагування, чужу сесію відкочувати не можна.
+   */
+  setProductEditorSession: (session) => set((state) => {
+    const prev = state.productEditorSession;
+    if (prev === null || session === null) {
+      sessionBurstAt = 0;
+      return { productEditorSession: session, sessionHistory: [], sessionFuture: [] };
+    }
+    const geometryChanged = prev.mainDetail !== session.mainDetail || prev.subDetails !== session.subDetails;
+    if (!geometryChanged) return { productEditorSession: session };
+
+    const now = Date.now();
+    const isBurst = now - sessionBurstAt < 800;
+    sessionBurstAt = now;
+    if (isBurst) return { productEditorSession: session };
+
+    const sessionHistory = [...state.sessionHistory, prev];
+    if (sessionHistory.length > 50) sessionHistory.shift();
+    return { productEditorSession: session, sessionHistory, sessionFuture: [] };
+  }),
+  sessionHistory: [],
+  sessionFuture: [],
+  undoSession: () => set((state) => {
+    const prev = state.sessionHistory[state.sessionHistory.length - 1];
+    if (!prev || state.productEditorSession === null) return {};
+    sessionBurstAt = 0;
+    return {
+      productEditorSession: prev,
+      sessionHistory: state.sessionHistory.slice(0, -1),
+      sessionFuture: [...state.sessionFuture, state.productEditorSession],
+    };
+  }),
+  redoSession: () => set((state) => {
+    const next = state.sessionFuture[state.sessionFuture.length - 1];
+    if (!next || state.productEditorSession === null) return {};
+    sessionBurstAt = 0;
+    return {
+      productEditorSession: next,
+      sessionFuture: state.sessionFuture.slice(0, -1),
+      sessionHistory: [...state.sessionHistory, state.productEditorSession],
+    };
+  }),
   editingDetailId: null,
   setEditingDetailId: (id) => set({ editingDetailId: id }),
   isFloatingPreviewOpen: false,

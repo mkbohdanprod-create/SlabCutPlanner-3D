@@ -1,6 +1,7 @@
 import React from 'react';
 import { translateStaticUiText } from '../../i18n';
 import type { UiLanguage } from '../../store/useDictionaryStore';
+import { useCloseOnOutsideClick } from './useCloseOnOutsideClick';
 
 interface JointContextMenuProps {
   x: number;
@@ -13,15 +14,7 @@ interface JointContextMenuProps {
 export function JointContextMenu({ x, y, onClose, onSelect, language = 'uk' }: JointContextMenuProps) {
   const ui = (value: string) => translateStaticUiText(language, value);
 
-  React.useEffect(() => {
-    // Small timeout to prevent the current click from immediately closing the menu
-    const timer = setTimeout(() => {
-      const handleClickOutside = () => onClose();
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
-    }, 10);
-    return () => clearTimeout(timer);
-  }, [onClose]);
+  useCloseOnOutsideClick(onClose);
 
   return (
     <div
@@ -60,4 +53,4 @@ export function JointContextMenu({ x, y, onClose, onSelect, language = 'uk' }: J
       </button>
     </div>
   );
-}
+}

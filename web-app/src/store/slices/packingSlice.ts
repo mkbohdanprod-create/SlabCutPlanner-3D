@@ -33,6 +33,12 @@ export function triggerPackingAsync(
   set: (state: Partial<ProjectState> | ((state: ProjectState) => void)) => void,
   get: () => ProjectState
 ) {
+  // ІСТОРІЯ: це єдиний конвеєр, через який проходить БУДЬ-ЯКА зміна складу
+  // виробів, деталей і слябів (інваріант 2.4). Знімок кладеться тут, ДО
+  // застосування зміни, — тому один виклик = один крок Ctrl+Z, і жодній
+  // мутації не треба пам'ятати про історію окремо.
+  get().pushHistorySnapshot();
+
   const normalized = normalizeProject(project);
   const detailsForNesting = getAllProjectDetails(normalized).map(d => {
     if (d.id && d.id.includes('prod_')) {
@@ -54,8 +60,10 @@ export function triggerPackingAsync(
     state.parts = parts;
     state.packingMode = mode;
     state.isPacking = true;
-    state.movementHistory = [];
-    state.movementFuture = [];
+    // Історію тут НЕ чистимо. Старий код обнуляв стеки при кожній зміні
+    // складу — саме тому Ctrl+Z працював лише для руху деталей: будь-яке
+    // редагування виробу зносило всю накопичену історію. Тепер зміна складу
+    // сама Є кроком історії (pushHistorySnapshot на вході цієї функції).
   });
 
   if (debounceTimeout) clearTimeout(debounceTimeout);
@@ -165,8 +173,10 @@ export const createPackingSlice: StateCreator<
       state.bufferDragPartId = undefined;
       state.placementDragPartId = undefined;
       state.unplacedDropVisible = false;
-      state.movementHistory = [];
-      state.movementFuture = [];
+      // Очистка проєкту — єдине місце, де історія обнуляється легітимно:
+      // відкочуватись у «до очистки» означало б воскрешати інший проєкт.
+      state.history = [];
+      state.future = [];
     });
     persist(get().project, get().currentDbProjectId);
   },

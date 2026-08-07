@@ -1,20 +1,28 @@
 import { useState, useMemo } from 'react';
-import { X, HelpCircle } from 'lucide-react';
+import { X, HelpCircle, LayoutTemplate } from 'lucide-react';
 import { translateStaticUiText } from '../../i18n';
 import { ShapeIcon } from '../forms/utils/sharedInputs';
-import { detailTypes, createDraft } from '../forms/utils/draftHelpers';
-import type { DetailDraft, DetailType, ShapeKind } from '../forms/utils/draftHelpers';
+import { visibleDetailTypes, createDraft } from '../forms/utils/draftHelpers';
+import { useUIStore } from '../../store/useStore';
+import type { DetailDraft, ShapeKind, ProductEditorSession } from '../forms/utils/draftHelpers';
+import type { DetailType } from '../../domain/types';
 import { designsForType} from './FormsPanel';
+import { ProductTemplateModal } from './ProductTemplateModal';
 
 export function CreateProductModal({
   onClose,
   onSave,
+  onApplyTemplate,
 }: {
   onClose: () => void;
   onSave: (draft: DetailDraft, name: string) => void;
+  /** Шаблони виробів (адмін-фіча): готова сесія редактора замість порожньої деталі. */
+  onApplyTemplate?: (session: ProductEditorSession) => void;
 }) {
   const [draft, setDraft] = useState<DetailDraft>(() => createDraft());
   const [productName, setProductName] = useState('');
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
 
   const designs = useMemo(() => designsForType(draft.type), [draft.type]);
   const ui = (text: string) => translateStaticUiText('uk', text);
@@ -39,6 +47,17 @@ export function CreateProductModal({
         <div className="bg-[#2489d8] text-white px-4 py-3 flex items-center justify-between">
           <h2 className="text-lg font-bold">Новий виріб</h2>
           <div className="flex items-center gap-3 text-white/80">
+            {/* Шаблони — на релізі сховано: лише супер-адмін (щит, PIN) */}
+            {isAdminUnlocked && onApplyTemplate && (
+              <button
+                className="flex items-center gap-1.5 text-sm font-medium bg-white/15 hover:bg-white/25 text-white rounded-sm px-2.5 py-1 transition-colors"
+                onClick={() => setTemplatesOpen(true)}
+                title="Шаблони виробів (адмін)"
+              >
+                <LayoutTemplate className="w-4 h-4" />
+                Шаблони
+              </button>
+            )}
             <button className="hover:text-white transition-colors" title="Довідка">
               <HelpCircle className="w-5 h-5" />
             </button>
@@ -74,7 +93,7 @@ export function CreateProductModal({
                 onChange={(e) => updateDraft({ type: e.target.value as DetailType })}
                 className="w-full bg-white border border-transparent focus:border-[#2489d8] rounded-sm px-3 py-2 text-sm outline-none shadow-sm cursor-pointer"
               >
-                {detailTypes.map((type) => (
+                {visibleDetailTypes(isAdminUnlocked, draft.type).map((type) => (
                   <option key={type} value={type}>{ui(type)}</option>
                 ))}
               </select>
@@ -160,6 +179,16 @@ export function CreateProductModal({
           </button>
         </div>
       </div>
+
+      {templatesOpen && onApplyTemplate && (
+        <ProductTemplateModal
+          onClose={() => setTemplatesOpen(false)}
+          onCreate={(session) => {
+            setTemplatesOpen(false);
+            onApplyTemplate(session);
+          }}
+        />
+      )}
     </div>
   );
 }

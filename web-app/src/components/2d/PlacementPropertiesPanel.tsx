@@ -183,4 +183,4 @@ export function PlacementPropertiesPanel() {
       </div>
     </div>
   );
-}
+}

@@ -5,7 +5,7 @@ import { Sidebar } from './components/ui/Sidebar';
 import { Sidebar3D } from './components/ui/Sidebar3D';
 import { HeaderToolbar } from './components/ui/HeaderToolbar';
 import { AppStatusBar } from './components/ui/AppStatusBar';
-import { Scissors, FolderOpen, Loader2, UserCircle, Save, Image, Download, FileText, Plus, Box, Calculator, Trash, Eye, LayoutDashboard, Layers, Settings2, ZoomIn, LogOut, Edit2, Play } from 'lucide-react';
+import { Scissors, FolderOpen, Loader2, UserCircle, Save, Image, Download, FileText, Plus, Box, Calculator, Trash, Eye, LayoutDashboard, Layers, Settings2, ZoomIn, LogOut, Edit2, Play, Undo2, Redo2 } from 'lucide-react';
 import { downloadTextFile } from './utils/file';
 import { exportProjectPng } from './utils/export';
 import { PdfExportDialog } from './components/ui/PdfExportDialog';
@@ -69,6 +69,10 @@ function App() {
   const fullLangLabels: Record<string, string> = { uk: 'Українська', en: 'English', pl: 'Polski' };
 
   const exportProject = useProjectStore((s) => s.exportProject);
+  const canUndo = useProjectStore((s) => s.history.length > 0);
+  const canRedo = useProjectStore((s) => s.future.length > 0);
+  const canUndoSession = useUIStore((s) => s.sessionHistory.length > 0);
+  const canRedoSession = useUIStore((s) => s.sessionFuture.length > 0);
 
   const handleSaveProject = () => {
     const createdAt = project.versions?.[0]?.timestamp ?? project.updatedAt;
@@ -78,6 +82,44 @@ function App() {
     const fileName = `${safeOrder}_${safeCustomer}_${stamp}.json`;
     downloadTextFile(fileName, exportProject());
   };
+
+  /**
+   * Ctrl+Z / Ctrl+Y (і Cmd на маку) — глобальний undo/redo проєкту.
+   *
+   * Два свідомі запобіжники:
+   *  · у полі вводу хоткей НЕ перехоплюється — там має працювати рідний
+   *    текстовий undo браузера, інакше виправлення одруку в назві
+   *    відкочувало б виріз;
+   *  · при відкритому редакторі виробу глобальний відкат заглушений: сесія
+   *    редактора живе окремо від проєкту, і відкат проєкту «під ногами»
+   *    редактора дав би розсинхрон — для чернетки там є своя кнопка
+   *    «Скасувати».
+   */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+
+      e.preventDefault();
+      const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
+      // У редакторі виробу відкочується СЕСІЯ (стик, виріз, розмір чернетки),
+      // поза ним — проєкт. Два стеки не перетинаються.
+      if (useUIStore.getState().productEditorSession !== null) {
+        if (isRedo) useUIStore.getState().redoSession();
+        else useUIStore.getState().undoSession();
+        return;
+      }
+      const store = useProjectStore.getState();
+      if (isRedo) store.redo();
+      else store.undo();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   useEffect(() => {
     initialize();
@@ -235,8 +277,36 @@ function App() {
 
         {/* Center Controls */}
         <div className="flex items-center justify-center flex-1 gap-2">
+          {/* Undo / Redo. Поза редактором — історія проєкту; всередині
+              редактора виробу — історія сесії (стик, виріз, розмір), причому
+              кроками є лише реальні дії, а не вибір деталі чи ракурс. */}
+          <div className="flex items-center gap-0.5 mr-1">
+            <button
+              onClick={() => {
+                if (isProductEditorMode) useUIStore.getState().undoSession();
+                else useProjectStore.getState().undo();
+              }}
+              disabled={isProductEditorMode ? !canUndoSession : !canUndo}
+              className="flex items-center justify-center w-12 h-12 !text-white !bg-transparent !border-transparent hover:!bg-white/10 rounded-sm transition-all shadow-none disabled:opacity-25 disabled:hover:!bg-transparent disabled:cursor-default"
+              title="Скасувати (Ctrl+Z)"
+            >
+              <Undo2 className="w-[30px] h-[30px] stroke-[1.5]" />
+            </button>
+            <button
+              onClick={() => {
+                if (isProductEditorMode) useUIStore.getState().redoSession();
+                else useProjectStore.getState().redo();
+              }}
+              disabled={isProductEditorMode ? !canRedoSession : !canRedo}
+              className="flex items-center justify-center w-12 h-12 !text-white !bg-transparent !border-transparent hover:!bg-white/10 rounded-sm transition-all shadow-none disabled:opacity-25 disabled:hover:!bg-transparent disabled:cursor-default"
+              title="Повернути (Ctrl+Y)"
+            >
+              <Redo2 className="w-[30px] h-[30px] stroke-[1.5]" />
+            </button>
+          </div>
+
           <div className="relative">
-            <button 
+            <button
               onClick={() => { alert('Функція створення нового проєкту буде додана незабаром.'); }}
               className="flex items-center justify-center w-12 h-12 !text-white !bg-transparent !border-transparent hover:!bg-white/10 rounded-sm transition-colors shadow-none"
               title="Додати новий проєкт"
@@ -535,4 +605,4 @@ function App() {
   );
 }
 
-export default App;
+export default App;

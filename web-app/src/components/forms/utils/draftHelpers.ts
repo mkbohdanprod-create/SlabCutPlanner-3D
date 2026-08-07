@@ -17,6 +17,7 @@ export const TYPE_WALL_PANEL = referenceData.detailTypes[1] as DetailType;
 export const TYPE_SINK = referenceData.detailTypes[2] as DetailType;
 export const TYPE_SUPPORT = referenceData.detailTypes[4] as DetailType;
 export const TYPE_CUSTOM = referenceData.detailTypes[5] as DetailType;
+export const TYPE_METAL = referenceData.detailTypes[6] as DetailType;
 export const SHAPE_RECT = referenceData.detailShapes[0] as DetailShape;
 export const SHAPE_L = referenceData.detailShapes[1] as DetailShape;
 export const SHAPE_U = referenceData.detailShapes[2] as DetailShape;
@@ -33,6 +34,21 @@ export const sinkDesigns: Array<{ kind: ShapeKind; label: string; shape: DetailS
   { kind: 'sink_rect', label: 'Мийка прямокутна', shape: SHAPE_RECT },
   { kind: 'sink_slot', label: 'Мийка щілинна', shape: SHAPE_RECT },
 ];
+/** Металопрокат (MVP Viyar Metal): одна «форма» — відрізок профілю; типорозмір обирається в панелі */
+export const metalDesigns: Array<{ kind: ShapeKind; label: string; shape: DetailShape }> = [
+  { kind: 'metal_profile', label: 'Відрізок профілю', shape: SHAPE_RECT },
+];
+/**
+ * Типи деталей, видимі користувачу в випадачках.
+ * «Металопрокат» (метал-вертикаль, MVP) прихований від менеджера —
+ * показується лише супер-адміну (щит у шапці, PIN). Якщо деталь уже
+ * має цей тип (створена адміном), опція лишається, щоб не ламати
+ * редагування наявних виробів.
+ */
+export function visibleDetailTypes(isAdminUnlocked: boolean, current?: DetailType): DetailType[] {
+  return detailTypes.filter((type) => type !== TYPE_METAL || isAdminUnlocked || type === current);
+}
+
 export const allSides = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 export const curveSides = ['A', 'B', 'C', 'D'];
 
@@ -84,6 +100,8 @@ export function defaultsForKind(kind: ShapeKind, previousKind?: ShapeKind): Part
   if (kind === 'u') return { width: 2600, height: 1600, innerCutWidth: 1200, innerCutDepth: 1000, innerCutOffset: 600, leftLegHeight: 1600, rightLegHeight: 1200 };
   if (kind === 'sink_slot') return { width: 600, height: 400, innerVertical: 150 };
   if (kind === 'sink_rect') return { width: 500, height: 400, innerVertical: 200 };
+  // Металопрокат: width = довжина відрізка; height ставиться з профілю в панелі
+  if (kind === 'metal_profile') return { width: 2000, height: 40, metalProfileId: 'kv40' } as Partial<DetailDraft>;
   return {};
 }
 
@@ -149,12 +167,19 @@ export function getSideSize(draft: DetailDraft, side: string): number {
   }
   
   if (draft.kind === 'l') {
+    // Порядок сторін диктує КОНТУР РУШІЯ (lShapePoints + L_SIDE_IDS в
+    // engines/geometry.ts): обхід від (0,0) за годинниковою, сторона X
+    // закінчується в куті X. Тому B — коротка права сторона (від A вниз до
+    // внутрішнього кута), а D — внутрішня вертикаль вирізу. Тут вони були
+    // переплутані місцями, і таблиця сторін показувала числа навхрест із
+    // кресленням, розкроєм і 3D. Не «виправляй» назад за інтуїцією —
+    // звіряй із контуром; тест sideNames.test.ts тримає відповідність.
     const { outerWidth = 1200, outerHeight = 1200, innerHorizontal = 600, innerVertical = 600 } = draft;
     switch (side) {
       case 'A': return outerWidth;
-      case 'B': return innerVertical;
+      case 'B': return Math.max(1, outerHeight - innerVertical);
       case 'C': return Math.max(1, outerWidth - innerHorizontal);
-      case 'D': return Math.max(1, outerHeight - innerVertical);
+      case 'D': return innerVertical;
       case 'E': return innerHorizontal;
       case 'F': return outerHeight;
     }

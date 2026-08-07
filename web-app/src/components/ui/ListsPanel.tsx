@@ -131,9 +131,10 @@ export function ListsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
       // Мийки (слот sink_*) — ПОХІДНІ від mainDetail.sinks: у сесію їх не
       // тягнемо, інакше buildProductFromSession створить їх удруге і мийка
       // дублюватиметься після кожного збереження.
-      if (idx > 0 && !toSlot(el.id).startsWith('sink_')) subDetails[toSlot(el.id)] = el.baseDefinition;
+      if (idx > 0 && !toSlot(el.id).startsWith('sink_') && !toSlot(el.id).startsWith('mseg_')) subDetails[toSlot(el.id)] = el.baseDefinition;
       (el.additions || []).forEach((add: any) => {
-        if (toSlot(add.id).startsWith('sink_')) return;
+        // sink_* і mseg_* — похідні (мийки стільниці, сегменти ланцюга профілів)
+        if (toSlot(add.id).startsWith('sink_') || toSlot(add.id).startsWith('mseg_')) return;
         subDetails[toSlot(add.id)] = add.baseDefinition;
       });
     });

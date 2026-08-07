@@ -1,5 +1,6 @@
 import React from 'react';
 import { FileText, Settings } from 'lucide-react';
+import { useCloseOnOutsideClick } from './useCloseOnOutsideClick';
 
 interface DetailContextMenuProps {
   x: number;
@@ -10,14 +11,7 @@ interface DetailContextMenuProps {
 }
 
 export function DetailContextMenu({ x, y, detailId, onClose, onAction }: DetailContextMenuProps) {
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      const handleClickOutside = () => onClose();
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
-    }, 10);
-    return () => clearTimeout(timer);
-  }, [onClose]);
+  useCloseOnOutsideClick(onClose);
 
   return (
     <div

@@ -96,8 +96,49 @@ export type JointSideSelection = {
   sideId: string;
   oppositeSideId: string;
   axis: 'vertical' | 'horizontal';
+  /** Опорний кут, від якого рушій рахує позицію (у координатах контуру) */
   anchorCorner?: string;
+  /**
+   * Сторона, від якої користувач фактично міряє відступ.
+   *
+   * Рушієві потрібен КУТ (він точка, від неї рахується координата), а людина
+   * міряє від СТОРОНИ — рулетка кладеться на край плити, а не в ріг. Числа при
+   * цьому однакові, бо кут лежить на цій же стороні; різниця тільки в тому,
+   * що написано в підписі. Тому кут лишається в даних, а сторона — в інтерфейсі.
+   */
+  referenceSideId?: string;
 };
+
+/**
+ * Сторона, від якої міряється відступ стику.
+ *
+ * Це та сторона, що ПАРАЛЕЛЬНА майбутній лінії різу і найближча до опорного
+ * кута. Для горизонтального стику між B і D з опорою в куті AB це сторона A:
+ * різ іде горизонтально, значить його позиція — це відстань від верхнього
+ * краю, а верхній край і є сторона A.
+ */
+export function referenceSideForJoint(
+  sides: JointSideSegment[],
+  axis: 'vertical' | 'horizontal',
+  anchorPoint: Point | undefined,
+): string | undefined {
+  if (!anchorPoint) return undefined;
+
+  let best: { id: string; distance: number } | undefined;
+  for (const side of sides) {
+    // Сторона, паралельна лінії різу: з неї вийшов би стик іншої осі.
+    if (jointAxisForSide(side) === axis) continue;
+
+    const mid = { x: (side.v1.x + side.v2.x) / 2, y: (side.v1.y + side.v2.y) / 2 };
+    // Міряємо вздовж осі різу: горизонтальний різ рухається по Y, вертикальний — по X.
+    const distance = axis === 'horizontal'
+      ? Math.abs(mid.y - anchorPoint.y)
+      : Math.abs(mid.x - anchorPoint.x);
+
+    if (!best || distance < best.distance) best = { id: side.id, distance };
+  }
+  return best?.id;
+}
 
 /**
  * Сторона навпроти заданої — та, між якою і заданою піде лінія різу.

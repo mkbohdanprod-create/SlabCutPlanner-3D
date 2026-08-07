@@ -496,8 +496,12 @@ export const createProjectSlice: StateCreator<
       state.project = next.project;
       state.parts = next.parts;
       state.selectedSlabId = next.project.slabs[0]?.id;
-      state.movementHistory = [];
-      state.movementFuture = [];
+      // МЕЖА ІСТОРІЇ: відкриття/імпорт іншого проєкту обнуляє Ctrl+Z.
+      // Інакше undo перелазив би через межу проєктів і persist записав би
+      // вміст СТАРОГО проєкту під currentDbProjectId НОВОГО — тихе
+      // затирання збереженого проєкту на сервері.
+      state.history = [];
+      state.future = [];
     });
     persist(get().project, get().currentDbProjectId);
   },

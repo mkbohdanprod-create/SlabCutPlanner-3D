@@ -5,11 +5,11 @@ import { useUIStore } from '../../store/useStore';
 import { DesignerCanvas, designsForType } from './FormsPanel';
 import { EdgeProcessingDesigner } from '../forms/editors/EdgeProcessingDesigner';
 import type { ShapeKind, DetailDraft } from '../forms/utils/draftHelpers';
-import { 
-  detailTypes, 
-  baseDesigns, 
-  createDraft, 
-  allSides 
+import {
+  visibleDetailTypes,
+  baseDesigns,
+  createDraft,
+  allSides
 } from '../forms/utils/draftHelpers';
 import { ShapeIcon } from '../forms/utils/sharedInputs';
 import { translateStaticUiText } from '../../i18n';
@@ -23,6 +23,7 @@ export const AddProductWorkspace: React.FC<AddProductWorkspaceProps> = ({ onClos
   const [activeTab, setActiveTab] = useState<'base' | '2d' | '3d'>('base');
   const project = useProjectStore((s) => s.project);
   const language = useProjectStore((s) => s.language);
+  const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
   const ui = (text: string) => translateStaticUiText(language, text);
 
   // Get dynamic shapes based on the selected type
@@ -114,7 +115,7 @@ export const AddProductWorkspace: React.FC<AddProductWorkspaceProps> = ({ onClos
                     }}
                     className="w-full h-10 px-3 border border-slate-300 rounded-md focus:border-[#0084ff] outline-none bg-white text-base font-medium shadow-sm"
                   >
-                    {detailTypes.map((type) => (
+                    {visibleDetailTypes(isAdminUnlocked, detail.type).map((type) => (
                       <option key={type} value={type}>{ui(type)}</option>
                     ))}
                   </select>

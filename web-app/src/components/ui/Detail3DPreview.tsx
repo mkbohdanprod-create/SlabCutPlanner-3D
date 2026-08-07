@@ -26,13 +26,17 @@ import {
   manualJointPosition,
   nearestAnchorId,
   oppositeSideId,
+  referenceSideForJoint,
+  reflexCornerIds,
   reflexJointShift,
   type JointShapeFields,
   type JointSideSegment,
   type JointSideSelection,
 } from '../../domain/joints';
 import { toDetailShape } from '../../domain/elementToDetail';
-import { withSinkCutouts } from '../../domain/productSink';
+import { withSinkCutouts, sinkCenter } from '../../domain/productSink';
+import { metalProfileById, METAL_PROFILES } from '../../domain/metalProfiles';
+import { metalChainPieces } from '../../domain/metalChain';
 import { pointInPolygonStrict } from '../../engines/geometryUtils';
 
 function ProfileMesh({ length, height, depth }: { length: number; height: number; depth: number; }) {
@@ -700,11 +704,19 @@ export function Detail3DNode({
     if (!side) return undefined;
     const opposite = oppositeSideId(sidesMm, sideId);
     if (!opposite) return undefined; // немає протилежної — стик між цими сторонами не має сенсу
+    const axis = jointAxisForSide(side);
+    const anchorCorner = nearestAnchorId(jointAnchors, side.v1);
     return {
       sideId,
       oppositeSideId: opposite,
-      axis: jointAxisForSide(side),
-      anchorCorner: nearestAnchorId(jointAnchors, side.v1),
+      axis,
+      anchorCorner,
+      // Рушій рахує від кута, користувач міряє від сторони — див. referenceSideForJoint
+      referenceSideId: referenceSideForJoint(
+        sidesMm,
+        axis,
+        anchorCorner ? jointAnchors?.[anchorCorner] : undefined,
+      ),
     };
   };
 
@@ -719,6 +731,21 @@ export function Detail3DNode({
       : (side.v1.y + side.v2.y) / 2;
     return drawJointLine(axis, position, "joint-preview", "#f59e0b");
   })();
+
+  // Металопрокат — не плоска кам'яна деталь: свій вузол із перерізом
+  // профілю. Гілка стоїть ПІСЛЯ всіх хуків, щоб не ламати їх порядок.
+  if (detail.kind === 'metal_profile') {
+    return (
+      <MetalProfileNode
+        detail={detail}
+        highlight={isActive && mode === 'view'}
+        onClick={() => onDetailClick?.(id)}
+        onContextMenu={(e) => {
+          if (mode === 'view' && onDetailContextMenu) onDetailContextMenu(id, e.clientX, e.clientY);
+        }}
+      />
+    );
+  }
 
   return (
     <group>
@@ -834,6 +861,16 @@ export function Detail3DNode({
           if (!p.id || p.id.startsWith("inner"))
             return null;
 
+          // У режимі стиків кути показуємо ТІЛЬКИ там, де вони справді щось
+          // задають — на увігнутих кутах Г- і П-форми (омега/лямбда, права
+          // кнопка). На прямокутнику таких кутів немає, а вісім однакових
+          // жовтих кульок (чотири кути + чотири середини сторін) читались як
+          // однорідна розмітка і збивали з пантелику: стик задається СТОРОНОЮ.
+          const isReflexCorner = reflexCornerIds(toDetailShape(detail.kind)).includes(
+            p.id === 'start' ? (p.closeId || 'H') : p.id,
+          );
+          if (editMode === "joints" && !isReflexCorner) return null;
+
           const w = bounds.maxX - bounds.minX || 1;
           const h = bounds.maxY - bounds.minY || 1;
           const s = 0.001;
@@ -866,13 +903,15 @@ export function Detail3DNode({
                 </mesh>
               )}
               <Text
-                position={[0, 0.02, 0]}
+                position={[0, editMode === "planes" ? 0.02 : 0.085, 0]}
                 rotation={[-Math.PI / 2, 0, 0]}
-                fontSize={0.06}
+                fontSize={0.07}
                 color="#c2410c"
+                outlineWidth={0.006}
+                outlineColor="#ffffff"
                 anchorX="center"
                 anchorY="middle"
-                renderOrder={1}
+                renderOrder={2}
               >
                 {p.id === 'start' ? (p.closeId || 'H') : p.id}
               </Text>
@@ -929,11 +968,12 @@ export function Detail3DNode({
           );
         })}
 
-      {/* СТИКИ: маркери СТОРІН.
+      {/* СТИКИ задаються СТОРОНАМИ — це єдиний спосіб для простих форм.
           Наводиш на сторону — підсвічується протилежна і видно лінію майбутнього
-          різу; лівий клік відкриває віконечко відступу. Кутові маркери вище
-          лишаються без змін: стики на увігнутих кутах (омега/лямбда) досі
-          задаються через них правою кнопкою. */}
+          різу; лівий клік відкриває віконечко відступу. Тому підписані саме
+          сторони (A, B, C, D), а кутові маркери в цьому режимі показуються лише
+          на увігнутих кутах Г- і П-форми, де через них правою кнопкою досі
+          задаються стики омега/лямбда. */}
       {mode === "edit" &&
         isActive &&
         editMode === "joints" &&
@@ -975,14 +1015,19 @@ export function Detail3DNode({
                   transparent
                 />
               </mesh>
+              {/* Підпис сторони мусить бути НАД кулькою. Раніше він стояв на
+                  висоті 0.02 при радіусі кульки 0.04 — тобто всередині неї, і
+                  на екрані було видно самі жовті кружечки без жодної літери. */}
               <Text
-                position={[0, 0.02, 0]}
+                position={[0, isHighlighted ? 0.10 : 0.085, 0]}
                 rotation={[-Math.PI / 2, 0, 0]}
-                fontSize={0.06}
-                color="#a16207"
+                fontSize={isHighlighted ? 0.085 : 0.07}
+                color={isHighlighted ? "#b45309" : "#78350f"}
+                outlineWidth={0.006}
+                outlineColor="#ffffff"
                 anchorX="center"
                 anchorY="middle"
-                renderOrder={1}
+                renderOrder={2}
               >
                 {side.id}
               </Text>
@@ -1281,8 +1326,11 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
             innerVertical: sink.depth,
             thickness: detail.thickness || 20,
           } as unknown as DetailDraft;
+          // Центр чаші — через спільний sinkCenter (та сама формула, що в
+          // отвору): sink.x/y тепер відступ від кута до кута чаші, не центр.
+          const { cx, cy } = sinkCenter(detail as never, sink);
           return (
-            <group key={sink.id} position={[(sink.x - w / 2) * s, -thick / 2, (sink.y - h / 2) * s]}>
+            <group key={sink.id} position={[(cx - w / 2) * s, -thick / 2, (cy - h / 2) * s]}>
               <SinkAssemblyPreview detail={bowlDraft} textureMode={textureMode} />
             </group>
           );
@@ -1451,6 +1499,110 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
  * а те, що поїде в цех. Кожна деталь — власний меш зі своїм контуром,
  * тому трикутні скоси дна й отвір зливу видно як є.
  */
+/** Переріз профілю в площині XY (метри) — спільний для всіх сегментів ланцюга */
+function metalSectionShape(profileId: string | undefined): THREE.Shape {
+  const s = 0.001;
+  const profile = metalProfileById(profileId) ?? METAL_PROFILES[0];
+  const w = profile.w * s;
+  const h = profile.h * s;
+  const t = Math.max(0.5, profile.t) * s;
+
+  const shape = new THREE.Shape();
+  if (profile.section === 'tube_round') {
+    shape.absarc(0, 0, w / 2, 0, Math.PI * 2, false);
+    const hole = new THREE.Path();
+    hole.absarc(0, 0, Math.max(0.0005, w / 2 - t), 0, Math.PI * 2, true);
+    shape.holes.push(hole);
+  } else if (profile.section === 'bar') {
+    shape.absarc(0, 0, w / 2, 0, Math.PI * 2, false);
+  } else if (profile.section === 'angle') {
+    // Г-подібний переріз: дві полиці товщиною t
+    shape.moveTo(-w / 2, -h / 2);
+    shape.lineTo(w / 2, -h / 2);
+    shape.lineTo(w / 2, -h / 2 + t);
+    shape.lineTo(-w / 2 + t, -h / 2 + t);
+    shape.lineTo(-w / 2 + t, h / 2);
+    shape.lineTo(-w / 2, h / 2);
+    shape.closePath();
+  } else {
+    // tube_rect і штаба — прямокутник; у труби всередині отвір
+    shape.moveTo(-w / 2, -h / 2);
+    shape.lineTo(w / 2, -h / 2);
+    shape.lineTo(w / 2, h / 2);
+    shape.lineTo(-w / 2, h / 2);
+    shape.closePath();
+    if (profile.section === 'tube_rect' && w - 2 * t > 0.001 && h - 2 * t > 0.001) {
+      const hole = new THREE.Path();
+      hole.moveTo(-w / 2 + t, -h / 2 + t);
+      hole.lineTo(-w / 2 + t, h / 2 - t);
+      hole.lineTo(w / 2 - t, h / 2 - t);
+      hole.lineTo(w / 2 - t, -h / 2 + t);
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+  }
+  return shape;
+}
+
+/**
+ * Металопрокат (MVP Viyar Metal): ланцюг профілів у 3D.
+ * Базовий відрізок + сегменти «від торця» (metalSegments), кожен зі своїм
+ * перерізом із сортаменту. Один вузол на обидва в'ювери: редактор виробу
+ * і 3D Підбір рендерять через Detail3DNode.
+ */
+function MetalProfileNode({
+  detail,
+  onClick,
+  onContextMenu,
+  highlight,
+}: {
+  detail: DetailDraft;
+  onClick?: () => void;
+  onContextMenu?: (e: { clientX: number; clientY: number; stopPropagation: () => void }) => void;
+  highlight?: boolean;
+}) {
+  // Ланцюг «черепашкою» з metalSegments: та сама математика, що дає деталі
+  // в розкрій (domain/metalChain) — 3D і відомість металу не розходяться.
+  const pieces = useMemo(() => {
+    const s = 0.001;
+    return metalChainPieces(detail as never).map((piece) => {
+      const geom = new THREE.ExtrudeGeometry(metalSectionShape(piece.profileId), {
+        depth: piece.lengthMm * s, bevelEnabled: false, curveSegments: 24,
+      });
+      geom.translate(0, 0, -(piece.lengthMm * s) / 2);
+      geom.rotateY(Math.PI / 2); // довжина вздовж X, переріз у площині YZ
+      geom.computeVertexNormals();
+
+      const dir = new THREE.Vector3(piece.dir[0], piece.dir[1], piece.dir[2]);
+      const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
+      const center = new THREE.Vector3(piece.start[0], piece.start[1], piece.start[2])
+        .addScaledVector(dir, piece.lengthMm / 2)
+        .multiplyScalar(s);
+      return { geom, quat, center, key: `${piece.start.join(',')}|${piece.lengthMm}|${piece.profileId}` };
+    });
+  }, [detail]);
+
+  return (
+    <group>
+      {pieces.map(({ geom, quat, center, key }) => (
+        <mesh
+          key={key}
+          geometry={geom}
+          position={center}
+          quaternion={quat}
+          castShadow
+          receiveShadow
+          onClick={(e) => { if (onClick) { e.stopPropagation(); onClick(); } }}
+          onContextMenu={(e) => { if (onContextMenu) { e.stopPropagation(); onContextMenu(e as never); } }}
+        >
+          <meshStandardMaterial color={highlight ? '#7fb4e8' : '#9aa5ad'} metalness={0.75} roughness={0.35} />
+          <Edges geometry={geom} color={highlight ? '#38bdf8' : '#5b6770'} threshold={20} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 function SinkAssemblyPreview({ detail, textureMode }: { detail: DetailDraft; textureMode?: boolean }) {
   const stoneTexture = useStoneTexture(textureMode);
   const s = 0.001;
@@ -1668,10 +1820,10 @@ export function Detail3DPreview({
 
   return (
     <div
-      className={`w-full h-full relative rounded-md overflow-hidden flex flex-col ${theme === "dark" ? "bg-slate-900" : "bg-[#f0f4f8]"}`}
+      className={`w-full h-full relative overflow-hidden flex flex-col ${theme === "dark" ? "bg-slate-900" : "bg-[#f0f4f8]"}`}
     >
       {!forceMode && (
-        <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
+        <div className="absolute top-4 right-4 z-10 flex flex-row gap-2 items-start">
         <div
           className={`flex rounded-md shadow-sm border p-1 gap-1 ${theme === "dark" ? "bg-slate-800 border-slate-700" : "bg-white border-[#c6d3dd]"}`}
         >

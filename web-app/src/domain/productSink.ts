@@ -1,5 +1,7 @@
 import type { ElementDefinition, ProductElement, ProductSinkDef, SurfaceCutout } from './types';
 import { buildElementPath } from './ids';
+import { cutoutCenter } from './cutoutAnchor';
+import { anchorContextFor } from './elementToDetail';
 
 /**
  * Мийка, ВСТАНОВЛЕНА в стільницю (нижній монтаж).
@@ -24,13 +26,32 @@ export function sinkCutout(sink: ProductSinkDef): SurfaceCutout {
     id: `sink_cut_${sink.id}`,
     shape: 'rect',
     type: 'custom',
-    bindCorner: '',
+    // Прив'язка і координати чаші успадковуються вирізом один-в-один: мийка і
+    // отвір під неї не мають права міряти по-різному. Порожній bindCorner —
+    // «від лівого верхнього кута деталі». Див. domain/cutoutAnchor.ts.
+    bindCorner: sink.bindCorner ?? '',
     x: sink.x,
     y: sink.y,
     width: sink.width,
     height: sink.height,
     cornerRadius: SINK_CUTOUT_CORNER_RADIUS,
   };
+}
+
+/**
+ * ЦЕНТР чаші в координатах деталі — єдине джерело для всіх, хто малює чашу.
+ *
+ * Рахується буквально через той самий `cutoutCenter`, що й отвір у стільниці
+ * (мийка представляється своїм же похідним вирізом). Тому чаша і отвір
+ * фізично не можуть розійтись: обоє читають одну формулу.
+ *
+ * Баг, від якого цей хелпер: коли координати мийки перевели на «від кута до
+ * кута чаші», отвір поїхав за новою формулою, а обидва 3D-рендери чаші далі
+ * трактували sink.x/y як центр — чаша висіла зі зсувом у пів габариту від
+ * свого ж вирізу.
+ */
+export function sinkCenter(def: ElementDefinition, sink: ProductSinkDef): { cx: number; cy: number } {
+  return cutoutCenter(sinkCutout(sink), anchorContextFor(def));
 }
 
 /** Похідні вирізи для всіх мийок деталі (порожньо, якщо мийок немає) */
