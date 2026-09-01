@@ -81,7 +81,7 @@ function App() {
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
   // Keycloak-сесія: бейдж користувача в шапці і вхід для збережених проєктів
-  const { user, signOut } = useAuth();
+  const { user, signOut, backend } = useAuth();
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const isRecordingBug = useUIStore(s => s.isRecordingBug);
   const setIsRecordingBug = useUIStore(s => s.setIsRecordingBug);
@@ -620,6 +620,9 @@ function App() {
                 <UserCircle className="w-5 h-5 !text-white" />
               </div>
             </button>
+          ) : backend === 'absent' ? (
+            /* Демо без бекенда — кнопки входу немає, входити нема куди */
+            null
           ) : (
             <button
               onClick={() => setIsLoginModalOpen(true)}

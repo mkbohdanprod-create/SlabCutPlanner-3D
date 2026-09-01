@@ -169,6 +169,14 @@ export type CreateOrderRequest = {
  * не відповідає 1С, не відповідає довідник номенклатур, контрагента немає
  * в ERP, — і менеджеру про кожен треба сказати своє.
  */
+/** Бекенда немає взагалі (статичний хостинг) — не плутати з 401/503 живого бекенда. */
+export class NoBackendError extends Error {
+  constructor(message: string) {
+    super(`Бекенд відсутній: ${message}`);
+    this.name = 'NoBackendError';
+  }
+}
+
 export class ApiError extends Error {
   // Поля оголошені явно, а не через `constructor(public …)`: у tsconfig
   // увімкнено erasableSyntaxOnly (щоб збірка була чистим стиранням типів),
@@ -249,9 +257,18 @@ export const api = {
   // ── auth ────────────────────────────────────────────────────────────
   loginUrl: '/api/auth/login',
 
+  /**
+   * Хто ми. null — бекенд є, але сесії немає (401). Кидає `NoBackendError`,
+   * коли бекенда немає ВЗАГАЛІ: статичний хостинг (демо-дзеркало на Vercel)
+   * віддає на /api/auth/me 404 або HTML замість JSON — це не «не увійшли»,
+   * а «нема куди входити» (рішення власника 01.09: демо без входу).
+   */
   async me(): Promise<AppUser | null> {
     const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    if (res.status === 404) throw new NoBackendError('404 на /api/auth/me');
     if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') ?? '';
+    if (!contentType.includes('json')) throw new NoBackendError(`не JSON: ${contentType || 'без content-type'}`);
     const { user } = (await res.json()) as { user: AppUser | null };
     return user;
   },

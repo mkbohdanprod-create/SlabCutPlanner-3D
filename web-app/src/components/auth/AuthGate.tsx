@@ -7,12 +7,18 @@ import { api } from '../../lib/api';
  * без сесії Keycloak показується екран входу, сам застосунок не рендериться).
  *
  * У DEV-режимі (npm run dev) пропускає без авторизації для локальної розробки.
+ * Без бекенда взагалі (демо-дзеркало на статичному хостингу) — теж пропускає:
+ * стіна «Увійти через Keycloak» вела б на 404 (власник 01.09: «давай без входу»).
  */
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, backend } = useAuth();
 
   // DEV mode — bypass Keycloak
   if (import.meta.env.DEV) {
+    return <>{children}</>;
+  }
+  // Демо без бекенда — входити нема куди
+  if (backend === 'absent') {
     return <>{children}</>;
   }
 
