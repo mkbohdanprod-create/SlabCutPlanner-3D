@@ -202,10 +202,12 @@ describe('обробка торця', () => {
   const details = [{ id: 'det_1', edgeProfiles: { A: 'd_12', B: 'r2_top' } }] as never;
 
   it('довжина береться з реального сегмента сторони, а не з габариту', () => {
-    // A — ліва сторона (600 мм), B — нижня (1000 мм)
+    // Єдина угода (хвиля 3): A — ПЕРШЕ ребро контуру, тут верхнє (1000 мм),
+    // B — наступне за обходом, праве (600 мм). Раніше цей файл фіксував
+    // другу угоду (A=ліве), через яку метри торця йшли з чужої сторони.
     const facts = extractProductionFacts(project({ details }), [part()]);
-    expect(sumFacts(facts, 'edge', 'd_12')).toBe(0.6);
-    expect(sumFacts(facts, 'edge', 'r2_top')).toBe(1.0);
+    expect(sumFacts(facts, 'edge', 'd_12')).toBe(1.0);
+    expect(sumFacts(facts, 'edge', 'r2_top')).toBe(0.6);
   });
 
   it('лицьове і тильне ребро — два окремі проходи фрези', () => {
@@ -214,7 +216,43 @@ describe('обробка торця', () => {
       edgeProfiles: { B: { top: { profileId: 'r2_top' }, bottom: { profileId: 'r2_top' } } },
     }] as never;
     const facts = extractProductionFacts(project({ details: detailsBoth }), [part()]);
-    expect(sumFacts(facts, 'edge', 'r2_top')).toBe(2.0);
+    // Сторона B — праве ребро, 600 мм; два проходи = 1.2 м.
+    expect(sumFacts(facts, 'edge', 'r2_top')).toBe(1.2);
+  });
+
+  it('крайка «не на всю довжину» рахується ділянкою, а не повним ребром', () => {
+    // Раніше «Довільна, 300 мм» усе одно нараховувалась цеху на всю сторону.
+    const partial = [{
+      id: 'det_1',
+      edgeProfiles: {
+        B: { top: { profileId: 'r2_top' }, isFullLength: false, size: 300, offset: 100 },
+      },
+    }] as never;
+    const facts = extractProductionFacts(project({ details: partial }), [part()]);
+    expect(sumFacts(facts, 'edge', 'r2_top')).toBeCloseTo(0.3, 5);
+  });
+
+  it('ділянка довша за сторону затискається довжиною сторони', () => {
+    const oversized = [{
+      id: 'det_1',
+      edgeProfiles: {
+        B: { top: { profileId: 'r2_top' }, isFullLength: false, size: 5000 },
+      },
+    }] as never;
+    const facts = extractProductionFacts(project({ details: oversized }), [part()]);
+    // Затискається довжиною сторони B — 600 мм.
+    expect(sumFacts(facts, 'edge', 'r2_top')).toBe(0.6);
+  });
+
+  it('ручна доводка йде тією самою ділянкою, що й крайка', () => {
+    const partial = [{
+      id: 'det_1',
+      edgeProfiles: {
+        B: { top: { profileId: 'r2_top' }, isFullLength: false, size: 400, manualFinish: true },
+      },
+    }] as never;
+    const facts = extractProductionFacts(project({ details: partial }), [part()]);
+    expect(sumFacts(facts, 'edge_manual_finish')).toBeCloseTo(0.4, 5);
   });
 
   it('крайка з карти крою перебиває крайку деталі', () => {
@@ -223,7 +261,8 @@ describe('обробка торця', () => {
       placements: [{ id: 'pl_1', slabId: 'slab_1', partId: 'part_1', edgeProfiles: { B: 'sharknose' } }],
     });
     const facts = extractProductionFacts(p, [part()]);
-    expect(sumFacts(facts, 'edge', 'sharknose')).toBe(1.0);
+    // Сторона B — праве ребро, 600 мм.
+    expect(sumFacts(facts, 'edge', 'sharknose')).toBe(0.6);
     expect(sumFacts(facts, 'edge', 'd_12')).toBe(0);
   });
 

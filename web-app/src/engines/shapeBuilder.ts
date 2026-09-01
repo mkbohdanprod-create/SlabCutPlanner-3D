@@ -2,15 +2,103 @@ import * as THREE from 'three';
 import type { DetailDraft } from '../components/forms/utils/draftHelpers';
 import { cutoutCenter } from '../domain/cutoutAnchor';
 import { anchorContextFor } from '../domain/elementToDetail';
+import { applyUCutout } from '../domain/uCutout';
+import { edgeNamedContour, curvedContour } from '../domain/baseContour';
+import type { UCutoutSpec } from '../domain/uCutout';
+import type { Point } from '../domain/types';
+
+/**
+ * FG-11 ДЛЯ 3D: обробка кута не може з'їсти більше, ніж є ребра.
+ *
+ * Розкрій це правило вже знає (geometry.buildComplexPolygonPoints), а 3D
+ * читав радіуси як є: два радіуси по 450 на стороні 900 давали нульове
+ * ребро, а більші — самоперетин контуру, і «математика ламалась» рівно
+ * так, як показала фокус-група. Правило те саме, що в розкрої: два сусідні
+ * вторгнення на одному ребрі стискаються пропорційно; радіус після
+ * стискання бере мінімум зі своїх двох напрямків, щоб дуга лишилась дугою.
+ *
+ * Кути шукаються за id точки — і для прямокутника (DA/AB/…), і для
+ * складних форм (start/A/…) це той самий ключ, яким кут записано.
+ */
+function clampCornersToPoints(
+  corners: Record<string, any>,
+  points: Array<{ id?: string; x: number; y: number }>,
+): Record<string, any> {
+  const len = points.length;
+  if (len < 3 || !Object.keys(corners).length) return corners;
+
+  const edgeLen: number[] = new Array(len);
+  for (let i = 0; i < len; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % len];
+    edgeLen[i] = Math.hypot(b.x - a.x, b.y - a.y);
+  }
+
+  const effPrev: number[] = new Array(len).fill(0);
+  const effNext: number[] = new Array(len).fill(0);
+  for (let i = 0; i < len; i += 1) {
+    const c = corners[points[i].id || ''];
+    if (!c) continue;
+    if (c.type === 'radius') {
+      effPrev[i] = effNext[i] = Math.max(0, c.radius || 0);
+    } else if (c.type === 'chamfer' || c.type === 'l-cut') {
+      effPrev[i] = Math.max(0, c.sizeB || 0);
+      effNext[i] = Math.max(0, c.sizeC || 0);
+    }
+  }
+  for (let i = 0; i < len; i += 1) {
+    const j = (i + 1) % len;
+    const a = effNext[i];
+    const b = effPrev[j];
+    const L = edgeLen[i];
+    if (a + b <= L || a + b <= 0) continue;
+    const k = L / (a + b);
+    effNext[i] = a * k;
+    effPrev[j] = b * k;
+  }
+
+  const out: Record<string, any> = { ...corners };
+  for (let i = 0; i < len; i += 1) {
+    const key = points[i].id || '';
+    const c = corners[key];
+    if (!c) continue;
+    if (c.type === 'radius') {
+      const r = Math.min(effPrev[i], effNext[i]);
+      if (r !== (c.radius || 0)) out[key] = { ...c, radius: r };
+    } else if (c.type === 'chamfer' || c.type === 'l-cut') {
+      if (effPrev[i] !== (c.sizeB || 0) || effNext[i] !== (c.sizeC || 0)) {
+        out[key] = { ...c, sizeB: effPrev[i], sizeC: effNext[i] };
+      }
+    }
+  }
+  return out;
+}
 
 export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any) {
   const shape = new THREE.Shape();
     const edgeMap: Record<number, string> = {};
-    let curveIndex = 0;
 
+    /*
+     * СИНХРОНІЗАЦІЯ МАПИ ІМЕН З РЕАЛЬНИМ МАСИВОМ КРИВИХ (ремонт 19.08).
+     *
+     * Стара мапа рахувала «одна крива на виклик» власним лічильником. Але
+     * THREE.Path.absellipse нишком вставляє з'єднувальний відрізок, коли
+     * кінець попередньої кривої не збігається з початком дуги ДО ОСТАННЬОГО
+     * БІТА — а при неквадратних габаритах (нормалізація по X і Y різна)
+     * float це гарантує. Кожна така вставка зсувала ВСІ подальші імена на
+     * одне: дуга ставала «стороною D», сторона F — «дугою», і половина
+     * ребер втрачала маркери. Тому індекс завжди читається з
+     * shape.curves.length, а службові вставки лишаються безіменними — їх
+     * відфільтровує перевірка item.id.
+     */
     const addLine = (id: string, x: number, y: number) => {
+      // Вироджене ребро (обробка кута з'їла сторону повністю): не емітимо —
+      // нульовий відрізок отримував маркер і кріплення з кутом atan2(0,0),
+      // і додане на нього доповнення малювалось «планкою в повітрі».
+      const cur = shape.currentPoint;
+      if (cur && Math.abs(cur.x - x) < 1e-6 && Math.abs(cur.y - y) < 1e-6) return;
       shape.lineTo(x, y);
-      edgeMap[curveIndex++] = id;
+      edgeMap[shape.curves.length - 1] = id;
     };
     const addEllipse = (
       id: string,
@@ -33,7 +121,9 @@ export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any
         aClockwise,
         aRotation,
       );
-      edgeMap[curveIndex++] = id;
+      // Ім'я — САМІЙ дузі (останній кривій), а не позиції лічильника:
+      // absellipse міг щойно вставити безіменний з'єднувальний відрізок.
+      edgeMap[shape.curves.length - 1] = id;
     };
 
     const w = bounds.maxX - bounds.minX;
@@ -45,17 +135,49 @@ export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any
       ny: (p.y - bounds.minY) / (h || 1),
     });
 
-    const corners = detail.corners || {};
+    const corners = clampCornersToPoints(detail.corners || {}, points);
 
-    // Standard rendering for custom shapes or shapes without corner logic
-    if (detail.kind !== "rect" && detail.kind !== "l" && detail.kind !== "u") {
+    /**
+     * Довільний контур має пріоритет над `kind`. Деталь із `customPoints`
+     * лишається `rect` за типом (це та сама обшивка подіуму), але форма в неї
+     * П-подібна — ніша під дрова ріжеться до підлоги. Без цієї перевірки
+     * гілка нижче будувала прямокутник, і виріз просто зникав.
+     */
+    const hasCustomContour = Boolean(
+      (detail as { customPoints?: unknown[] }).customPoints?.length
+      || (detail as { geometry?: { customPoints?: unknown[] } }).geometry?.customPoints?.length
+      // Ніша (крок 4.4) теж робить контур довільним, хоч `kind` лишається
+      // `rect`. Без цього рядка гілка прямокутника малювала б деталь цілою,
+      // і ніша була б у розкрої, але не в 3D.
+      || (detail as { uCutout?: unknown }).uCutout,
+    );
+
+    /*
+     * МАРШРУТИЗАЦІЯ (ремонт 19.08). Раніше довільний контур ішов «простою»
+     * гілкою без логіки кутів — радіуси на деталі з нішею мовчки зникали.
+     * Тепер:
+     *   · непалігональні форми (коло, овал) — проста гілка, як і були;
+     *   · чистий прямокутник — своя гілка (імена кутів AB/BC/…);
+     *   · усе інше, ВКЛЮЧНО з довільним контуром і нішею, — загальна
+     *     гілка з обробкою кутів: кути шукаються за id точки, тож радіуси
+     *     Г-форми переживають нішу.
+     */
+    if (!hasCustomContour && detail.kind !== "rect" && detail.kind !== "l" && detail.kind !== "u") {
       points.forEach((p, i) => {
         const { nx, ny } = getCoords(p);
         if (i === 0) shape.moveTo(nx, ny);
         else addLine(p.id || `edge-${i}`, nx, ny);
       });
-    } else {
-      if (detail.kind === "rect") {
+      // Замикальне ребро (остання → перша) — явною лінією з іменем за
+      // угодою (closeId ?? id першої), як у гілках прямокутника й полігона.
+      // Без нього остання хорда кола не мала кривої в edgeMap і різак
+      // торця на стороні D зупинявся за одну хорду до кінця.
+      if (points.length > 2) {
+        const first = points[0];
+        const { nx, ny } = getCoords(first);
+        addLine(first.closeId || first.id || 'close', nx, ny);
+      }
+    } else if (detail.kind === "rect" && !hasCustomContour) {
         const cornerDA = corners["DA"];
         const cornerAB = corners["AB"];
         const cornerBC = corners["BC"];
@@ -292,7 +414,13 @@ export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any
           // Wait, if we just lineTo the start point, it's fine.
           // But we need the correct id for the closing edge!
           // The closing edge is from lastPt to firstPt.
-          const closeId = firstPt.closeId || "close";
+          /*
+           * Замикальне ребро: у розкладок Г/П ім'я лежить у closeId, у
+           * довільного контуру (угода customPoints) — в id першої точки.
+           * Раніше тут стояло голе "close", і замикальна сторона контуру
+           * з нішею лишалась без імені — без кромки і без кріплень.
+           */
+          const closeId = firstPt.closeId || firstPt.id || "close";
           
           // Let's just find the start of the curve for the first point again
           const { nx: psX, ny: psY } = getCoords(points[len - 1]);
@@ -305,7 +433,6 @@ export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any
           
           addLine(closeId, sX + dirPrev.x * (sDist / w), sY + dirPrev.y * (sDist / h));
         }
-      }
     }
 
     if (detail.cutouts) {
@@ -395,10 +522,48 @@ export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any
   return { shape, edgeMap, curves: shape.curves };
 }
 
+/**
+ * Контур деталі, заданий НЕ параметрами форми, а точками.
+ *
+ * Два джерела, і порядок між ними важливий:
+ *   1. `customPoints` — «сира» форма з імпорту DXF або шаблону; вона
+ *      головніша, бо там точки і є єдиною правдою про деталь;
+ *   2. `uCutout` — П-подібна ніша (крок 4.4). Зберігається параметрами,
+ *      контур виводиться щоразу, тому ніша переживає зміну габариту.
+ *
+ * ЄДИНЕ місце цієї логіки. Раніше вона жила лише в `elementToDetail`, на
+ * межі «редактор → розкрій», тому ніша була в розкрої, але не в 3D:
+ * рендер бачив чернетку з `uCutout` і малював прямокутник.
+ */
+export function contourPointsFor(detail: {
+  customPoints?: Point[];
+  uCutout?: UCutoutSpec;
+  kind?: string;
+  width?: number;
+  height?: number;
+  diameter?: number;
+  ellipseWidth?: number;
+  ellipseHeight?: number;
+}): Point[] | undefined {
+  if (detail.customPoints?.length) return detail.customPoints;
+  // Коло й овал (01.09): контур із квадрантами A–D — інакше всі копії
+  // «точок деталі» падали в гілку прямокутника і кругла стільниця в 3D
+  // та на кресленні була прямокутною.
+  const curved = curvedContour(detail);
+  if (curved) return curved;
+  if (!detail.uCutout) return undefined;
+  // РЕМОНТ 19.08: ніша вставляється в РЕАЛЬНИЙ базовий контур форми
+  // (rect/Г/П), а не в прямокутник із габариту — інакше Г-подібна деталь
+  // мовчки перетворювалась на прямокутну з нішею.
+  const base = edgeNamedContour(detail as never);
+  if (!base) return undefined;
+  return applyUCutout(base, detail.uCutout);
+}
+
 export function getDetailPointsAndBounds(detail: DetailDraft) {
   const getPoints = () => {
 
-    let pts = detail.customPoints || [];
+    let pts = contourPointsFor(detail) || [];
     if (pts.length > 0) return pts;
 
     let width = detail.width || 1000;
@@ -409,6 +574,20 @@ export function getDetailPointsAndBounds(detail: DetailDraft) {
       height = detail.outerHeight || 1200;
       const iw = detail.innerHorizontal || 600;
       const ih = detail.innerVertical || 600;
+            if (detail.mirrorL) {
+        /* ЛІВА Г (26.08): виріз ліворуч — обхід BL, як у lShapePoints
+           рушія. Літери йдуть за обходом, тому в лівої B — повна права
+           сторона, E — внутрішня горизонталь вирізу, F — коротка ліва.
+           На кресленні (y вниз) виріз опиняється внизу ліворуч. */
+        return [
+          { id: "start", closeId: "F", x: 0, y: 0 },
+          { id: "A", x: width, y: 0 },
+          { id: "B", x: width, y: height },
+          { id: "C", x: iw, y: height },
+          { id: "D", x: iw, y: height - ih },
+          { id: "E", x: 0, y: height - ih },
+        ];
+      }
       return [
         // Сторони Г-подібної названі буквами A..F — так само, як у
         // редакторі, у списку сторін і в ключах доповнень (`leg_A`,
@@ -506,4 +685,102 @@ export function buildDetailGeometry(detail: DetailDraft, points: any[], bounds: 
   });
   
   return { geometry, edgeMap, curves };
-}
+}
+
+/**
+ * КОНТУР ДЛЯ РІЗАКІВ ТОРЦІВ У РЕДАКТОРІ (01.09.2026).
+ *
+ * До цього редактор віддавав різакам `contourPointsFor` — вершини БЕЗ дуг
+ * (кут гострий), тому різак ішов прямо по дотичній, а плита під ним була
+ * кругла: профіль обривався перед радіусом, сам радіус лишався сирим, і
+ * в збірці той самий виріб виглядав інакше.
+ *
+ * Тут беруться РІВНО ті вершини, що `ExtrudeGeometry` кладе в меш: те
+ * саме правило поділу кривих, що в three (`CurvePath.getPoints`: еліпс —
+ * divisions·2 точок, пряма — 1, без сусідніх дублікатів), у мм по
+ * габариту деталі. Плюс `sideSegments` за `edgeMap` — щоб
+ * `sideContourRange` ділив дуги між сторонами так само, як у розкрої.
+ * Отвори — контури вирізів у тому ж порядку, що `detail.cutouts`.
+ */
+export function contourForCutters(
+  shape: THREE.Shape,
+  edgeMap: Record<number, string>,
+  w: number,
+  h: number,
+  divisions = 32,
+): {
+  points: Array<{ x: number; y: number }>;
+  sideSegments: Record<string, { start: { x: number; y: number }; end: { x: number; y: number } }>;
+  holes: Array<Array<{ x: number; y: number }>>;
+} {
+  const points: Array<{ x: number; y: number }> = [];
+  const sideSegments: Record<string, { start: { x: number; y: number }; end: { x: number; y: number } }> = {};
+  const isSideId = (id: string | undefined): id is string =>
+    Boolean(id) && !/_(radius|chamfer|lcut1|lcut2)$/.test(id!);
+
+  let last: THREE.Vector2 | undefined;
+  shape.curves.forEach((curve, index) => {
+    const c = curve as THREE.Curve<THREE.Vector2> & { isEllipseCurve?: boolean; isLineCurve?: boolean };
+    const resolution = c.isEllipseCurve ? divisions * 2 : c.isLineCurve ? 1 : divisions;
+    const pts = c.getPoints(resolution);
+    let firstMm: { x: number; y: number } | undefined;
+    let lastMm: { x: number; y: number } | undefined;
+    for (const p of pts) {
+      const mm = { x: p.x * w, y: p.y * h };
+      if (!firstMm) firstMm = mm;
+      lastMm = mm;
+      if (last && last.equals(p)) continue;
+      points.push(mm);
+      last = p;
+    }
+    const id = edgeMap[index];
+    if (isSideId(id) && firstMm && lastMm) {
+      if (!sideSegments[id]) sideSegments[id] = { start: firstMm, end: lastMm };
+      else sideSegments[id].end = lastMm;
+    }
+  });
+  if (points.length > 1) {
+    const a = points[0];
+    const b = points[points.length - 1];
+    if (Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6) points.pop();
+  }
+
+  const holes = shape.holes.map((hole) => {
+    const ring = hole.getPoints(divisions).map((p) => ({ x: p.x * w, y: p.y * h }));
+    if (ring.length > 1) {
+      const a = ring[0];
+      const b = ring[ring.length - 1];
+      if (Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6) ring.pop();
+    }
+    return ring;
+  });
+
+  return { points, sideSegments, holes };
+}
+
+/**
+ * Щільний контур деталі в НОРМОВАНИХ координатах (0..1 по габариту) —
+ * з дугами, розібраними на точки.
+ *
+ * Навіщо окремо: список вершин деталі (`points`) НЕ містить дуг — кут там
+ * лишається гострим. Перевірка «точка в матеріалі?» по такому контуру бреше
+ * рівно в зоні скруглення: зрізаний ріг вона ще вважає матеріалом. Саме на
+ * цьому обпікся бандаж гнутого елемента — на опуклому куті проба падала в
+ * зрізаний ріг і вирішувала, що кут увігнутий.
+ */
+export function sampleContourPoints(
+  curves: Array<{ type: string; getPoints?: (n: number) => Array<{ x: number; y: number }>; v1?: { x: number; y: number }; v2?: { x: number; y: number } }>,
+  arcSegments = 8,
+): Array<{ x: number; y: number }> {
+  const out: Array<{ x: number; y: number }> = [];
+  for (const curve of curves ?? []) {
+    if (curve.type === 'LineCurve' && curve.v1) {
+      out.push({ x: curve.v1.x, y: curve.v1.y });
+    } else if (curve.getPoints) {
+      const pts = curve.getPoints(arcSegments);
+      // Останню точку не кладемо — вона ж перша точка наступної кривої.
+      for (let i = 0; i < pts.length - 1; i++) out.push({ x: pts[i].x, y: pts[i].y });
+    }
+  }
+  return out;
+}

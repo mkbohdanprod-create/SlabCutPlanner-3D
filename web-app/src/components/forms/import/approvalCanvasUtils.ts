@@ -3,6 +3,7 @@ import type { ApprovalImportItem, EdgeProfileType, ApprovalImportJoint } from '.
 import type { DxfOverviewOverlay } from './DxfOverview';
 import type { DxfPreviewContour } from '../../../parsers/dxf';
 import { SHAPE_CIRCLE, SHAPE_ELLIPSE } from '../utils/draftHelpers';
+import { topProfileId } from '../../../domain/edgeTreatment';
 
 export function isPointInsidePreviewPolygon(point: DxfPoint, polygon: DxfPoint[]) {
   let inside = false;
@@ -217,7 +218,7 @@ export function approvalEdgeOverlayForSide(item: ApprovalImportItem, side: strin
       path: points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`).join(' '),
       labelX: middle.x,
       labelY: middle.y,
-      label: edgeProfileShortLabel(profile),
+      label: edgeProfileShortLabel(topProfileId(profile) ?? ''),
     };
   }
   const segment = item.sideSegments?.[side];
@@ -268,7 +269,7 @@ export function approvalEdgeOverlayForSide(item: ApprovalImportItem, side: strin
     path: `M${q1.x} ${q1.y} L${q2.x} ${q2.y}`,
     labelX: (q1.x + q2.x) / 2,
     labelY: (q1.y + q2.y) / 2,
-    label: edgeProfileShortLabel(profile),
+    label: edgeProfileShortLabel(topProfileId(profile) ?? ''),
   };
 }
 
@@ -586,4 +587,4 @@ export function approvalJointGuideOverlaysForItem(
     });
   }
   return overlays;
-}
+}

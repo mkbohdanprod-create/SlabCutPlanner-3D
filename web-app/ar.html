@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Стільниця у вашій кухні · Viyar Stone 3D</title>
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+<style>
+  :root { --ink:#1e2d3d; --muted:#5f6874; --accent:#0084ff; }
+  * { box-sizing: border-box }
+  body { margin:0; background:#f4f6f8; color:var(--ink);
+         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  header { padding: 18px 18px 10px }
+  h1 { font-size: 19px; margin: 0 0 4px }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 }
+  model-viewer { width: 100%; height: 62vh; background: #fff; --poster-color: #fff }
+  .cta { padding: 14px 18px 26px }
+  .btn { display:flex; align-items:center; justify-content:center; gap:10px;
+         width:100%; padding:16px; border:0; border-radius:12px;
+         background: var(--accent); color:#fff; font-size:17px; font-weight:700;
+         text-decoration:none; }
+  .hint { margin: 14px 2px 0; font-size: 13px; line-height:1.5; color: var(--muted) }
+  .warn { margin-top:12px; padding:12px 14px; border-radius:10px;
+          background:#fff8e6; color:#7a5b16; font-size:13px; line-height:1.5; display:none }
+  .warn.show { display:block }
+  .spec { display:flex; gap:16px; flex-wrap:wrap; margin-top:10px; font-size:13px; color:var(--muted) }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Острів із каменю Amazonite Green</h1>
+  <p class="sub">2400 × 900 мм, висота 900 · натуральний камінь</p>
+</header>
+
+<!-- ar-scale="fixed" — виріб стає в кімнаті в натуральну величину і не
+     масштабується пальцями: інакше клієнт «підганяє» його під кухню і
+     бачить не той розмір, який приїде. -->
+<model-viewer
+  src="/ar-model.glb"
+  ios-src="/ar-model.usdz"
+  alt="Острів із натурального каменю"
+  ar
+  ar-modes="webxr scene-viewer quick-look"
+  ar-scale="fixed"
+  camera-controls
+  touch-action="pan-y"
+  shadow-intensity="1"
+  exposure="1.05">
+  <button slot="ar-button" class="btn">
+    Подивитись у себе вдома
+  </button>
+</model-viewer>
+
+<div class="cta">
+  <p class="hint">Наведіть камеру на підлогу і повільно поводіть телефоном —
+     програма знайде площину, і виріб стане в натуральну величину.</p>
+  <div class="spec">
+    <span>Артикул 301251</span><span>Товщина 20 мм</span>
+  </div>
+  <div class="warn" id="warn">
+    Схоже, сторінку відкрито всередині месенджера. На iPhone доповнена
+    реальність тут не працює — натисніть «…» у кутку і виберіть
+    <b>«Відкрити в Safari»</b>.
+  </div>
+</div>
+
+<script>
+  // Вбудовані браузери месенджерів (Viber, Telegram, Instagram, Facebook)
+  // на iOS не запускають Quick Look: замість виробу людина бачить сміття.
+  // Тому чесно попереджаємо просто на сторінці.
+  var ua = navigator.userAgent || '';
+  var isIOS = /iPhone|iPad|iPod/.test(ua);
+  var inApp = /FBAN|FBAV|Instagram|Viber|Line|Telegram|WhatsApp|MicroMessenger/.test(ua)
+    || (isIOS && !/Safari/.test(ua));
+  if (isIOS && inApp) document.getElementById('warn').classList.add('show');
+</script>
+
+</body>
+</html>

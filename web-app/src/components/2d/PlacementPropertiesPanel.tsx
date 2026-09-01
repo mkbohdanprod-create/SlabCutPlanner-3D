@@ -3,6 +3,9 @@ import { Settings, Link as LinkIcon, Unlink } from 'lucide-react';
 import type { EdgeTreatment, EdgeProcessing } from '../../domain/types';
 import { edgeToolOutMm } from '../../domain/allowances';
 import { edgeProfilesForMaterial } from '../../utils/edgeProfiles';
+import { CATALOG_OPTION_VALUE, EdgeProfileOptionGroups } from '../forms/editors/EdgeProfileOptions';
+import { EdgeProfileThumb } from '../forms/editors/EdgeProfileThumb';
+import { openEdgeCatalog } from '../../store/useEdgeCatalog';
 
 export function PlacementPropertiesPanel() {
   const { project, selectedPlacementIds, updatePlacement } = useProjectStore();
@@ -40,7 +43,7 @@ export function PlacementPropertiesPanel() {
 
   const renderSideSettings = (side: string) => {
     const rawVal = placement.edgeProfiles?.[side];
-    let t: EdgeTreatment = { isFullLength: true, linked: true };
+    let t: EdgeTreatment = { isFullLength: true, linked: false }; // дефолт — лише лицьове ребро (01.09)
     if (typeof rawVal === 'string') {
       t.top = { profileId: rawVal };
     } else if (rawVal) {
@@ -59,6 +62,7 @@ export function PlacementPropertiesPanel() {
       <div key={side} className="border border-slate-200 rounded-md p-3 space-y-3 bg-white">
         <div className="flex items-center justify-between border-b pb-2">
           <span className="font-bold text-slate-800">Сторона {side}</span>
+          <EdgeProfileThumb profileId={t.top?.profileId} height={26} />
         </div>
 
         {/* Profiles */}
@@ -68,10 +72,17 @@ export function PlacementPropertiesPanel() {
             <select 
               className="w-full p-1.5 text-xs border rounded border-slate-300 focus:outline-none focus:border-blue-500"
               value={t.top?.profileId || ''}
-              onChange={e => handleUpdate(side, { top: e.target.value ? { profileId: e.target.value } : undefined })}
+              onChange={e => {
+                if (e.target.value === CATALOG_OPTION_VALUE) {
+                  openEdgeCatalog({ title: `Сторона ${side} · лицьове ребро`, material: project.projectMaterial, value: t.top?.profileId, allowNone: true,
+                    onSelect: (id) => handleUpdate(side, { top: id ? { profileId: id } : undefined }) });
+                  return;
+                }
+                handleUpdate(side, { top: e.target.value ? { profileId: e.target.value } : undefined });
+              }}
             >
               <option value="">--</option>
-              {edgeProfiles.map(p => <option key={p.id} value={p.id}>{p.shortLabel || p.label}</option>)}
+              <EdgeProfileOptionGroups profiles={edgeProfiles} material={project.projectMaterial} />
             </select>
           </div>
           
@@ -89,10 +100,17 @@ export function PlacementPropertiesPanel() {
               className="w-full p-1.5 text-xs border rounded border-slate-300 focus:outline-none focus:border-blue-500"
               value={t.bottom?.profileId || ''}
               disabled={t.linked}
-              onChange={e => handleUpdate(side, { bottom: e.target.value ? { profileId: e.target.value } : undefined })}
+              onChange={e => {
+                if (e.target.value === CATALOG_OPTION_VALUE) {
+                  openEdgeCatalog({ title: `Сторона ${side} · тильне ребро`, material: project.projectMaterial, value: t.bottom?.profileId, allowNone: true,
+                    onSelect: (id) => handleUpdate(side, { bottom: id ? { profileId: id } : undefined }) });
+                  return;
+                }
+                handleUpdate(side, { bottom: e.target.value ? { profileId: e.target.value } : undefined });
+              }}
             >
               <option value="">--</option>
-              {edgeProfiles.map(p => <option key={p.id} value={p.id}>{p.shortLabel || p.label}</option>)}
+              <EdgeProfileOptionGroups profiles={edgeProfiles} material={project.projectMaterial} />
             </select>
           </div>
         </div>
@@ -183,4 +201,4 @@ export function PlacementPropertiesPanel() {
       </div>
     </div>
   );
-}
+}

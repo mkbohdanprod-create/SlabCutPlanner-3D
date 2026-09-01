@@ -82,7 +82,19 @@ export function SlabDimensionHints({ slab, placements, parts, scale }: { slab: S
     })
     .filter(Boolean) as ReturnType<typeof polygonBounds>[];
   if (!boxes.length) {
-    return <text className="slab-dimension-hint" x={slab.width * scale / 2} y={slab.height * scale - 12} textAnchor="middle">{slab.width}×{slab.height}</text>;
+    // Габарит порожнього листа — під нижньою кромкою праворуч, уздовж тієї
+    // сторони, якої він стосується (27.08). По центру каменю напис читався
+    // як щось намальоване НА камені й перекривав малюнок.
+    return (
+      <text
+        className="slab-dimension-hint"
+        x={slab.width * scale}
+        y={slab.height * scale + 15}
+        textAnchor="end"
+      >
+        {slab.width}×{slab.height}
+      </text>
+    );
   }
   const minX = Math.min(...boxes.map((box) => box.minX));
   const minY = Math.min(...boxes.map((box) => box.minY));

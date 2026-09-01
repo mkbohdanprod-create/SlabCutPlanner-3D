@@ -2,10 +2,11 @@ import React, { useRef} from 'react';
 import { Upload, X, ZoomIn, ZoomOut, Check } from 'lucide-react';
 import type { DxfPreviewContour, DxfBlockDraft, DxfBindingSession, DxfModalResize, DxfPreviewDrag, DxfImportRole } from '../../../parsers/dxf';
 import { dxfBounds, dxfSvgPath,  dxfViewportForContours,           dxfBindingSides, dxfBindingAnchorPoint} from '../../../parsers/dxf';
+import { EDGE_KIND_LABEL } from '../../../domain/ids';
 export const DXF_ROLE_LABELS: Record<DxfImportRole, string> = {
   detail: 'Деталь',
-  thickening: 'Потовщення',
-  fold: 'Підворот',
+  thickening: EDGE_KIND_LABEL.thickening,
+  fold: EDGE_KIND_LABEL.fold,
 };
 
 export type DxfOverviewOverlay = {
@@ -347,4 +348,4 @@ export function DxfOverview({
     </svg>
   );
 }
-
+

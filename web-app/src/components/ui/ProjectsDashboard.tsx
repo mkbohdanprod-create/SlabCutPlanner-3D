@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api, type ProjectMetadata } from '../../lib/api';
+import { useAuth } from '../auth/AuthContext';
 import { useProjectStore } from '../../store/useProjectStore';
 import { Folder, Plus, Trash2, X, Clock, Loader2 } from 'lucide-react';
 import type { Project } from '../../domain/types';
 
 export function ProjectsDashboard({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  // Без Keycloak-сесії кабінет не запитуємо: бекенд усе одно відповість 401,
+  // а порожній список виглядав би як «всі проєкти зникли».
+  const { user } = useAuth();
   const importProject = useProjectStore((s) => s.importProject);
   const setCurrentDbProjectId = useProjectStore((s) => s.setCurrentDbProjectId);
   const clearCalculation = useProjectStore((s) => s.clearCalculation);
@@ -16,6 +20,7 @@ export function ProjectsDashboard({ isOpen, onClose }: { isOpen: boolean; onClos
   const [isCreating, setIsCreating] = useState(false);
 
   const fetchProjects = async () => {
+    if (!user) return;
     setIsLoading(true);
     try {
       setProjects(await api.listProjects());
@@ -27,12 +32,13 @@ export function ProjectsDashboard({ isOpen, onClose }: { isOpen: boolean; onClos
   };
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && user) {
       fetchProjects();
     }
-  }, [isOpen]);
+  }, [isOpen, user]);
 
   const handleCreateNew = async () => {
+    if (!user) return;
     setIsCreating(true);
     try {
       // Create an empty project from current default store state
@@ -55,15 +61,27 @@ export function ProjectsDashboard({ isOpen, onClose }: { isOpen: boolean; onClos
     }
   };
 
-  const handleLoadProject = async (id: string) => {
+  const handleLoadProject = async (id: string, name?: string) => {
+    onClose();
     try {
-      const { data } = await api.getProject(id);
-
-      setCurrentDbProjectId(id);
-      importProject(data as Project);
-      onClose();
+      // Той самий індикатор, що й при відкритті з диска: людина бачить,
+      // на якому кроці процес, а не порожній екран на кілька секунд.
+      const { runWithProgress } = await import('../../lib/loadWithProgress');
+      await runWithProgress<{ data: unknown }>(
+        name || 'Відкриваю проєкт',
+        { data: null },
+        [
+          { label: 'Забираю проєкт із кабінету…', run: async (v) => ({ ...v, data: (await api.getProject(id)).data }) },
+          { label: 'Розгортаю деталі й розкладку…', run: (v) => {
+            setCurrentDbProjectId(id);
+            importProject(v.data as Project);
+            return v;
+          } },
+        ],
+      );
     } catch (err) {
       console.error('Error loading project:', err);
+      window.alert('Не вдалося відкрити проєкт із кабінету. Перевірте зв\'язок і спробуйте ще раз.');
     }
   };
 
@@ -126,7 +144,7 @@ export function ProjectsDashboard({ isOpen, onClose }: { isOpen: boolean; onClos
               {projects.map((p) => (
                 <div
                   key={p.id}
-                  onClick={() => handleLoadProject(p.id)}
+                  onClick={() => handleLoadProject(p.id, p.name || p.order_number)}
                   className="flex cursor-pointer items-center justify-between rounded-xl border border-[#2c3036] bg-[#25272c] p-4 transition-all hover:border-[var(--accent-color)] hover:shadow-md"
                 >
                   <div className="flex items-center gap-4">

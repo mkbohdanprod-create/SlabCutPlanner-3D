@@ -1,30 +1,36 @@
 import  { useState } from 'react';
-import { X } from 'lucide-react';
+import { DraggableDialog } from './DraggableDialog';
 import type { Leg } from '../../../domain/types';
 
 interface Props {
   edgeId: string;
+  /**
+   * Довжина ребра, на якому створюється деталь. Стає шириною за
+   * замовчуванням: доповнення майже завжди роблять на всю сторону, а
+   * жорсткий дефолт 1100 змушував щоразу перебивати число вручну.
+   */
+  sideLength?: number;
   initialData?: Leg;
   onSave: (data: Leg) => void;
   onClose: () => void;
 }
 
-export function LegModal({ edgeId, initialData, onSave, onClose }: Props) {
-  const [width, setWidth] = useState(initialData?.width || 1100);
+export function LegModal({ edgeId, sideLength, initialData, onSave, onClose }: Props) {
+  const [width, setWidth] = useState(initialData?.width || (sideLength ? Math.round(sideLength) : 1100));
   const [offset, setOffset] = useState(initialData?.offset || 0);
+  const [inset, setInset] = useState(initialData?.inset || 0);
   const [size, setSize] = useState(initialData?.size || 'Довільний (від стільниці до підлоги)');
   const [height, setHeight] = useState(initialData?.height || 900);
   const [jointType, setJointType] = useState(initialData?.jointType || 'Без фрезерування');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-      <div className="bg-[#eaf4fc] rounded-md shadow-lg w-[360px] overflow-hidden border border-[#b8d4ee]">
-        <div className="bg-[#3b82f6] px-4 py-3 flex justify-between items-center text-white">
-          <h3 className="font-bold">Нога</h3>
-          <button onClick={onClose} className="hover:text-white/80 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <DraggableDialog
+      title="Нога"
+      onClose={onClose}
+      width={360}
+      headerClassName="bg-[#3b82f6] text-white"
+      className="bg-[#eaf4fc] border border-[#b8d4ee] overflow-hidden"
+    >
         
         <div className="p-4 flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-4">
@@ -51,6 +57,21 @@ export function LegModal({ edgeId, initialData, onSave, onClose }: Props) {
                 />
               </div>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-slate-700">В глиб стільниці</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                value={inset}
+                onChange={(e) => setInset(Math.max(0, Number(e.target.value)))}
+                className="w-full px-2 py-1.5 border border-slate-300 rounded-sm text-sm"
+              />
+              <span className="text-xs text-slate-500">мм.</span>
+            </div>
+            <span className="text-[11px] text-slate-500">0 — нога стоїть на кромці. Більше — зсувається під стільницю.</span>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -100,14 +121,13 @@ export function LegModal({ edgeId, initialData, onSave, onClose }: Props) {
               Скасувати
             </button>
             <button
-              onClick={() => onSave({ edgeId, width, offset, size, height, jointType })}
+              onClick={() => onSave({ edgeId, width, offset, inset, size, height, jointType })}
               className="w-full py-1.5 bg-[#eaf4fc] text-[#3b82f6] border border-[#3b82f6] rounded-sm font-medium hover:bg-blue-50 transition-colors"
             >
               Застосувати
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </DraggableDialog>
   );
-}
+}

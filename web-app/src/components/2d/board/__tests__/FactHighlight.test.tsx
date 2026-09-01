@@ -96,8 +96,10 @@ describe('FactHighlight', () => {
   });
 
   it('стик — ділянка сторони, а не контур деталі', () => {
-    // Стик по стороні C (права, 0..600 мм), займає 100..500 мм.
-    // Прямокутна форма: C іде з (1000,0) у (1000,600).
+    // Стик по стороні B (права, 0..600 мм), займає 100..500 мм.
+    // Єдина угода (хвиля 3): A — перше ребро (верх), B — наступне за
+    // обходом, тобто праве: з (1000,0) у (1000,600). Раніше це ребро
+    // звалось C — саме та розбіжність, яку прибрала хвиля 3.
     const p = part({
       detailId: 'prod_1/element:main/detail:main',
       shape: 'Прямокутна',
@@ -106,7 +108,7 @@ describe('FactHighlight', () => {
     const c = draw([{
       factKind: 'joint_length',
       elementPath: 'prod_1/element:main',
-      side: 'C', fromMm: 100, toMm: 500,
+      side: 'B', fromMm: 100, toMm: 500,
     }], p);
     expect(c.querySelectorAll('polygon')).toHaveLength(0);
     const line = c.querySelector('line')!;
@@ -137,10 +139,10 @@ describe('FactHighlight', () => {
       shape: 'Прямокутна',
       points: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 600 }, { x: 0, y: 600 }],
     });
-    const c = draw([{ factKind: 'edge', partId: 'part_1', side: 'C' }], p);
+    const c = draw([{ factKind: 'edge', partId: 'part_1', side: 'B' }], p);
     const poly = c.querySelector('polyline')!;
     expect(poly).toBeTruthy();
-    // C права: x = (100+1000)*0.3 = 330, y від (50+0)*0.3=15 до (50+600)*0.3=195
+    // B права: x = (100+1000)*0.3 = 330, y від (50+0)*0.3=15 до (50+600)*0.3=195
     const pts = poly.getAttribute('points')!.split(' ').map((pair) => pair.split(',').map(Number));
     expect(pts).toHaveLength(2);
     expect(pts[0][0]).toBeCloseTo(330, 3);

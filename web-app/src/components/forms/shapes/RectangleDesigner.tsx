@@ -1,5 +1,6 @@
 import type { DetailDraft } from '../../../domain/types';
 import { cutoutCenter } from '../../../domain/cutoutAnchor';
+import type { SurfaceCutout } from '../../../domain/types';
 import type { UiLanguage } from '../../../store/useDictionaryStore';
 import {     TemplateInput,    CornerMarker } from './SvgComponents';
 import { translateStaticUiText } from '../../../i18n';
@@ -38,7 +39,7 @@ export function RectangleDesigner({ detail, updateDetail, activeSides, onSideCli
           </>
         )}
 
-        {detail.cutouts && Object.values(detail.cutouts).map(cutout => {
+        {detail.cutouts && (Object.values(detail.cutouts) as SurfaceCutout[]).map((cutout) => {
           const corner = cornersSvgMap[cutout.bindCorner];
           if (!corner) return null;
 
@@ -56,23 +57,40 @@ export function RectangleDesigner({ detail, updateDetail, activeSides, onSideCli
           const cx = cornersSvgMap.DA.x + (absX / (detail.width || 1)) * svgW;
           const cy = cornersSvgMap.DA.y + (absY / (detail.height || 1)) * svgH;
 
+          /*
+           * FG-30. Габарит і відступи — прямо біля мітки.
+           *
+           * Мітка була безрозмірною крапкою: щоб дізнатись, що це за виріз і
+           * де він стоїть, доводилось відкривати вікно обробок і читати поля.
+           * Тепер видно і те, і те. Формат той самий, що в бланку погодження
+           * («300×200», «Ø35»), щоб екран і креслення читались однаково.
+           */
+          const sizeLabel = cutout.shape === 'circle'
+            ? `Ø${Math.round((cutout.radius || 0) * 2)}`
+            : `${Math.round(cutout.width || 0)}×${Math.round(cutout.height || 0)}`;
+
           return (
-            <div 
+            <div
               key={cutout.id}
-              className="absolute z-10 flex items-center justify-center border-2 border-[#1f93ef] bg-[#1f93ef]/20 cursor-pointer hover:bg-[#1f93ef]/40 transition-colors"
-              style={{
-                left: cx - 12,
-                top: cy - 12,
-                width: 24,
-                height: 24,
-                borderRadius: cutout.shape === 'circle' ? '50%' : '2px'
-              }}
+              className="absolute z-10 flex flex-col items-center cursor-pointer group"
+              style={{ left: cx - 30, top: cy - 12, width: 60 }}
               onClick={() => onCutoutClick?.(cutout.id)}
-              title={ui('Редагувати виріз')}
-            />
+              title={`${sizeLabel} · ${ui('Від кута')} ${cutout.bindCorner}: ${Math.round(cutout.x)} / ${Math.round(cutout.y)} · ${ui('Редагувати виріз')}`}
+            >
+              <div
+                className="border-2 border-[#1f93ef] bg-[#1f93ef]/20 group-hover:bg-[#1f93ef]/40 transition-colors"
+                style={{ width: 24, height: 24, borderRadius: cutout.shape === 'circle' ? '50%' : '2px' }}
+              />
+              <span className="mt-0.5 text-[10px] leading-tight font-semibold text-[#1f6fa8] whitespace-nowrap">
+                {sizeLabel}
+              </span>
+              <span className="text-[10px] leading-tight text-slate-500 whitespace-nowrap">
+                {`${cutout.bindCorner} ${Math.round(cutout.x)}/${Math.round(cutout.y)}`}
+              </span>
+            </div>
           );
         })}
       </div>
     </div>
   );
-}
+}

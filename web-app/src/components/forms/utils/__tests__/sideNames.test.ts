@@ -72,3 +72,39 @@ describe('імена сторін: таблиця редактора = конт�
     expect(getSideSize(draft, 'D')).toBe(600);
   });
 });
+
+/*
+ * ЛІВА Г (mirrorL, 26.08): таблиця сторін і контур рушія мусять збігатись
+ * і в дзеркалі. Літери йдуть за обходом, тому B і F міняються ролями:
+ * B — повна права сторона, F — коротка ліва. Тест тримає всі три копії
+ * контуру (draftHelpers, рушій, joints) в одному дзеркалі.
+ */
+describe('ліва Г: таблиця сторін = контур рушія', () => {
+  const geometry = {
+    outerWidth: 1200, outerHeight: 900,
+    innerHorizontal: 500, innerVertical: 400,
+    cornerOrientation: 'BL' as const,
+  };
+  const draft = {
+    kind: 'l', mirrorL: true,
+    outerWidth: 1200, outerHeight: 900,
+    innerHorizontal: 500, innerVertical: 400,
+  } as unknown as DetailDraft;
+
+  it('усі шість сторін збігаються з контуром BL', () => {
+    const lens = contourLengths('Г-подібна', geometry as never,
+      ['start', 'A', 'B', 'C', 'D', 'E'],
+      ['A', 'B', 'C', 'D', 'E', 'F']);
+    (['A', 'B', 'C', 'D', 'E', 'F'] as const).forEach((side) => {
+      expect(getSideSize(draft, side), `сторона ${side}`).toBe(lens[side]);
+    });
+  });
+
+  it('B і F помінялись ролями відносно правої', () => {
+    expect(getSideSize(draft, 'B')).toBe(900);   // повна права
+    expect(getSideSize(draft, 'F')).toBe(500);   // коротка ліва (900-400)
+    const right = { ...draft, mirrorL: false } as unknown as DetailDraft;
+    expect(getSideSize(right, 'B')).toBe(500);
+    expect(getSideSize(right, 'F')).toBe(900);
+  });
+});

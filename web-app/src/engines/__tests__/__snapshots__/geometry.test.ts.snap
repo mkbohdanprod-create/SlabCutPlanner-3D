@@ -65,6 +65,7 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
     "textureIrrelevant": undefined,
     "textureOffsetX": undefined,
     "textureOffsetY": undefined,
+    "thickness": 20,
     "type": "Стільниця",
     "width": 1020,
   },
@@ -80,6 +81,11 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
     "holes": undefined,
     "id": "part:det-2:main:body:Стільниця 2:0:0",
     "isMain": true,
+    "jointSeams": [
+      {
+        "lengthMm": 600,
+      },
+    ],
     "name": "Стільниця 2.1",
     "nominalHoles": undefined,
     "nominalPoints": [
@@ -142,6 +148,7 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
     "textureIrrelevant": undefined,
     "textureOffsetX": 0,
     "textureOffsetY": 0,
+    "thickness": 20,
     "type": "Стільниця",
     "width": 1820,
   },
@@ -232,6 +239,7 @@ exports[`geometry.ts (Safety Net) > should correctly explode details into parts 
     "textureIrrelevant": undefined,
     "textureOffsetX": 0,
     "textureOffsetY": 620,
+    "thickness": 20,
     "type": "Стільниця",
     "width": 620,
   },

@@ -1,5 +1,7 @@
-import type { SurfaceCutout } from './types';
+import type { Point, SurfaceCutout } from './types';
 import { jointAnchorPoints } from './joints';
+import { contourVertexOrder, cornerIdForSides } from './sideNaming';
+import { pointInPolygonOrOn, pointInPolygonStrict } from '../engines/geometryUtils';
 
 /**
  * ПРИВ'ЯЗКА ВИРІЗУ ДО КУТА ДЕТАЛІ — єдине джерело істини.
@@ -76,7 +78,22 @@ export function cornerAnchor(ctx: AnchorShapeContext, bindCorner: string | undef
   const w = Math.max(1, ctx.width);
   const h = Math.max(1, ctx.height);
 
-  let pt = jointAnchorPoints(ctx.shape, ctx.geometry)?.[bindCorner];
+  const anchors = jointAnchorPoints(ctx.shape, ctx.geometry);
+
+  /*
+   * FG-18, причина перша: РІЗНІ ІМЕНА В ІНТЕРФЕЙСІ Й У ДАНИХ.
+   *
+   * Вікно вирізу пропонує кути парами літер (`DE`), а у складних форм
+   * ключ у даних — ім'я вершини (`D`). Пряме читання `anchors['DE']`
+   * давало undefined, функція поверталась ні з чим, і `cutoutCenter`
+   * чесно міряв «від початку координат» — тобто від лівого верхнього
+   * кута. Виріз опинявся за кілометр від того місця, яке задав менеджер.
+   */
+  const vertexId = anchors?.[bindCorner]
+    ? bindCorner
+    : cornerIdForSides(bindCorner, ctx.shape) ?? bindCorner;
+
+  let pt = anchors?.[vertexId];
 
   if (!pt) {
     const rectCorners: Record<string, { x: number; y: number }> = {
@@ -89,12 +106,85 @@ export function cornerAnchor(ctx: AnchorShapeContext, bindCorner: string | undef
   }
   if (!pt) return undefined;
 
+  /*
+   * FG-18, причина друга: НАПРЯМОК «ВСЕРЕДИНУ» БРАВСЯ З ГАБАРИТУ.
+   *
+   * Було `pt.x <= w / 2 ? 1 : -1` — тобто «якщо кут у лівій половині
+   * габаритного прямокутника, міряємо вправо». На прямокутнику це завжди
+   * правда, на Г- і П-подібній — ні: там кут може стояти посеред
+   * габариту, і відступ ішов у бік, де матеріалу немає.
+   *
+   * Тепер напрямок читається з САМОГО КОНТУРУ — по двох ребрах, що
+   * сходяться в цьому куті. Для увігнутого кута (їх на Г одна, на П дві)
+   * ребра дають напрямок у виїмку, тому результат перевіряється пробною
+   * точкою і за потреби перебираються решта чвертей.
+   */
+  const contour = contourOf(ctx, anchors);
+  const fromContour = contour ? inwardFromContour(contour, vertexId, ctx, anchors) : undefined;
+
   return {
     x: pt.x,
     y: pt.y,
-    dirX: pt.x <= w / 2 ? 1 : -1,
-    dirY: pt.y <= h / 2 ? 1 : -1,
+    dirX: fromContour?.dirX ?? (pt.x <= w / 2 ? 1 : -1),
+    dirY: fromContour?.dirY ?? (pt.y <= h / 2 ? 1 : -1),
   };
+}
+
+/** Контур деталі в тому самому порядку, у якому його будує рушій. */
+function contourOf(
+  ctx: AnchorShapeContext,
+  anchors: Record<string, { x: number; y: number }> | undefined,
+): Array<{ x: number; y: number }> | undefined {
+  const order = contourVertexOrder(ctx.shape);
+  if (!order || !anchors) return undefined;
+  const points = order.map((id) => anchors[id]).filter(Boolean);
+  return points.length === order.length ? points : undefined;
+}
+
+/**
+ * Напрямок «усередину деталі» від вершини контуру.
+ *
+ * Перше наближення — сума двох ребер, що сходяться у вершині: для
+ * опуклого кута воно одразу правильне. Далі пробна точка на 1 мм
+ * перевіряє, що там справді матеріал; якщо ні (увігнутий кут) —
+ * перебираються решта чвертей.
+ */
+function inwardFromContour(
+  contour: Array<{ x: number; y: number }>,
+  vertexId: string,
+  ctx: AnchorShapeContext,
+  anchors: Record<string, { x: number; y: number }> | undefined,
+): { dirX: number; dirY: number } | undefined {
+  const order = contourVertexOrder(ctx.shape);
+  if (!order || !anchors) return undefined;
+  const index = order.indexOf(vertexId);
+  if (index < 0) return undefined;
+
+  const here = contour[index];
+  const prev = contour[(index - 1 + contour.length) % contour.length];
+  const next = contour[(index + 1) % contour.length];
+
+  const sign = (value: number) => (value < 0 ? -1 : 1);
+  const first = {
+    dirX: sign((prev.x - here.x) + (next.x - here.x)),
+    dirY: sign((prev.y - here.y) + (next.y - here.y)),
+  };
+
+  // Пробна точка свідомо крихітна: вона перевіряє бік, а не вміщення
+  // вирізу. За вміщення відповідає перевірка у вікні вирізу.
+  const PROBE_MM = 1;
+  const hasMaterial = (dirX: number, dirY: number) => pointInPolygonStrict(
+    { x: here.x + dirX * PROBE_MM, y: here.y + dirY * PROBE_MM },
+    contour as Point[],
+  );
+
+  if (hasMaterial(first.dirX, first.dirY)) return first;
+  const candidates = [
+    { dirX: first.dirX, dirY: -first.dirY },
+    { dirX: -first.dirX, dirY: first.dirY },
+    { dirX: -first.dirX, dirY: -first.dirY },
+  ];
+  return candidates.find((c) => hasMaterial(c.dirX, c.dirY)) ?? first;
 }
 
 /**
@@ -124,6 +214,53 @@ export function cutoutCenter(
     cx: anchor.x + anchor.dirX * (cutout.x + hx),
     cy: anchor.y + anchor.dirY * (cutout.y + hy),
   };
+}
+
+/**
+ * ЧИ ВМІЩАЄТЬСЯ ВИРІЗ У РЕАЛЬНИЙ КОНТУР (друга половина FG-18).
+ *
+ * FG-16 навчив вікно вирізу відмовляти, коли відступ виводить виріз за
+ * ГАБАРИТ. Але на Г- і П-подібній габарит бреше: у виїмці матеріалу
+ * немає, а прямокутник каже, що є. Тому тут перевірка йде по самому
+ * контуру.
+ *
+ * Повертає `undefined`, коли судити нема з чого (форма без відомого
+ * контуру — коло, імпорт, довільний елемент). Це важливо: «не знаю» і
+ * «все добре» — різні відповіді, і мовчазна згода тут коштувала б
+ * зламаної деталі.
+ */
+export function cutoutOutsideContour(
+  cutout: Pick<SurfaceCutout, 'shape' | 'width' | 'height' | 'radius' | 'x' | 'y' | 'bindCorner'>,
+  ctx: AnchorShapeContext,
+): boolean | undefined {
+  const anchors = jointAnchorPoints(ctx.shape, ctx.geometry);
+  const contour = contourOf(ctx, anchors);
+  if (!contour) return undefined;
+
+  const { cx, cy } = cutoutCenter(cutout, ctx);
+  const { w, h } = cutoutBox(cutout);
+  if (w <= 0 || h <= 0) return undefined;
+
+  const probes: Point[] = [{ x: cx, y: cy }];
+  if (cutout.shape === 'circle') {
+    const r = (cutout.radius || 0);
+    // Вісім точок по колу: чотирьох мало — виріз може вилізти «кутом».
+    for (let i = 0; i < 8; i++) {
+      const a = (Math.PI / 4) * i;
+      probes.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+    }
+  } else {
+    probes.push(
+      { x: cx - w / 2, y: cy - h / 2 },
+      { x: cx + w / 2, y: cy - h / 2 },
+      { x: cx + w / 2, y: cy + h / 2 },
+      { x: cx - w / 2, y: cy + h / 2 },
+    );
+  }
+
+  // `OrOn`, а не `Strict`: виріз, що впритул торкається краю, — це паз,
+  // цілком законна річ, і відмовляти в ньому не можна.
+  return probes.some((point) => !pointInPolygonOrOn(point, contour as Point[]));
 }
 
 /**

@@ -12,8 +12,9 @@ import { publishHighlight, subscribeHighlight } from './highlightSync';
  *
  *  · estimate — послуги для виробництва (внутрішній BOM)
  *  · quote    — прорахунок для клієнта
+ *  · room     — приміщення (база): редактор кімнати, 01.09
  */
-export type PaneView = '2d' | '3d' | 'texture' | 'estimate' | 'quote';
+export type PaneView = '2d' | '3d' | 'texture' | 'estimate' | 'quote' | 'room';
 export type MainView = PaneView | 'split';
 
 interface UIState {
@@ -32,11 +33,43 @@ interface UIState {
   /** Режим «Підсвітка» у 3D Підборі: показує фото слябу, зняте з підсвіткою (просвітний камінь). */
   isBacklightMode: boolean;
   setBacklightMode: (enabled: boolean) => void;
+  /**
+   * ПРОСУНУТИЙ РЕЖИМ (26.08, задача власника). Панелі інструментів
+   * показують значки замість підписів: той, хто знає програму напам'ять,
+   * читає рядок кнопок як приладову панель, а не як список слів.
+   *
+   * Це НЕ окремий набір функцій: жодна кнопка не з'являється і не
+   * зникає, міняється лише подача. Кожен значок несе підказку з повною
+   * назвою — навів, почекав, прочитав.
+   *
+   * Живе в localStorage, а не в проєкті: це звичка людини, а не
+   * властивість замовлення. Новачок відкриває програму зі словами.
+   */
+  isExpertMode: boolean;
+  setExpertMode: (enabled: boolean) => void;
+  /**
+   * ЗАВАНТАЖЕННЯ ПРОЄКТУ — що зараз відбувається (27.08).
+   *
+   * Відкриття проєкту з кабінету чи з диска не давало жодного знаку: на
+   * великому проєкті вкладка просто застигала на кілька секунд, і людина
+   * тиснула ще раз, думаючи, що не спрацювало. Тут — назва кроку, який
+   * виконується просто зараз, і скільки кроків лишилось.
+   */
+  projectLoading: { title: string; step: string; index: number; total: number } | null;
+  setProjectLoading: (state: UIState['projectLoading']) => void;
   is3dGroupingEnabled: boolean;
   set3dGroupingEnabled: (enabled: boolean) => void;
   transformMode: 'translate' | 'rotate';
   setTransformMode: (mode: 'translate' | 'rotate') => void;
   selectedId3d: string | null;
+  /**
+   * Крок 5.1: виділений ВИРІБ на сцені Підбору. Окремо від selectedId3d
+   * (там id розміщення деталі): виріб мусить виділятись навіть коли його
+   * головна деталь не розмістилась на слябі — інакше при конфлікті
+   * розкрою виріб неможливо ні посунути, ні повернути.
+   */
+  selectedProductId3d: string | null;
+  setSelectedProductId3d: (id: string | null) => void;
   setSelectedId3d: (id: string | null) => void;
   showEdges: boolean;
   setShowEdges: (show: boolean) => void;
@@ -59,6 +92,23 @@ interface UIState {
    */
   isAdminUnlocked: boolean;
   setAdminUnlocked: (unlocked: boolean) => void;
+  /**
+   * Останній застосований шаблон виробу: id і введені числа. Тримаємо тут,
+   * щоб із редактора можна було повернутись у конфігуратор і перебудувати
+   * виріб іншими розмірами, не набираючи все заново. Не персиститься —
+   * це стан сеансу, а не проєкту.
+   */
+  lastTemplate: {
+    templateId: string;
+    values: Record<string, number | string | boolean>;
+    /** Слоти, які шаблон створив минулого разу — щоб перебудова їх прибрала */
+    slots: string[];
+  } | null;
+  setLastTemplate: (state: {
+    templateId: string;
+    values: Record<string, number | string | boolean>;
+    slots: string[];
+  } | null) => void;
   isSettingsOpen: boolean;
   setIsSettingsOpen: (open: boolean) => void;
   isEdgeProfileSettingsOpen: boolean;
@@ -75,6 +125,12 @@ interface UIState {
   isQuoteOpen: boolean;
   setIsQuoteOpen: (open: boolean) => void;
   isHelpOpen: boolean;
+  /**
+   * Розділ, на якому відкрити довідку. Кнопка «i» біля інструмента має
+   * вести саме до свого розділу, а не змушувати шукати його в списку.
+   */
+  helpSection: string | null;
+  openHelp: (section?: string) => void;
   setIsHelpOpen: (open: boolean) => void;
   isServiceOpen: boolean;
   setIsServiceOpen: (open: boolean) => void;
@@ -105,6 +161,22 @@ interface UIState {
 /** Мітка часу останньої зміни сесії — для злиття серій швидких правок в один крок */
 let sessionBurstAt = 0;
 
+/** Ключ звички користувача: просунутий режим переживає перезавантаження */
+const EXPERT_MODE_KEY = 'vs3d.expertMode';
+
+/**
+ * Читаємо збережений режим один раз, при створенні стану. У приватному
+ * вікні або зі згорнутим сховищем доступ кидає виняток — тоді просто
+ * стартуємо зі словами, це робочий стан за замовчуванням.
+ */
+function readExpertMode(): boolean {
+  try {
+    return window.localStorage.getItem(EXPERT_MODE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export const useUIStore = create<UIState>((set) => ({
   mainView: '2d',
   splitRatio: 50,
@@ -120,12 +192,23 @@ export const useUIStore = create<UIState>((set) => ({
   set3dAssemblyMode: (is3dAssemblyMode) => set({ is3dAssemblyMode }),
   isBacklightMode: false,
   setBacklightMode: (isBacklightMode) => set({ isBacklightMode }),
+  projectLoading: null,
+  setProjectLoading: (projectLoading) => set({ projectLoading }),
+  isExpertMode: readExpertMode(),
+  setExpertMode: (isExpertMode) => {
+    // Пишемо в localStorage у тому ж кроці, що й у стан: інакше режим
+    // губиться при перезавантаженні, і перемикач виглядає зламаним.
+    try { window.localStorage.setItem(EXPERT_MODE_KEY, isExpertMode ? '1' : '0'); } catch { /* приватний режим браузера */ }
+    set({ isExpertMode });
+  },
   is3dGroupingEnabled: true,
   set3dGroupingEnabled: (is3dGroupingEnabled) => set({ is3dGroupingEnabled }),
   transformMode: 'translate',
   setTransformMode: (transformMode) => set({ transformMode }),
   selectedId3d: null,
   setSelectedId3d: (selectedId3d) => set({ selectedId3d }),
+  selectedProductId3d: null,
+  setSelectedProductId3d: (selectedProductId3d) => set({ selectedProductId3d }),
   showEdges: true,
   setShowEdges: (showEdges) => set({ showEdges }),
   isAddProductMode: false,
@@ -195,6 +278,8 @@ export const useUIStore = create<UIState>((set) => ({
   isQuoteOpen: false,
   setIsQuoteOpen: (isQuoteOpen) => set({ isQuoteOpen }),
   isHelpOpen: false,
+  helpSection: null,
+  openHelp: (section) => set({ isHelpOpen: true, helpSection: section ?? null }),
   setIsHelpOpen: (open) => set({ isHelpOpen: open }),
   isServiceOpen: false,
   setIsServiceOpen: (open) => set({ isServiceOpen: open }),
@@ -219,6 +304,8 @@ export const useUIStore = create<UIState>((set) => ({
   },
   isAdminUnlocked: false,
   setAdminUnlocked: (isAdminUnlocked) => set({ isAdminUnlocked }),
+  lastTemplate: null,
+  setLastTemplate: (lastTemplate) => set({ lastTemplate }),
   isSettingsOpen: false,
   setIsSettingsOpen: (isSettingsOpen) => set({ isSettingsOpen }),
   isEdgeProfileSettingsOpen: false,

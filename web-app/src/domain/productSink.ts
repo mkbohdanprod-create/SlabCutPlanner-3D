@@ -97,6 +97,10 @@ export function sinkAdditionElements(
       width: sink.width,
       height: sink.height,
       innerVertical: sink.depth,
+      /* Решітка зливу (28.08) їде з запису мийки в елемент — інакше різ
+         водою лишився б лише в полях стільниці і не дійшов би ні до 3D,
+         ні до деталей розкрою. */
+      drainGrate: sink.drainGrate,
       label: `Мийка (${sink.id})`,
     } as unknown as ElementDefinition,
     additions: [],

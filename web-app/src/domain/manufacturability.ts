@@ -29,6 +29,40 @@ export const MIN_PART_WITH_PROCESSING = { long: 400, short: 200 } as const;
 export const MAX_PART_FOR_PROCESSING = { long: 3100, short: 1500 } as const;
 
 /**
+ * ПОРІГ КОРОТКОЇ СТОРОНИ (FG-10).
+ *
+ * До 20.08 число 150 було зашите просто в компонент вікна деталі й
+ * ГАСИЛО кнопку «Зберегти». Фокус-група вперлась у це на реальному
+ * замовленні: смугу 2800×32 завести стало неможливо, хоча цех такі
+ * ріже — на підкладці або з іншим базуванням.
+ *
+ * Тому це поріг ПОПЕРЕДЖЕННЯ, а не заборони: система каже, що деталь
+ * ризикована, і лишає рішення менеджеру. Заборонами лишаються тільки
+ * ті правила, де верстат фізично не візьме деталь (severity 'error'
+ * нижче в цьому файлі).
+ *
+ * Число залежить від матеріалу — керамограніт і акрил ламаються
+ * по-різному, — тому воно перевизначається в налаштуваннях. Порожньо
+ * означає «як було»: 150 мм.
+ */
+export const DEFAULT_MIN_SIDE_MM = 150;
+
+/**
+ * Поріг для конкретного матеріалу. `overrides` — з налаштувань
+ * (`useSettingsStore.minSideMm`), ключ — назва матеріалу проєкту.
+ *
+ * Нуль і від'ємне трактуються як «перевірку вимкнено»: старший менеджер
+ * має право зняти попередження зовсім, і це не помилка вводу.
+ */
+export function minSideMmFor(
+  material: string | undefined,
+  overrides?: Record<string, number>,
+): number {
+  const value = material ? overrides?.[material] : undefined;
+  return typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_MIN_SIDE_MM;
+}
+
+/**
  * Мінімальна ширина чорнової деталі залежно від довжини, мм.
  * Тонка деталь має бути короткою, інакше зламається на вібрації пили;
  * довга — достатньо широкою, щоб не тріснути.
@@ -62,6 +96,15 @@ export const RADIUS_LIMITS = {
   outerMin: 60,
   /** Мінімальний внутрішній радіус, якщо на ньому замовлена крайка, мм */
   innerWithEdgeMin: 15,
+  /**
+   * Радіус, нижче якого гнуту ділянку треба узгодити з технологом, мм.
+   *
+   * Рішення Богдана (19.08): для ВСІХ матеріалів. Це не заборона — виріб
+   * рахується і йде далі, — а попередження, бо чи вдасться зігнути смугу на
+   * такому радіусі, залежить від матеріалу, товщини й вильоту, і цього
+   * програма не знає.
+   */
+  technologistConsultMin: 100,
 } as const;
 
 /** Мінімальний радіус у куті вирізу — залежить від крихкості матеріалу, мм */
@@ -85,7 +128,9 @@ export type IssueCode =
   | 'cutouts_too_close'
   | 'cutout_corner_radius'
   | 'outer_radius_too_small'
-  | 'inner_radius_with_edge';
+  | 'inner_radius_with_edge'
+  | 'radius_needs_technologist'
+  | 'radius_material_unpriced';
 
 export interface ManufacturabilityIssue {
   code: IssueCode;
@@ -308,9 +353,40 @@ export function checkManufacturability(
           reason: 'Дрібний зовнішній радіус — вразливе місце при монтажі й транспортуванні',
           ref: { ...ref, cornerId },
         });
+      } else if (radius < RADIUS_LIMITS.technologistConsultMin) {
+        // Окреме попередження, а не жорсткіший поріг: радіус 60–100 мм для
+        // самої деталі нормальний, питання виникає до ГНУТОЇ смуги на ньому.
+        issues.push({
+          code: 'radius_needs_technologist',
+          severity: 'guarantee',
+          message: `${label}, кут ${cornerId}: радіус ${round1(radius)} мм — узгодьте з технологом можливість обробки`,
+          reason: 'Чи вдасться зігнути смугу на такому радіусі, залежить від матеріалу, товщини й вильоту',
+          ref: { ...ref, cornerId },
+        });
       }
     });
   };
+
+  /**
+   * Радіусний елемент на матеріалі, для якого прайс не має номенклатури.
+   *
+   * ТЗ описує чотири матеріали: керамограніт, натуральний камінь, кварцит і
+   * акрил. Компакт-плити в переліку немає. Мовчки порахувати нуль — це рівно
+   * та хвороба, від якої ми лікували стики і крайку, тому кажемо вголос.
+   */
+  const RADIUS_PRICED_MATERIALS = new Set(['Керамограніт', 'Натуральний камінь', 'Кварцит', 'Акрил']);
+  const projectMaterial = project.projectMaterial;
+  if (projectMaterial && !RADIUS_PRICED_MATERIALS.has(projectMaterial)) {
+    (parts ?? []).filter((part) => part.radiusElement).forEach((part) => {
+      issues.push({
+        code: 'radius_material_unpriced',
+        severity: 'guarantee',
+        message: `${part.name}: радіусний елемент на матеріалі «${projectMaterial}» — тарифу в прайсі немає`,
+        reason: 'Ціну на цей радіус треба узгодити з конструктором вручну, автоматично він порахується як нуль',
+        ref: { partId: part.id, detailId: part.detailId },
+      });
+    });
+  }
 
   walkElements(project.products).forEach(({ path, element }) => {
     checkCorners(

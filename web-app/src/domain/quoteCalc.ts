@@ -36,6 +36,16 @@ export const DEFAULT_MANUFACTURERS: Record<QuoteMaterialType, string[]> = {
 /** Тип поверхні — лише для акрилового каменю (ТЗ §8) */
 export const ACRYLIC_SURFACE_TYPES = ['Мат', 'Напівглянець', 'Глянець'] as const;
 
+/**
+ * Базова поверхня акрилу — такою плита ПРИХОДИТЬ від виробника (FG-33).
+ *
+ * Правило Богдана (19.08): послуга «обробка поверхні» нараховується ТІЛЬКИ
+ * коли цільова поверхня інша за базову — тоді цех реально матує або
+ * доводить до глянцю. Решта матеріалів іде «як купується», тому для них
+ * ані бази, ані послуги не існує.
+ */
+export const ACRYLIC_BASE_SURFACE = 'Напівглянець';
+
 // ── Способи виготовлення (ТЗ §4) ────────────────────────────────────
 
 export const QUOTE_METHODS = [
@@ -44,6 +54,31 @@ export const QUOTE_METHODS = [
   { id: 'sink_only', label: 'Окрема мийка' },
 ] as const;
 export type QuoteMethodId = (typeof QUOTE_METHODS)[number]['id'];
+
+// ── Метод оплати (для рахунку в Orders-ERP) ─────────────────────────
+
+/**
+ * Види оплати, які приймає ERP: `id` — це рівно те слово, яким вид
+ * оплати зветься в 1С, і саме воно їде в `payment_type` замовлення.
+ * Підпис поруч — щоб менеджер читав поле людською мовою, а не
+ * «ОплатаЧастямиПлатиПозже».
+ *
+ * Перелік — дані, не код: новий банк розстрочки додається рядком тут.
+ */
+export const QUOTE_PAYMENT_TYPES = [
+  { id: 'Готівка', label: 'Готівка' },
+  { id: 'ПокупецьБезПДВ', label: 'Покупець без ПДВ' },
+  { id: 'ОплатаВОфісі', label: 'Оплата в офісі' },
+  { id: 'ОнлайнОплата', label: 'Онлайн-оплата' },
+  { id: 'ОплатаЧастямиПриватБанк', label: 'Оплата частинами (ПриватБанк)' },
+  { id: 'ОплатаЧастямиПлатиПозже', label: 'Оплата частинами (Плати пізніше)' },
+  { id: 'ОплатаЧастямиМоноБанк', label: 'Оплата частинами (monobank)' },
+  { id: 'ОплатаЧастямиПУМББанк', label: 'Оплата частинами (ПУМБ)' },
+] as const;
+export type QuotePaymentTypeId = (typeof QUOTE_PAYMENT_TYPES)[number]['id'];
+
+export const quotePaymentLabel = (id: string) =>
+  QUOTE_PAYMENT_TYPES.find((type) => type.id === id)?.label ?? id;
 
 // ── Вироби (ТЗ §5–7) ────────────────────────────────────────────────
 
@@ -140,7 +175,31 @@ export const QUOTE_SERVICES: QuoteServiceDef[] = [
   { id: 'stone_switch', label: 'Вимикач з каменю', unit: 'pcs' },
   { id: 'joint_flat', label: 'Стикування деталей в площині', unit: 'pcs' },
   { id: 'joint_leg', label: 'Стикування «Ноги» з виробом', unit: 'mp' },
+  /*
+   * Радіусні (гнуті) елементи — ТЗ 19.08. Кількості рахує autoQuoteServices
+   * з позначок на деталях розкрою; категорію (стільниця/опора, розмір,
+   * складний) визначає domain/radiusElement. Камінь — сегментація,
+   * акрил — гнуття + матриця за унікальними геометріями.
+   */
+  { id: 'radius_ct80', label: 'Радіусний кут стільниці до 80 мм', unit: 'pcs' },
+  { id: 'radius_ct200', label: 'Радіусний кут стільниці 80–200 мм', unit: 'pcs' },
+  { id: 'radius_leg900', label: 'Радіусна опора до 900 мм', unit: 'pcs' },
+  { id: 'radius_leg_tall', label: 'Радіусна опора від 900 мм', unit: 'pcs' },
+  { id: 'radius_complex', label: 'Складний радіусний елемент', unit: 'pcs' },
+  { id: 'radius_bend', label: 'Гнуття деталей (акрил)', unit: 'pcs' },
+  { id: 'radius_matrix', label: 'Матриця для термоформінгу (акрил)', unit: 'pcs' },
 ];
+
+/** Категорія послуги радіуса → id рядка Прорахунку. */
+export const RADIUS_QUOTE_SERVICE_ID: Record<string, string> = {
+  countertop_le80: 'radius_ct80',
+  countertop_80_200: 'radius_ct200',
+  leg_le900: 'radius_leg900',
+  leg_gt900: 'radius_leg_tall',
+  complex: 'radius_complex',
+  bend_le600: 'radius_bend',
+  bend_gt600: 'radius_bend',
+};
 
 // ── Пакування (Логіка §1) ───────────────────────────────────────────
 
@@ -154,10 +213,11 @@ export const DELIVERY_ZONES = [0, 1, 2, 3, 4, 5] as const;
 // ── Прайс ───────────────────────────────────────────────────────────
 
 /**
- * Ціни за замовчуванням — нулі: реальний прайс наповнюють старші
- * менеджери в налаштуваннях прорахунку (шестерня у вкладці). Менеджер
- * на місці може вписати ціну прямо в рядок розрахунку — вона
- * зберігається в документі як priceOverrides і має пріоритет над прайсом.
+ * Ціни за замовчуванням — нулі: рядки тарифікує 1С за кодами
+ * номенклатур (див. engines/quoteCalc.ts). Цей прайс лишається фолбеком —
+ * його наповнюють старші менеджери в налаштуваннях прорахунку (шестерня у
+ * вкладці) для рядків без коду 1С і на випадок, коли сервіс недоступний.
+ * Ручного вводу ціни в рядку немає: сума рахується сама.
  */
 export interface QuotePriceBook {
   /** Виготовлення: тип виробу → базова ціна за одиницю (ТЗ: своя номенклатура на виробника) */
@@ -207,9 +267,29 @@ export const DEFAULT_QUOTE_PRICE_BOOK: QuotePriceBook = {
   deliveryZones: [0, 0, 0, 0, 0, 0],
   pyramid: { 1200: 0, 1600: 0, 2000: 0, 2400: 0, 2800: 0, 3200: 0 },
   boxPerM2: 0,
-  services: {},
+  services: {
+    /*
+     * Порожньо свідомо. Ціни в прорахунку більше не заводяться руками —
+     * єдине джерело ціни це 1С за кодом номенклатури (рішення 25.08.2026).
+     * Раніше тут лежали сім роздрібних цін на радіусні елементи з ТЗ 19.08;
+     * прибрані, щоб застарілий прайс не поїхав у продакшн і щоб відсутня
+     * відповідь 1С не маскувалась «правдоподібним» числом.
+     * Коди 1С лишаються в codes1c — саме за ними питається ціна.
+     */
+  },
   sheet: 0,
-  codes1c: {},
+  codes1c: {
+    /* Коди 1С радіусних послуг. Номенклатура подвоєна за матеріалом, а
+       Прорахунок веде один рядок на категорію — тому тут коди керамограніту
+       як найчастішого; точний код за матеріалом підставляє кошторис (BOM). */
+    'svc:radius_ct80': '298634',
+    'svc:radius_ct200': '298635',
+    'svc:radius_leg900': '298636',
+    'svc:radius_leg_tall': '298637',
+    'svc:radius_complex': '298638',
+    'svc:radius_bend': '200433',
+    'svc:radius_matrix': '229536',
+  },
 };
 
 export const QUOTE_MONTAGE_LABELS: Record<MontageCategory, string> = {
@@ -243,6 +323,37 @@ export function mergeQuotePriceBook(saved?: Partial<QuotePriceBook> | null): Quo
     services: { ...base.services, ...(saved?.services ?? {}) },
     sheet: saved?.sheet ?? base.sheet,
     codes1c: { ...base.codes1c, ...(saved?.codes1c ?? {}) },
+  };
+}
+
+/**
+ * Обнуляє всі ручні ціни прайсу прорахунку, лишаючи коди 1С.
+ *
+ * Потрібна тому, що прайс персиститься в localStorage: прибрати ціни з
+ * дефолтів недостатньо — у того, хто вже відкривав додаток, збережена
+ * копія лишиться і мовчки перекриє відповідь 1С. Викликається в
+ * міграції сховища (v6) і при імпорті налаштувань зі старого файлу.
+ *
+ * Структуру не ламаємо: поля лишаються на місці з нулями, щоб старий
+ * імпорт/експорт і тести читались без спецвипадків.
+ */
+export function stripQuotePrices(book: QuotePriceBook): QuotePriceBook {
+  const zero = <T extends Record<string, number>>(source: T): T =>
+    Object.fromEntries(Object.keys(source).map((key) => [key, 0])) as T;
+  return {
+    ...book,
+    fabrication: zero(book.fabrication),
+    fabricationByManufacturer: Object.fromEntries(
+      Object.entries(book.fabricationByManufacturer).map(([id, pairs]) => [id, zero(pairs)]),
+    ),
+    measure: zero(book.measure),
+    montage: zero(book.montage),
+    deliveryZones: book.deliveryZones.map(() => 0),
+    pyramid: zero(book.pyramid),
+    boxPerM2: 0,
+    services: zero(book.services),
+    sheet: 0,
+    codes1c: { ...book.codes1c },
   };
 }
 
@@ -290,10 +401,48 @@ export interface QuoteItem {
   sourceLabel?: string;
 }
 
+/**
+ * Замовлення, створене з цього прорахунку (be-orders-service).
+ *
+ * Живе в документі, а не в стані панелі: номер має пережити перезавантаження
+ * і поїхати разом із проєктом. Наявність поля — це і є ознака «прорахунок
+ * підтверджено»: другий раз замовлення з нього не створюється.
+ *
+ * `total` тут — сума, на яку замовлення виписане. Прорахунок після цього
+ * можна правити далі, і саме розбіжність із поточним підсумком показує, що
+ * замовлення вже не відповідає документу.
+ */
+export interface QuoteOrderRef {
+  /** Номер замовлення від сервісу, PREFIX-YY-NNNNNN */
+  externalId: string;
+  /** Ідентифікатори документів у сервісі — за ними шукають замовлення */
+  orderId: string;
+  orderDetailsId: string;
+  /** ISO-час створення */
+  createdAt: string;
+  /** Хто підтвердив (пошта/ім'я менеджера) */
+  createdBy: string;
+  total: number;
+}
+
 export interface QuoteCalcDoc {
   method: QuoteMethodId;
   branch: string;
+  /**
+   * id філії з Locations Service — порожньо, якщо вписали руками.
+   * Той самий бекенд цін, що бере contragentId, приймає й
+   * shipment_branch, тому в майбутньому саме звідси братиметься доплата
+   * за виїзд і тарифікація «Замір і монтаж» за філією.
+   */
+  branchId: string;
   contragent: string;
+  /**
+   * id організації в Customers Service — порожньо, якщо контрагента
+   * вписали руками. Ним 1С вмикає знижку клієнта,
+   * тому при ручному редагуванні назви id обов'язково скидається: інакше
+   * ціни рахувались би для контрагента, якого в полі вже немає.
+   */
+  contragentId: string;
   contactName: string;
   contactPhone: string;
   /** Лише для «З заміром та монтажем» */
@@ -301,9 +450,20 @@ export interface QuoteCalcDoc {
   deliveryZone: number;
   materialType: QuoteMaterialType;
   manufacturer: string;
+  /**
+   * Код декору, введений руками. Поле прибране з інтерфейсу 25.08.2026 —
+   * декор приходить зі слеба. Лишається в типі, щоб раніше збережені
+   * документи читались і показували те, що в них уже записано.
+   */
   decorCode: string;
   /** Лише акрил, і не для «Окрема мийка» */
   surfaceType: string;
+  /**
+   * Вид оплати з довідника ERP (QUOTE_PAYMENT_TYPES) — без нього в 1С не
+   * виписати рахунок. Порожньо у прорахунках, збережених до появи поля:
+   * тоді замовлення їде зі значенням зі змінної оточення або без нього.
+   */
+  paymentType?: QuotePaymentTypeId | '';
   comment: string;
   items: QuoteItem[];
   /** id послуги → кількість в її одиницях */
@@ -315,15 +475,91 @@ export interface QuoteCalcDoc {
   };
   /** Листів матеріалу, крок 0.5 (лист/півлиста) */
   materialSheets: number;
-  /** Ручні ціни за рядками розрахунку: id рядка → грн за одиницю */
-  priceOverrides: Record<string, number>;
+  /** Останнє замовлення в Orders Service — з'являється при підтвердженні прорахунку */
+  order?: QuoteOrderRef;
+  /**
+   * Раніше створені з цього ж прорахунку замовлення.
+   *
+   * Друге замовлення — свідома дія (перше зіпсували, прорахунок доробили),
+   * і попередній номер при цьому не має зникати: в ERP те замовлення
+   * лишається живим, поки його там не скасують.
+   */
+  orderHistory?: QuoteOrderRef[];
+  /**
+   * Матеріал зі СЛЕБІВ проєкту — по рядку на артикул (рішення 25.08.2026).
+   *
+   * Слеб береться з каталогу разом з артикулом, тож у прорахунку матеріал
+   * не треба заводити вдруге: кількість — це скільки листів цього артикулу
+   * додано, а ціну за артикулом дає 1С, точно як за послуги.
+   *
+   * Поле НЕ зберігається в документі: воно щоразу виводиться зі слебів
+   * (див. QuotePanel), бо джерело істини — список слебів, а не копія в
+   * прорахунку. Порожньо або відсутнє — працює старий ручний
+   * `materialSheets`, щоб проєкти без слебів рахувались як раніше.
+   */
+  materials?: QuoteMaterialLine[];
 }
+
+/**
+ * Матеріал слеба → матеріал прорахунку.
+ *
+ * У програмі ДВА словники матеріалів, і вони не збігаються: слеб знає
+ * «Кварцит» і «Акрил», прорахунок — «Штучний кварцит» і «Акриловий
+ * камінь». Поки слеб і прорахунок жили окремо, це нікому не заважало;
+ * тепер матеріал прорахунку береться зі слеба, і без цієї таблиці він
+ * мовчки лишався б старим.
+ *
+ * `Компакт-плита` пари в прорахунку НЕ МАЄ — повертаємо undefined, і
+ * викликач лишає те, що було. Це відкрите питання, не рішення:
+ * див. «Введення слебів — розбір», Частина 2.
+ */
+export function quoteMaterialFromSlab(material: string): QuoteMaterialType | undefined {
+  const map: Record<string, QuoteMaterialType> = {
+    'Керамограніт': 'Керамограніт',
+    'Кварцит': 'Штучний кварцит',
+    'Штучний кварцит': 'Штучний кварцит',
+    'Натуральний камінь': 'Натуральний камінь',
+    'Акрил': 'Акриловий камінь',
+    'Акриловий камінь': 'Акриловий камінь',
+  };
+  return map[material];
+}
+
+/**
+ * Декор документа. Береться зі слебів, а окреме поле «Декор (код з сайту)»
+ * прибране 25.08.2026: декор приходить разом зі слебом і дублювати його
+ * руками не треба. `decorCode` лишився в типі тільки заради документів,
+ * збережених раніше.
+ */
+export function quoteDecorLabel(doc: Pick<QuoteCalcDoc, 'materials' | 'decorCode'>): string {
+  const fromSlabs = [...new Set((doc.materials ?? []).map((line) => line.decor).filter(Boolean))];
+  if (fromSlabs.length) return fromSlabs.join(', ');
+  return doc.decorCode || '';
+}
+
+/** Один артикул матеріалу і скільки його листів у проєкті */
+export interface QuoteMaterialLine {
+  /** Артикул 1С слебу. Порожньо — слеб доданий до появи каталогу */
+  article: string;
+  /** Стабільний ключ рядка, коли артикула немає */
+  key: string;
+  material: string;
+  decor: string;
+  thickness: number;
+  /** Скільки листів цього артикулу */
+  qty: number;
+}
+// Документи, збережені до переходу на ціни з 1С, ще носять у собі
+// priceOverrides (ручні ціни рядків). Поле навмисно прибрано з типу —
+// воно більше не читається, ціну визначає сервіс, а не менеджер.
 
 export function createQuoteCalcDoc(): QuoteCalcDoc {
   return {
     method: 'drawing',
     branch: '',
+    branchId: '',
     contragent: '',
+    contragentId: '',
     contactName: '',
     contactPhone: '',
     address: '',
@@ -332,11 +568,11 @@ export function createQuoteCalcDoc(): QuoteCalcDoc {
     manufacturer: '',
     decorCode: '',
     surfaceType: '',
+    paymentType: '',
     comment: '',
     items: [],
     services: {},
     packaging: { pyramidLength: 0, pyramidQty: 1, boxM2: 0 },
     materialSheets: 0,
-    priceOverrides: {},
   };
 }

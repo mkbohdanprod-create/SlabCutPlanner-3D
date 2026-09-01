@@ -2,10 +2,186 @@ import  { useMemo } from 'react';
 import * as THREE from 'three';
 import type { ProductElement } from '../../domain/types';
 import { Detail3DNode } from '../ui/Detail3DPreview';
-import { buildDetailShape, getDetailPointsAndBounds } from '../../engines/shapeBuilder';
+import { buildDetailShape, getDetailPointsAndBounds, sampleContourPoints } from '../../engines/shapeBuilder';
+import { parseAdditionSlot } from '../../domain/ids';
 import { getEdgeTransform } from '../../engines/transform3d';
 import { getSinkPartTransform } from '../../engines/sinkAssembly';
 import { sinkCenter } from '../../domain/productSink';
+import { pointInPolygonStrict } from '../../engines/geometryUtils';
+import { buildGrateCutters } from '../../engines/drainGrate';
+import { subtractEdgeCutters } from '../../engines/edgeCutters';
+import type { RadiusElementMark } from '../../domain/types';
+
+/**
+ * Куди «росте» доповнення від ребра батька. Тип беремо з розбору слота, а не
+ * з `includes('leg_')`: у слоті `leg_C_fold_B` обидва слова присутні, і
+ * підворот на нозі раніше міг прочитатися як нога.
+ */
+function attachmentDirection(slot: string): 'up' | 'down' | 'fold' {
+  const kind = parseAdditionSlot(slot).kind;
+  if (kind === 'fold') return 'fold';
+  /*
+   * Ремонт 19.08: `thickening` (у інтерфейсі — «Підворот», підклейка під
+   * плитою) падав у гілку «все інше — вгору» і стирчав над стільницею, як
+   * стінова панель. Редактор (Detail3DPreview) завжди вів його вниз —
+   * Підбір тепер згоден із ним.
+   */
+  if (kind === 'leg' || kind === 'thickening') return 'down';
+  return 'up';
+}
+
+/**
+ * Гнутий бандаж у 3D Підборі (FG-27) — З ТЕКСТУРОЮ СЛЯБУ.
+ *
+ * Чесність тут буквальна: у розкрої під цей бандаж лежить прямокутник
+ * («Потовщення (B_radius)» на карті крою), і саме ЙОГО шматок слябу
+ * натягується на дугу. Розгортка проста, як у цеху: довжина по дузі →
+ * довжина прямокутника, висота смуги → його висота. Тобто на екрані
+ * видно рівно той камінь, який відріжуть і зігнуть.
+ *
+ * Геометрія будується вручну (стінки, торці, кільця), бо ExtrudeGeometry
+ * дає UV у координатах перерізу — текстура на дузі виходила б плямою.
+ */
+function buildArcBandGeometry(
+  rInnerM: number,
+  rOuterM: number,
+  a0: number,
+  a1: number,
+  clockwise: boolean,
+  heightM: number,
+  /** Розгортка: скільки нормованого U припадає на 1 метр дуги (по зовнішньому радіусу) */
+  uPerMeter: number,
+  /** Скільки нормованого V припадає на 1 метр висоти */
+  vPerMeter: number,
+): THREE.BufferGeometry {
+  let d = a1 - a0;
+  if (clockwise && d > 0) d -= Math.PI * 2;
+  if (!clockwise && d < 0) d += Math.PI * 2;
+
+  const SEGMENTS = 24;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+
+  const quad = (
+    p1: [number, number, number], p2: [number, number, number],
+    p3: [number, number, number], p4: [number, number, number],
+    uv1: [number, number], uv2: [number, number],
+    uv3: [number, number], uv4: [number, number],
+  ) => {
+    positions.push(...p1, ...p2, ...p3, ...p1, ...p3, ...p4);
+    uvs.push(...uv1, ...uv2, ...uv3, ...uv1, ...uv3, ...uv4);
+  };
+
+  const at = (f: number, r: number): [number, number] => {
+    const a = a0 + d * f;
+    return [Math.cos(a) * r, Math.sin(a) * r];
+  };
+
+  for (let i = 0; i < SEGMENTS; i++) {
+    const f0 = i / SEGMENTS;
+    const f1 = (i + 1) / SEGMENTS;
+    const u0 = rOuterM * Math.abs(d) * f0 * uPerMeter;
+    const u1 = rOuterM * Math.abs(d) * f1 * uPerMeter;
+    const vBot = heightM * vPerMeter;
+
+    const [ox0, oz0] = at(f0, rOuterM);
+    const [ox1, oz1] = at(f1, rOuterM);
+    const [ix0, iz0] = at(f0, rInnerM);
+    const [ix1, iz1] = at(f1, rInnerM);
+
+    // Зовнішня стінка (лицьова — та, що видно з кімнати)
+    quad(
+      [ox0, 0, oz0], [ox1, 0, oz1], [ox1, -heightM, oz1], [ox0, -heightM, oz0],
+      [u0, 0], [u1, 0], [u1, vBot], [u0, vBot],
+    );
+    // Внутрішня стінка
+    quad(
+      [ix1, 0, iz1], [ix0, 0, iz0], [ix0, -heightM, iz0], [ix1, -heightM, iz1],
+      [u1, 0], [u0, 0], [u0, vBot], [u1, vBot],
+    );
+    // Верхнє кільце (торець товщини)
+    quad(
+      [ix0, 0, iz0], [ix1, 0, iz1], [ox1, 0, oz1], [ox0, 0, oz0],
+      [u0, 0], [u1, 0], [u1, 0.02], [u0, 0.02],
+    );
+    // Нижнє кільце
+    quad(
+      [ox0, -heightM, oz0], [ox1, -heightM, oz1], [ix1, -heightM, iz1], [ix0, -heightM, iz0],
+      [u0, vBot], [u1, vBot], [u1, vBot - 0.02], [u0, vBot - 0.02],
+    );
+  }
+
+  // Торці на початку і в кінці дуги
+  const capAt = (f: number, u: number) => {
+    const [ox, oz] = at(f, rOuterM);
+    const [ix, iz] = at(f, rInnerM);
+    quad(
+      [ix, 0, iz], [ox, 0, oz], [ox, -heightM, oz], [ix, -heightM, iz],
+      [u, 0], [u, 0], [u, heightM * vPerMeter], [u, heightM * vPerMeter],
+    );
+  };
+  capAt(0, 0);
+  capAt(1, rOuterM * Math.abs(d) * uPerMeter);
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function AssemblyArcBand({ curve, bounds, slabThicknessMm, draft, direction, outward, isActive, texture, rectWmm, rectHmm }: {
+  curve: THREE.EllipseCurve;
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  slabThicknessMm: number;
+  draft: { thickness?: number; height?: number; attachGap?: number };
+  direction: 'up' | 'down' | 'fold';
+  outward: boolean;
+  isActive: boolean;
+  /** Текстура парта з UV-матрицею його місця на слябі (та сама, що у плоских) */
+  texture?: THREE.Texture | null;
+  /** Прямокутник цього бандажа в розкрої, мм — база розгортки */
+  rectWmm: number;
+  rectHmm: number;
+}) {
+  const s = 0.001;
+  const w = bounds.maxX - bounds.minX || 1;
+  const h = bounds.maxY - bounds.minY || 1;
+  const cx = (curve.aX - 0.5) * w * s;
+  const cy = (curve.aY - 0.5) * h * s;
+  const rArc = Math.max(curve.xRadius * w, curve.yRadius * h) * s;
+  const t = Math.max(8, draft.thickness || slabThicknessMm || 20) * s;
+  const rOuter = outward ? rArc + t : rArc;
+  const rInner = Math.max(0.0005, outward ? rArc : rArc - t);
+  const height = Math.max(1, draft.height || (direction === 'down' ? 900 : direction === 'fold' ? 100 : 600)) * s;
+  const gap = (draft.attachGap ?? 0) * s;
+
+  const geometry = useMemo(() => buildArcBandGeometry(
+    rInner, rOuter,
+    curve.aStartAngle, curve.aEndAngle, curve.aClockwise,
+    height,
+    // 1 метр дуги = 1000/rectW нормованого U: дуга розгортається вздовж
+    // прямокутника розкрою. Так на бандажі видно саме той шматок слябу.
+    1000 / Math.max(1, rectWmm),
+    1000 / Math.max(1, rectHmm),
+  ), [rInner, rOuter, curve, height, rectWmm, rectHmm]);
+
+  const zTop = (slabThicknessMm || 20) * s / 2;
+  const goesDown = direction !== 'up';
+  const y = goesDown ? zTop - gap : zTop + height + gap;
+
+  return (
+    <mesh geometry={geometry} position={[cx, y, cy]}>
+      <meshPhysicalMaterial
+        color={isActive ? '#bfdcff' : '#ffffff'}
+        map={texture || undefined}
+        roughness={0.4}
+        metalness={0.05}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  );
+}
 
 export function ProductElement3DNode({
   element,
@@ -69,6 +245,66 @@ export function ProductElement3DNode({
       id: string;
     }>;
   }, [curves, edgeMap]);
+
+  /** Дуги скруглень — для гнутих доповнень (FG-27). */
+  const arcSegments = useMemo(() => {
+    return (curves ?? [])
+      .map((curve, index) => ({ curve, id: edgeMap?.[index] }))
+      .filter((item) => item.curve.type === "EllipseCurve" && item.id && /_radius$/.test(item.id)) as Array<{
+      curve: THREE.EllipseCurve;
+      id: string;
+    }>;
+  }, [curves, edgeMap]);
+
+  /** Спільна гілка обох циклів кріплень: доповнення з позначкою дуги. */
+  const renderArcAddition = (addition: ProductElement) => {
+    const mark = (addition.baseDefinition as { radiusElement?: RadiusElementMark }).radiusElement;
+    if (!mark) return undefined;
+    const arc = arcSegments.find((item) => item.id === `${mark.cornerId}_radius`);
+    if (!arc) return null;
+
+    // Увігнутий кут чи опуклий — питаємо в геометрії: точка трохи ЗЗОВНІ
+    // дуги в матеріалі ⇒ кут увігнутий, бандаж обіймає дугу ззовні.
+    // Перевірка МУСИТЬ іти по щільному контуру з дугами: у списку вершин
+    // кут гострий, і на опуклому куті проба падала в зрізаний ріг —
+    // бандаж вважав кут увігнутим і вилазив за стільницю.
+    const wMm = (bounds.maxX - bounds.minX) || 1;
+    const hMm = (bounds.maxY - bounds.minY) || 1;
+    const toMm = (p: { x: number; y: number }) => ({
+      x: bounds.minX + p.x * wMm,
+      y: bounds.minY + p.y * hMm,
+    });
+    const densePoly = sampleContourPoints(curves as never).map(toMm);
+    const mid = toMm(arc.curve.getPoint(0.5));
+    const center = toMm({ x: arc.curve.aX, y: arc.curve.aY });
+    const dx = mid.x - center.x;
+    const dy = mid.y - center.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const step = Math.max(4, len * 0.08);
+    const probe = { x: mid.x + (dx / len) * step, y: mid.y + (dy / len) * step };
+    const outward = densePoly.length >= 3 && pointInPolygonStrict(probe, densePoly);
+
+    const slot = addition.id.split(':').pop() || '';
+    // Текстура і прямокутник — того САМОГО парта, що лежить на карті крою:
+    // бандаж показує шматок слябу, який реально відріжуть під цю дугу.
+    const bandPart = segmentPartsFor ? segmentPartsFor(addition.id)[0] : undefined;
+    const bandTexture = customTextureMapFactory ? customTextureMapFactory(addition.id) : null;
+    return (
+      <AssemblyArcBand
+        key={addition.id}
+        curve={arc.curve}
+        bounds={bounds}
+        slabThicknessMm={detail.thickness || 20}
+        draft={addition.baseDefinition}
+        direction={attachmentDirection(slot)}
+        outward={outward}
+        isActive={activeDetailId === addition.id}
+        texture={bandTexture}
+        rectWmm={Math.max(bandPart?.width ?? 0, bandPart?.height ?? 0) || Math.max(addition.baseDefinition.width || 1, addition.baseDefinition.height || 1)}
+        rectHmm={Math.min(bandPart?.width ?? Infinity, bandPart?.height ?? Infinity) || Math.min(addition.baseDefinition.width || 1, addition.baseDefinition.height || 1)}
+      />
+    );
+  };
 
   // У дереві Виробу підворот/потовщення — це окремі Елементи (element.additions),
   // і вони малюються нижче. Detail3DNode уміє малювати їх ще й зі старої властивості
@@ -171,13 +407,41 @@ export function ProductElement3DNode({
             shape.holes.push(path);
           });
 
-          const geom = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: false, curveSegments: 24 });
+          let geom = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: false, curveSegments: 24 });
           geom.scale(pw * s, ph * s, 1);
           geom.translate((-pw * s) / 2, (-ph * s) / 2, -thick / 2);
           // rotateX(-π/2): «низ» деталі в 2D → -Z сцени — рівно та сама
           // орієнтація, що в SinkAssemblyPreview, під яку виміряні пози/кути.
           geom.rotateX(-Math.PI / 2);
           geom.computeVertexNormals();
+
+          /*
+           * РЕШІТКА ЗЛИВУ (28.08): водоструменевий різ наскрізь.
+           *
+           * ⚠️ Ріже САМЕ «круглу деталь дна» (Ø114 з geometry.ts, №14 у
+           * розкладці мийки) — не трикутники дна і не підклейки. Це та
+           * сама деталь, у якій злив живе на реальному виробі: на карті
+           * крою вона окремим кружком, і різ має піти в неї.
+           *
+           * Різаки будуються в координатах ЦІЄЇ деталі (її центр = центр
+           * решітки), тому матриця сцени не потрібна: деталь кругла й
+           * лежить площиною, як і різ.
+           */
+          const isDrainDisc = /кругла деталь дна/i.test(p.name ?? '');
+          if (detail.drainGrate && isDrainDisc) {
+            try {
+              const discDiameter = p.width || pw;
+              const cutters = buildGrateCutters(
+                detail.drainGrate,
+                discDiameter,
+                discDiameter,
+                (detail.thickness || 20),
+              );
+              if (cutters.length) geom = subtractEdgeCutters(geom, cutters) as THREE.ExtrudeGeometry;
+            } catch (e) {
+              console.error('drain grate error', e);
+            }
+          }
 
           const tex = textureForPart ? textureForPart(p) : null;
 
@@ -290,24 +554,15 @@ export function ProductElement3DNode({
         {element.additions?.map((addition) => {
           const additionSlot = addition.id.split(':').pop() || '';
           if (additionSlot.startsWith('sink_')) return renderInstalledSink(addition);
-          const edgeId = (() => {
-            let best = -1;
-            let res = additionSlot;
-            for (const t of ['wall_panel', 'skirting', 'fold', 'thickening', 'leg']) {
-              const i = additionSlot.lastIndexOf(t + '_');
-              if (i > best) { best = i; res = additionSlot.slice(i + t.length + 1); }
-            }
-            return res || undefined;
-          })();
+          const arcBand = renderArcAddition(addition);
+          if (arcBand !== undefined) return arcBand;
+          const edgeId = parseAdditionSlot(additionSlot).sideId || undefined;
           if (!edgeId) return null;
 
           const segment = lineSegments.find((seg) => seg.id === edgeId);
           if (!segment) return null;
 
-          const attachmentKind: 'up' | 'down' | 'fold' =
-            additionSlot.includes('leg_') ? 'down'
-            : additionSlot.includes('fold_') ? 'fold'
-            : 'up';
+          const attachmentKind = attachmentDirection(additionSlot);
 
           const transform = getEdgeTransform(
             segment.curve.v1,
@@ -316,8 +571,10 @@ export function ProductElement3DNode({
             detail.thickness || 20,
             addition.baseDefinition.width,
             addition.baseDefinition.height || 600,
-            0,
-            attachmentKind
+            addition.baseDefinition.attachOffset ?? 0,
+            attachmentKind,
+            addition.baseDefinition.attachInset ?? 0,
+            addition.baseDefinition.attachGap ?? 0,
           );
 
           return (
@@ -371,15 +628,9 @@ export function ProductElement3DNode({
         // після '_' теж (для Г-зарізу вийде 'lcut1' і ребро не знайдеться).
         const additionSlot = addition.id.split(':').pop() || '';
         if (additionSlot.startsWith('sink_')) return renderInstalledSink(addition);
-        const edgeId = (() => {
-          let best = -1;
-          let res = additionSlot;
-          for (const t of ['wall_panel', 'skirting', 'fold', 'thickening', 'leg']) {
-            const i = additionSlot.lastIndexOf(t + '_');
-            if (i > best) { best = i; res = additionSlot.slice(i + t.length + 1); }
-          }
-          return res || undefined;
-        })();
+        const arcBand = renderArcAddition(addition);
+        if (arcBand !== undefined) return arcBand;
+        const edgeId = parseAdditionSlot(additionSlot).sideId || undefined;
         
         if (!edgeId) {
           // If no edge matched, just render it at 0,0,0
@@ -411,17 +662,15 @@ export function ProductElement3DNode({
         const attachWidth = addition.baseDefinition.width;
         const attachHeight = addition.baseDefinition.height || 600;
         
-        let attachOffset = 0;
-        // In the old implementation, Wall panels and legs had explicit 'offset' or 'importOffsetX'.
-        // For ProductElement, maybe we can pass an offset? Or default to 0.
-        
+        // Зсув доповнення на батьківській деталі: уздовж ребра і вглиб від
+        // нього. Раніше тут стояв жорсткий нуль із запискою «may be we can
+        // pass an offset?» — тепер значення живе в самому доповненні.
+        const attachOffset = addition.baseDefinition.attachOffset ?? 0;
+        const attachInset = addition.baseDefinition.attachInset ?? 0;
+
         // Тип прив'язки визначає напрямок: нога і підворот звисають вниз,
         // панель і бортик стоять угору. Формули — ті самі, що в 3D Редакторі.
-        const slot = addition.id.split(':').pop() || '';
-        const attachmentKind: 'up' | 'down' | 'fold' =
-          slot.includes('leg_') ? 'down'
-          : slot.includes('fold_') ? 'fold'
-          : 'up';
+        const attachmentKind = attachmentDirection(additionSlot);
 
         const transform = getEdgeTransform(
           segment.curve.v1,
@@ -431,7 +680,9 @@ export function ProductElement3DNode({
           attachWidth,
           attachHeight,
           attachOffset,
-          attachmentKind
+          attachmentKind,
+          attachInset,
+          addition.baseDefinition.attachGap ?? 0,
         );
 
         return (
@@ -461,4 +712,4 @@ export function ProductElement3DNode({
       })}
     </group>
   );
-}
+}

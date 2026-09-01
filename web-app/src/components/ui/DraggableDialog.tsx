@@ -17,6 +17,13 @@ import React from 'react';
  *
  * Тягнути можна лише за шапку: клік по полю введення не має рухати вікно.
  */
+/**
+ * FG-09. Верхня межа для рухомих вікон: висота шапки додатка (60px) + зазор.
+ * Нижче цієї лінії вікно завжди можна схопити за заголовок; без обмеження
+ * воно відкривалось/затягувалось під шапку, і витягнути його було нічим.
+ */
+export const HEADER_SAFE_TOP = 68;
+
 export function DraggableDialog({
   title,
   onClose,
@@ -25,6 +32,7 @@ export function DraggableDialog({
   headerClassName = 'bg-[#1f93ef] text-white',
   className = 'bg-[#c6e6fc]',
   z = 200,
+  initialAt,
 }: {
   title: React.ReactNode;
   onClose?: () => void;
@@ -33,9 +41,23 @@ export function DraggableDialog({
   headerClassName?: string;
   className?: string;
   z?: number;
+  /**
+   * Де з'явитись уперше (координати вікна). Потрібне вікнам, які відкриває
+   * клік по конкретному місцю моделі: стик має вискочити біля тієї сторони,
+   * по якій клікнули, а не в центрі екрана. Далі вікно однаково рухається.
+   */
+  initialAt?: { x: number; y: number };
 }) {
   // null = «ще не рухали», вікно стоїть по центру екрана
-  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
+  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(
+    initialAt
+      ? {
+          // тримаємо вікно в межах екрана, навіть якщо клік був біля краю
+          x: Math.min(initialAt.x, window.innerWidth - width - 12),
+          y: Math.min(Math.max(initialAt.y, HEADER_SAFE_TOP), window.innerHeight - 220),
+        }
+      : null,
+  );
   const dragRef = React.useRef<{ dx: number; dy: number } | null>(null);
   const boxRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -59,7 +81,7 @@ export function DraggableDialog({
     const h = box.offsetHeight;
     // Не даємо вивезти вікно за екран так, щоб шапку вже не було чим спіймати.
     const x = Math.min(Math.max(e.clientX - drag.dx, 8 - w + 80), window.innerWidth - 80);
-    const y = Math.min(Math.max(e.clientY - drag.dy, 8), window.innerHeight - 40);
+    const y = Math.min(Math.max(e.clientY - drag.dy, HEADER_SAFE_TOP), window.innerHeight - 40);
     setPos({ x, y });
   };
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent, WheelEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { HEADER_SAFE_TOP } from './DraggableDialog';
 import type { Detail, DetailPart, Rotation, SlabInstance, TextureFrame, TextureLayout } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import {     rotatedSize } from '../../lib/project';
@@ -8,7 +9,7 @@ import { useProjectStore } from '../../store/useProjectStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
 import { pointInPolygonStrict as pointInPolygon, pointOnSegment, outwardNormal } from '../../engines/geometryUtils';
 import { Suspense } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, SquarePlus, ClipboardCheck, Eye, Scan, ExternalLink } from 'lucide-react';
 import { TextureScene } from './TextureScene';
 import type { FrameDraft, FrameDrag } from './TextureScene';
 import { svgPoint } from './TextureScene';
@@ -72,8 +73,21 @@ function buildViewBox(items: TextureItem[], scale: number, containerWidth: numbe
   return { x: 0, y: 0, width, height };
 }
 
-export function TextureLayoutPanel() {
-  const { project, parts, moveTextureLayout, rotateTextureLayout, setTextureLayoutRotation, addTextureFrame, updateTextureFrame, deleteTextureFrame, pushMovementSnapshot } = useProjectStore();
+export function TextureLayoutPanel({ compact: compactProp, asTab }: {
+  /** Значки замість підписів — просунутий режим або «Спліт» */
+  compact?: boolean;
+  /**
+   * Панель відкрита як РОБОЧА ВКЛАДКА (у тому числі в одній із половин
+   * «Спліту»). Знімає приховування панелі й дає їй повну висоту.
+   *
+   * Проп, а не читання `mainView`: у «Спліті» вкладка відкрита, але
+   * `mainView` дорівнює 'split' — через це панель або зникала зовсім
+   * (коли підбір не увімкнено в замовленні), або лишалась низенькою з
+   * порожнечею під нею до самого статус-бару.
+   */
+  asTab?: boolean;
+} = {}) {
+  const { project, parts, moveTextureLayout, rotateTextureLayout, setTextureLayoutRotation, addTextureFrame, updateTextureFrame, deleteTextureFrame, pushMovementSnapshot, updateProjectHeader } = useProjectStore();
   const language = project.uiLanguage ?? 'uk';
   const ui = (value: string) => translateStaticUiText(language, value);
   const [drag, setDrag] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
@@ -93,7 +107,7 @@ export function TextureLayoutPanel() {
   const [frameDrag, setFrameDrag] = useState<FrameDrag | null>(null);
   const [frameMoveId, setFrameMoveId] = useState<string | null>(null);
   const [framePresetOpen, setFramePresetOpen] = useState(false);
-  const [previewPosition, setPreviewPosition] = useState({ x: 18, y: 18 });
+  const [previewPosition, setPreviewPosition] = useState({ x: 18, y: HEADER_SAFE_TOP + 8 });
   const [previewDrag, setPreviewDrag] = useState<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -156,7 +170,7 @@ export function TextureLayoutPanel() {
       const maxY = Math.max(0, window.innerHeight - 120);
       setPreviewPosition({
         x: clamp(previewDrag.originX + event.clientX - previewDrag.startX, 8, maxX),
-        y: clamp(previewDrag.originY + event.clientY - previewDrag.startY, 8, maxY),
+        y: clamp(previewDrag.originY + event.clientY - previewDrag.startY, HEADER_SAFE_TOP, maxY),
       });
     };
     const onUp = () => setPreviewDrag(null);
@@ -193,7 +207,7 @@ export function TextureLayoutPanel() {
     if (root) root.innerHTML = svgRef.current.outerHTML;
   }, [activeFrameId, items, scale, sceneViewBox, textureFrames, viewportHeight]);
 
-  if (!project.textureSelectionEnabled && useUIStore.getState().mainView !== 'texture') return null;
+  if (!project.textureSelectionEnabled && !asTab && useUIStore.getState().mainView !== 'texture') return null;
 
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (!event.shiftKey) return;
@@ -403,18 +417,43 @@ export function TextureLayoutPanel() {
     setContextMenu(null);
   };
 
-  const isFullScreen = useUIStore.getState().mainView === 'texture';
+  /**
+   * Зона займає всю висоту панелі. Проп, а не читання mainView: у
+   * «Спліті» вкладка теж відкрита на всю половину, а `mainView` там
+   * дорівнює 'split' — через це зона лишалась низенькою, і під нею
+   * зяяла порожнеча до самого статус-бару.
+   */
+  const isFullScreen = asTab ?? useUIStore.getState().mainView === 'texture';
+  /**
+   * Значки замість підписів — просунутий режим або «Спліт», де половина
+   * вдвічі вужча і підписи ламаються у два ряди. Та сама мова, що на
+   * дошці 2D і в сцені 3D.
+   */
+  const expert = useUIStore((s) => s.isExpertMode);
+  const compact = compactProp ?? expert;
 
   return (
     <section className={`panel texture-panel ${isFullScreen ? 'h-full flex flex-col' : ''}`}>
-      <div className="toolbar texture-toolbar">
+      {/* Шапка за тими самими правилами, що на дошці 2D (27.08): один
+          рядок, липка при прокрутці, у компактному режимі — самі значки.
+          Підказка про колесо миші в компакті ховається: у «Спліті» вона
+          переносилась у два рядки і зсувала кнопки вниз. */}
+      <div className="toolbar texture-toolbar slab-board-head">
         <div>
-          <h3>{ui('Зона підбору текстури')}</h3>
-          <span className="muted">{ui('Колесо миші прокручує, Shift + колесо масштабує цю зону')}</span>
+          <h3 title={ui('Колесо миші прокручує, Shift + колесо масштабує цю зону')}>{ui('Зона підбору текстури')}</h3>
+          {!compact && (
+            <span className="muted">{ui('Колесо миші прокручує, Shift + колесо масштабує цю зону')}</span>
+          )}
         </div>
         <div className="texture-actions">
           <div className="texture-frame-create">
-            <button className={frameMode ? 'chip active' : 'chip'} onClick={() => { setFrameMode((value) => !value); setFrameDraft(null); setFramePresetOpen(false); }}>{ui('Створити рамку')}</button>
+            <button
+              className={frameMode ? 'chip active' : 'chip'}
+              title={ui('Створити рамку')}
+              onClick={() => { setFrameMode((value) => !value); setFrameDraft(null); setFramePresetOpen(false); }}
+            >
+              {compact ? <SquarePlus className="w-4 h-4" /> : ui('Створити рамку')}
+            </button>
             <button className="chip texture-frame-arrow" onClick={() => setFramePresetOpen((value) => !value)}>▼</button>
             {framePresetOpen && (
               <div className="split-menu texture-frame-menu">
@@ -432,9 +471,32 @@ export function TextureLayoutPanel() {
               </div>
             )}
           </div>
-          <button className={showElements ? 'chip active' : 'chip'} onClick={() => setShowElements((value) => !value)}>{ui('Показати елементи')}</button>
-          <button onClick={() => setCustomScale(null)}>{ui('Масштаб')} 1:1</button>
-          <button onClick={openPreview}>{ui('Відкрити прев’ю')}</button>
+          {/* Перемикач переїхав сюди з дошки 2D (26.08): підбір вмикається
+              там, де ним користуються. Це НЕ показ панелі — це позначка
+              «замовлення включає підбір текстури»: від неї послуга в
+              прорахунку, сторінки в PDF і заборона дзеркалення в розкрої. */}
+          <button
+            className={project.textureSelectionEnabled ? 'chip active' : 'chip'}
+            onClick={() => updateProjectHeader({ textureSelectionEnabled: !project.textureSelectionEnabled })}
+            title={project.textureSelectionEnabled
+              ? 'Підбір текстури увімкнено в замовленні: послуга в прорахунку, сторінки підбору в PDF, дзеркалення в розкрої заборонене.'
+              : 'Увімкнути підбір текстури в замовленні — послуга потрапить у прорахунок, а підібрана розкладка піде в PDF.'}
+          >
+            {compact ? <ClipboardCheck className="w-4 h-4" /> : ui('Підбір у замовленні')}
+          </button>
+          <button
+            className={showElements ? 'chip active' : 'chip'}
+            title={ui('Показати елементи')}
+            onClick={() => setShowElements((value) => !value)}
+          >
+            {compact ? <Eye className="w-4 h-4" /> : ui('Показати елементи')}
+          </button>
+          <button title={`${ui('Масштаб')} 1:1`} onClick={() => setCustomScale(null)}>
+            {compact ? <Scan className="w-4 h-4" /> : <>{ui('Масштаб')} 1:1</>}
+          </button>
+          <button title={ui('Відкрити прев’ю')} onClick={openPreview}>
+            {compact ? <ExternalLink className="w-4 h-4" /> : ui('Відкрити прев’ю')}
+          </button>
         </div>
       </div>
       <div className={`texture-canvas-shell ${isFullScreen ? 'flex-1 min-h-0 flex flex-col' : ''}`}>
@@ -606,4 +668,4 @@ export function TextureLayoutPanel() {
     </section>
   );
 }
-
+

@@ -22,6 +22,7 @@ export function GroupDragPreview({ drag, parts, scale }: { drag: Extract<CanvasD
           x: start.x + dx,
           y: start.y + dy,
           rotation: start.rotation,
+          mirror: start.mirror,
           manualLocked: true,
         };
         return <polygon key={id} points={pointString(pointsForPlacement(part, placement), scale)} />;
@@ -32,7 +33,7 @@ export function GroupDragPreview({ drag, parts, scale }: { drag: Extract<CanvasD
 
 export function PlacementDragGhost({ drag, part, scale, screenScale }: { drag: Extract<CanvasDrag, { type: 'placement' }>; part?: DetailPart; scale: number; screenScale: number }) {
   if (!part) return null;
-  const points = rotatedPoints(part, drag.rotation);
+  const points = rotatedPoints(part, drag.rotation, { mirror: drag.mirror });
   const bounds = polygonBounds(points);
   const width = Math.max(bounds.maxX - bounds.minX, 1);
   const height = Math.max(bounds.maxY - bounds.minY, 1);

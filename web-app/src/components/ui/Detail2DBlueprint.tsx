@@ -1,10 +1,15 @@
 import  { useMemo } from 'react';
 import type { DetailDraft } from '../forms/utils/draftHelpers';
+import { curvedContour, isCurvedKind } from '../../domain/baseContour';
 
 export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
+  const curved = isCurvedKind(detail.kind);
   const points = useMemo(() => {
     let pts = detail.geometry?.customPoints || [];
     if (pts.length > 0) return pts;
+    // Коло й овал (01.09): контур квадрантами, а не прямокутник за габаритом.
+    const curve = curvedContour(detail);
+    if (curve) return curve;
 
     let width = detail.width || 1200;
     let height = detail.height || 600;
@@ -14,6 +19,20 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
       height = detail.outerHeight || 1200;
       const iw = detail.innerHorizontal || 600;
       const ih = detail.innerVertical || 600;
+            if (detail.mirrorL) {
+        /* ЛІВА Г (26.08): виріз ліворуч — обхід BL, як у lShapePoints
+           рушія. Літери йдуть за обходом, тому в лівої B — повна права
+           сторона, E — внутрішня горизонталь вирізу, F — коротка ліва.
+           На кресленні (y вниз) виріз опиняється внизу ліворуч. */
+        return [
+          { id: "start", closeId: "F", x: 0, y: 0 },
+          { id: "A", x: width, y: 0 },
+          { id: "B", x: width, y: height },
+          { id: "C", x: iw, y: height },
+          { id: "D", x: iw, y: height - ih },
+          { id: "E", x: 0, y: height - ih },
+        ];
+      }
       return [
         { id: "start", closeId: "F", x: 0, y: 0 },
         { id: "A", x: width, y: 0 },
@@ -74,6 +93,8 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
   const segments = useMemo(() => {
     const segs = [];
     const pts = points;
+    // Крива форма: 64 хорди не розмірюємо — габарити й квадранти нижче окремо.
+    if (curved) return segs;
     
     for (let i = 0; i < pts.length; i++) {
       const p1 = pts[i];
@@ -102,7 +123,7 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
       segs.push({ id, p1, p2, midX, midY, nx, ny, length });
     }
     return segs;
-  }, [points, detail]);
+  }, [points, detail, curved]);
 
   const pathD = useMemo(() => {
     const pts = points;
@@ -207,7 +228,13 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
 
   return (
     <div className="w-full h-full flex items-center justify-center bg-white p-4">
-      <svg viewBox={viewBox} className="w-full h-full" style={{ transform: 'scaleY(-1)' }}>
+      {/* Розворот «як у житті» (26.08): глобального scaleY(-1) більше немає.
+          Геометрія рендериться прямо в екранних координатах SVG (y вниз):
+          сторона A опиняється ЗВЕРХУ (задня кромка при стіні), виріз Г і
+          отвір П дивляться ВНИЗ — на глядача, як на реальній кухні.
+          3D і бланк погодження ніколи не фліпались — тепер конструктор
+          збігається з ними. */}
+      <svg viewBox={viewBox} className="w-full h-full">
         {/* Draw main shape */}
         <path 
           d={pathD} 
@@ -249,7 +276,7 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
                 fontFamily="sans-serif"
                 textAnchor="middle"
                 dominantBaseline="central"
-                transform={`scale(1, -1) translate(0, ${-2 * textY}) rotate(${-angle}, ${textX}, ${textY})`}
+                transform={`rotate(${-angle}, ${textX}, ${textY})`}
               >
                 {seg.id ? `${seg.id} = ${seg.length} mm` : `${seg.length} mm`}
               </text>
@@ -274,7 +301,7 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
                     fontFamily="sans-serif"
                     textAnchor="middle"
                     dominantBaseline="central"
-                    transform={`scale(1, -1) translate(0, ${-2 * (seg.midY - seg.ny * (boxSize * 0.8))})`}
+
                   >
                     {seg.id}
                   </text>
@@ -283,6 +310,44 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
             </g>
           );
         })}
+
+        {/* Кругла/овальна: два габарити і квадранти A–D замість 64 хорд */}
+        {curved && (() => {
+          const cx = w / 2; const cy = h / 2;
+          const isCircle = detail.kind === 'circle';
+          const dimY = -offset; const dimX = w + offset;
+          const quadrants: Array<[string, number]> = [['A', Math.PI * 1.25], ['B', Math.PI * 1.75], ['C', Math.PI * 0.25], ['D', Math.PI * 0.75]];
+          return (
+            <g>
+              <line x1={0} y1={0} x2={0} y2={dimY} stroke="#cbd5e1" strokeWidth={Math.max(w, h) * 0.002} />
+              <line x1={w} y1={0} x2={w} y2={dimY} stroke="#cbd5e1" strokeWidth={Math.max(w, h) * 0.002} />
+              <line x1={0} y1={dimY} x2={w} y2={dimY} stroke="#64748b" strokeWidth={Math.max(w, h) * 0.004} />
+              <text x={cx} y={dimY - textOffset * 0.5} fill="#334155" fontSize={fontSize} fontFamily="sans-serif" textAnchor="middle" dominantBaseline="central">
+                {isCircle ? `Ø ${Math.round(w)} mm` : `${Math.round(w)} mm`}
+              </text>
+              {!isCircle && (
+                <>
+                  <line x1={w} y1={0} x2={dimX} y2={0} stroke="#cbd5e1" strokeWidth={Math.max(w, h) * 0.002} />
+                  <line x1={w} y1={h} x2={dimX} y2={h} stroke="#cbd5e1" strokeWidth={Math.max(w, h) * 0.002} />
+                  <line x1={dimX} y1={0} x2={dimX} y2={h} stroke="#64748b" strokeWidth={Math.max(w, h) * 0.004} />
+                  <text x={dimX + textOffset * 0.5} y={cy} fill="#334155" fontSize={fontSize} fontFamily="sans-serif" textAnchor="middle" dominantBaseline="central" transform={`rotate(-90, ${dimX + textOffset * 0.5}, ${cy})`}>
+                    {Math.round(h)} mm
+                  </text>
+                </>
+              )}
+              {quadrants.map(([id, a]) => {
+                const qx = cx + Math.cos(a) * (w / 2) * 0.72;
+                const qy = cy + Math.sin(a) * (h / 2) * 0.72;
+                return (
+                  <g key={id}>
+                    <rect x={qx - boxSize / 2} y={qy - boxSize / 2} width={boxSize} height={boxSize} fill="#1f93ef" rx={boxSize * 0.15} />
+                    <text x={qx} y={qy} fill="#ffffff" fontSize={fontSize} fontWeight="bold" fontFamily="sans-serif" textAnchor="middle" dominantBaseline="central">{id}</text>
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })()}
 
         {/* U-Shape Width Marker */}
         {uShapeProps && (
@@ -313,7 +378,7 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
               fontFamily="sans-serif"
               textAnchor="middle"
               dominantBaseline="central"
-              transform={`scale(1, -1) translate(0, ${-2 * (uShapeProps.topBarHeight / 2)}) rotate(90, ${uShapeProps.cutOff + uShapeProps.cutW / 2 + boxSize * 0.5}, ${uShapeProps.topBarHeight / 2})`}
+              transform={`rotate(90, ${uShapeProps.cutOff + uShapeProps.cutW / 2 + boxSize * 0.5}, ${uShapeProps.topBarHeight / 2})`}
             >
               Ширина = {Math.round(uShapeProps.topBarHeight)} mm
             </text>
@@ -322,4 +387,4 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
       </svg>
     </div>
   );
-}
+}

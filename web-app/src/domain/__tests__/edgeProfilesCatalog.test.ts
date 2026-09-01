@@ -96,20 +96,23 @@ describe('прив’язки профілів', () => {
 });
 
 describe('фільтр за матеріалом', () => {
-  it('на керамограніті немає кварцитної серії 20', () => {
-    const ids = edgeProfilesForMaterial(profiles, 'Керамограніт').map((profile) => profile.id);
-    expect(ids).toContain('ar_12');
-    expect(ids).toContain('ar_20'); // спільний
-    expect(ids).not.toContain('h_40');
-    expect(ids).not.toContain('antik');
+  /*
+   * ФІЛЬТР ВИМКНЕНИЙ 26.08.2026 за рішенням власника: усі профілі
+   * доступні на всіх матеріалах. Тести переписані під нову поведінку,
+   * а не видалені — щоб було видно, що це рішення, а не регресія.
+   */
+  it('показує ВСІ профілі незалежно від матеріалу', () => {
+    const onCeramic = edgeProfilesForMaterial(profiles, 'Керамограніт').map((profile) => profile.id);
+    const onQuartz = edgeProfilesForMaterial(profiles, 'Кварцит').map((profile) => profile.id);
+    expect(onCeramic).toHaveLength(profiles.length);
+    expect(onQuartz).toHaveLength(profiles.length);
+    // Кварцитна серія 20 і керамогранітна 12 видні на обох
+    expect(onCeramic).toContain('h_40');
+    expect(onQuartz).toContain('ar_12');
   });
 
-  it('на кварциті немає серії 12', () => {
-    const ids = edgeProfilesForMaterial(profiles, 'Кварцит').map((profile) => profile.id);
-    expect(ids).toContain('h_40');
-    expect(ids).toContain('zs_20');
-    expect(ids).not.toContain('ar_12');
-    expect(ids).not.toContain('zs_4');
+  it('без матеріалу теж усі', () => {
+    expect(edgeProfilesForMaterial(profiles, undefined)).toHaveLength(profiles.length);
   });
 
   it('без матеріалу показуємо все', () => {

@@ -88,6 +88,18 @@ function detailArea(parts: DetailPart[], detail: Detail) {
     .reduce((sum, part) => sum + part.area, 0);
 }
 
+/**
+ * Контрагент у документах крою.
+ *
+ * Дані приїжджають із довідника Customers Service у шапку проєкту
+ * (project.customer + контактна особа й телефон). Якщо шапку не заповнили,
+ * а прорахунок для клієнта вже є — беремо з нього, щоб карта крою й КП не
+ * розходились у тому, кому це замовлення.
+ */
+const customerTitle = (project: Project) => project.customer || project.quoteCalc?.contragent || '-';
+const customerContactName = (project: Project) => project.customerContactName || project.quoteCalc?.contactName || '-';
+const customerContactPhone = (project: Project) => project.customerContactPhone || project.quoteCalc?.contactPhone || '-';
+
 function sectionTitle(title: string, subtitle?: string) {
   return [
     text(PAGE_MARGIN, PAGE_TITLE_Y, title, 32, '#173049', 700),
@@ -102,7 +114,9 @@ export function renderTitlePage(project: Project, parts: DetailPart[], options: 
   const detailCount = project.details.reduce((sum, detail) => sum + detail.quantity, 0);
   const rows = [
     [projectText(project, 'Номер замовлення'), project.orderNumber || projectText(project, 'без номера')],
-    [projectText(project, 'Контрагент'), project.customer || '-'],
+    [projectText(project, 'Контрагент'), customerTitle(project)],
+    [projectText(project, 'Контактна особа'), customerContactName(project)],
+    [projectText(project, 'Телефон'), customerContactPhone(project)],
     [projectText(project, 'Автор розкрою'), options.author || '-'],
     [projectText(project, 'Дата створення'), formatDate(project.versions[0]?.timestamp ?? project.updatedAt, project.uiLanguage)],
     [projectText(project, 'Дата експорту'), formatDate(new Date().toISOString(), project.uiLanguage)],
@@ -167,7 +181,9 @@ export function renderOverviewPage(project: Project, parts: DetailPart[], option
     .map((part) => [partParentLabel(project, part!), projectText(project, part!.type), part!.dimsLabel]);
   const summaryRows = [
     [projectText(project, 'Замовлення'), project.orderNumber || projectText(project, 'без номера')],
-    [projectText(project, 'Контрагент'), project.customer || '-'],
+    [projectText(project, 'Контрагент'), customerTitle(project)],
+    [projectText(project, 'Контактна особа'), customerContactName(project)],
+    [projectText(project, 'Телефон'), customerContactPhone(project)],
     [projectText(project, 'Автор'), options.author || '-'],
     [projectText(project, 'Експорт'), formatDate(new Date().toISOString(), project.uiLanguage)],
     [projectText(project, 'Статус'), getStatusLabel(project.calculationStatus, project.uiLanguage)],
@@ -179,7 +195,9 @@ export function renderOverviewPage(project: Project, parts: DetailPart[], option
   ];
   const contentW = size.widthPx - PAGE_MARGIN * 2;
   const summaryY = 112;
-  const summaryH = 164;
+  // Картка тягнеться під фактичну кількість рядків (два стовпці по 28 px),
+  // інакше нові рядки контакту вилазили б за її межу.
+  const summaryH = Math.max(164, 52 + (Math.ceil(summaryRows.length / 2) - 1) * 28);
   const rowW = contentW / 2;
   const detailsY = summaryY + summaryH + 58;
   const showUnplaced = options.includeUnplaced;
@@ -351,16 +369,22 @@ function edgeProfileSvg(
   offsetY = 0,
   baseX = 0,
   baseY = 0,
+  mirror = false,
 ) {
-  const markers = edgeMarkersForPart(part, detail?.edgeProfiles, rotation);
+  const markers = edgeMarkersForPart(part, detail?.edgeProfiles, rotation, 16, mirror);
   if (!markers.length) return '';
   return markers.map((marker) => {
     const x1 = offsetX + (baseX + marker.start.x) * scale;
     const y1 = offsetY + (baseY + marker.start.y) * scale;
     const x2 = offsetX + (baseX + marker.end.x) * scale;
     const y2 = offsetY + (baseY + marker.end.y) * scale;
-    const labelX = offsetX + (baseX + marker.labelPoint.x) * scale;
-    const labelY = offsetY + (baseY + marker.labelPoint.y) * scale - 4;
+    /* Підпис крайки — ВСЕРЕДИНІ деталі (28.08, задача власника): у бланку
+       так само, як на дошці розкрою. Зсув по внутрішній нормалі сторони;
+       «−4 px по вертикалі» виносив підпис за контур на верхньому ребрі.
+       +3 px — компенсація базової лінії, щоб рядок сів по центру точки. */
+    const LABEL_INSET_MM = 26;
+    const labelX = offsetX + (baseX + marker.labelPoint.x + marker.labelInward.x * LABEL_INSET_MM) * scale;
+    const labelY = offsetY + (baseY + marker.labelPoint.y + marker.labelInward.y * LABEL_INSET_MM) * scale + 3;
     const shortLabel = marker.profiles.map(id => project.referenceData?.edgeProfiles?.find(p => p.id === id)?.shortLabel ?? id).join(' + ');
     return [
       `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#1f5f87" stroke-width="1.4" stroke-dasharray="8 5"/>`,
@@ -405,7 +429,7 @@ function renderSlabBoard(
       : `<polygon points="${pointString(poly, boardScale, boardX, boardY)}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
     return [
       outline,
-      edgeProfileSvg(project, part, detail, placement.rotation, boardScale, boardX, boardY, placement.x, placement.y),
+      edgeProfileSvg(project, part, detail, placement.rotation, boardScale, boardX, boardY, placement.x, placement.y, Boolean(placement.mirror)),
       textMiddle(cx, cy - labelSize * 0.35, partParentLabel(project, part), labelSize, '#102536', 700, 'middle'),
       options.showDimensions ? textMiddle(cx, cy + labelSize * 0.85, part.dimsLabel, Math.max(7, labelSize * 0.78), '#102536', 700, 'middle') : '',
     ].join('');
@@ -622,4 +646,4 @@ export function renderSlabSvg(project: Project, parts: DetailPart[], slab: SlabI
 }
 
 
-
+

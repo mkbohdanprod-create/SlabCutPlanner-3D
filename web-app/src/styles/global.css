@@ -35,6 +35,14 @@ input, textarea, [contenteditable="true"] { user-select: text; -webkit-user-sele
 label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
 .app-shell { max-width: 1640px; margin: 0 auto; padding: 10px; }
 .panel { min-width: 0; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 2px; padding: 12px; box-shadow: none; }
+/* ЧИСТКА РАМОК (26.08, розбір власника по скрінах). Орієнтир — редактор
+   деталі: він без коробок і «занурює в прогу». Правило: рамки носять
+   ПРЕДМЕТИ (кнопки, картки слебів, аркуш розкрою) і СТАНИ (drop-target,
+   помилки); ЗОНИ інтерфейсу розділяє повітря і щонайбільше одна волосяна
+   лінія — коробка навколо зони не малюється. Перший захід: бокова панель
+   і екран 2D Розкрій; решта екранів чиститься наступними заходами. */
+.sidebar .panel { border: 0; background: transparent; padding: 0; }
+.sidebar .form-zone { border: 0; background: transparent; padding: 0; }
 .header-grid { display: grid; grid-template-columns: minmax(190px, 220px) minmax(130px, .72fr) minmax(130px, .72fr) 104px minmax(148px, auto) minmax(154px, auto) minmax(300px, auto); gap: 8px; margin-bottom: 10px; align-items: center; }
 .top-header { --header-control-height: 40px; padding: 10px 12px; }
 .app-brand { height: var(--header-control-height); min-height: var(--header-control-height); padding: 6px 12px; display: flex; align-items: center; border: 1px solid var(--border-color); border-radius: 2px; background: var(--bg-panel); color: var(--accent-color); font-size: clamp(18px, 1.35vw, 22px); font-weight: 800; letter-spacing: 0; text-shadow: 0 2px 3px rgba(0,0,0,.14); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -58,13 +66,50 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .file-field.button-like { border-style: solid; justify-content: center; background: var(--bg-panel); color: var(--text-primary); font-size: inherit; font-weight: 400; }
 .file-field.short { width: auto; }
 .file-field input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.canvas-panel { min-width: 0; min-height: 0; overflow: visible; }
-.slab-scroll-shell { width: 100%; height: calc(100vh - 245px); min-height: 360px; overflow: auto; border-radius: 2px; background: var(--bg-main); border: 1px solid var(--border-color); }
+/* Чистка рамок 26.08: дошка розкрою і зона підбору текстури — зони,
+   не коробки. «Предмети» тут — аркуш слеба і фото-деталі. */
+.canvas-panel { min-width: 0; min-height: 0; overflow: visible; border: 0; background: transparent; padding: 0; }
+.texture-panel { border: 0; background: transparent; padding: 0; }
+/* ЗОНА СЛЕБІВ БЕЗ ВЛАСНОГО ВЕРТИКАЛЬНОГО ПОВЗУНКА (27.08).
+   Було два повзунки поруч: внутрішній гортав слеби, зовнішній — усю
+   робочу область разом із кнопками. Тепер вертикаль одна — загальний
+   повзунок області, а зона росте під кількість слебів. Горизонтальна
+   прокрутка лишається: слеб буває ширший за екран. */
+.slab-scroll-shell { width: 100%; height: auto; min-height: 360px; overflow-x: auto; overflow-y: hidden; border-radius: 2px; background: var(--bg-main); }
+/* Кнопки й фільтр не їдуть угору разом зі слебами */
+.slab-board-head { position: sticky; top: 0; z-index: 8; background: #fff; }
+/* ВКЛАДКИ РОБОЧОЇ ОБЛАСТІ (27.08).
+   Кольори живуть тут, а не в класах утиліт: базове правило `button` вище
+   задає фон і перебиває утиліти, тому фон вкладок ніколи не застосовувався
+   — усі вкладки виглядали однаково білими, і відкриту не було видно.
+   Відкрита вкладка — того самого тону, що робоче поле, і без нижньої
+   межі: корінець і поле читаються як одна фігура. */
+.pane-tab { background: #dde3e9; border: 1px solid #cfd7de; border-bottom-color: var(--border-color); color: #61707f; }
+.pane-tab:hover { background: #d3dae1; }
+.pane-tab.is-active { background: var(--bg-panel); border-color: transparent; color: var(--accent-color); box-shadow: 0 -3px 6px rgba(31,45,58,.05); }
+.pane-tab.is-active:hover { background: var(--bg-panel); }
+
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
 .toolbar.compact { margin-bottom: 8px; }
 .segmented, .chips-row, .preset-row { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+/* Компактні кнопки-значки (спліт): svg по центру рядка кнопки */
+.canvas-panel .toolbar button svg { vertical-align: middle; }
+/* Колонка значків лівої панелі (просунутий режим): кнопки форм стають
+   квадратами тієї самої сітки, що й решта рейки */
+.sidebar-rail .forms-panel { gap: 8px !important; }
+.sidebar-rail .forms-panel button { width: 40px; height: 40px; padding: 0; display: flex; align-items: center; justify-content: center; }
+.sidebar-rail .form-zone { gap: 8px; }
+/* Кнопки рейки: свій клас, бо базовий button перебиває tailwind-фони
+   (та сама причина, що в .pane-tab) */
+.rail-btn { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 6px; border: 1px solid transparent; background: var(--bg-input); color: var(--text-secondary); padding: 0; }
+.rail-btn:hover { background: var(--bg-panel-hover); }
+.rail-btn:disabled { opacity: .35; }
+.rail-btn.is-active { background: #0084ff; border-color: #0084ff; color: #fff; }
+.rail-btn.is-danger { background: #fff7f5; border-color: #d38b80; color: #982f25; }
 .segmented .active, .chip.active { background: var(--accent-color); color: var(--accent-text); }
+/* Полотно текстурної зони — м'який тон замість рамки (як буфер нерозміщених) */
 .slab-svg, .texture-svg { width: 100%; background: var(--bg-panel); border-radius: 2px; border: 1px solid var(--border-color); }
+.texture-svg { background: var(--bg-main); border: 0; }
 .slab-scroll-shell .slab-svg { border: 0; border-radius: 2px; display: block; }
 .slab-svg { min-height: 760px; }
 .texture-svg { min-height: 320px; display: block; max-width: none; }
@@ -137,6 +182,34 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .modal-backdrop { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(36,52,66,.38); }
 .detail-modal { width: min(920px, calc(100vw - 28px)); max-height: calc(100vh - 28px); overflow: auto; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 2px; padding: 16px; box-shadow: 0 22px 70px rgba(31,45,58,.32); }
 .slab-edit-modal { width: min(640px, calc(100vw - 28px)); }
+
+/* Картка слебу з каталогу — довідково, поверх редагованих полів.
+   Ці значення прийшли за артикулом і руками не міняються. */
+.slab-edit-source {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  border: 1px solid #dde5ee;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.slab-edit-source-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.slab-edit-source-row:last-child { margin-bottom: 0; }
+.slab-edit-source-row span {
+  flex: 0 0 92px;
+  color: #8792a2;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  font-size: 10px;
+}
+.slab-edit-source-row b { color: #16202e; }
+.slab-edit-wide { grid-column: 1 / -1; }
 .detail-modal-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; cursor: move; user-select: none; }
 .detail-modal-header h2 { margin: 0; font-size: 26px; }
 .detail-modal-header p { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
@@ -387,7 +460,8 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .texture-panel { min-width: 0; min-height: 380px; overflow: hidden; }
 .texture-toolbar { align-items: flex-start; }
 .texture-toolbar h3 { margin: 0 0 4px; }
-.texture-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+.texture-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; }
+.texture-toolbar.slab-board-head { padding-bottom: 6px; }
 .texture-frame-create { position: relative; display: inline-flex; }
 .texture-frame-create > .chip:first-child { border-radius: 2px; }
 .texture-frame-arrow { width: 34px; border-radius: 2px; padding-left: 0; padding-right: 0; border-left-color: rgba(31,45,58,.18); }
@@ -417,38 +491,58 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .texture-preview-body { flex: 1 1 auto; min-height: 0; padding: 10px; overflow: auto; background: var(--bg-main); }
 .texture-preview-body svg { width: 100% !important; height: auto !important; max-height: none; background: #f7fbfe; border: 1px solid rgba(127,152,173,.35); border-radius: 2px; }
 .texture-preview-svg { display: block; }
-.unplaced-panel { min-width: 0; min-height: 132px; }
-.unplaced-panel .toolbar { margin-bottom: 6px; }
-.unplaced-window { width: 100%; display: block; background: #f7fbfe; border: 1px solid rgba(127,152,173,.35); border-radius: 2px; }
-.unplaced-window > rect { fill: #f8fbfd; }
-.unplaced-window .unplaced-fill { fill: rgba(114,147,171,.25); stroke: none; }
-.unplaced-window .unplaced-stroke { fill: rgba(255,255,255,.08); stroke: #35556b; stroke-width: 1.4; }
-.unplaced-window text { fill: #1f3342; pointer-events: none; }
-.unplaced-window text + text { fill: #3a596c; }
-.unplaced-item { cursor: grab; }
-.unplaced-item:active, .unplaced-item.dragging { cursor: grabbing; opacity: 0; }
-.unplaced-panel.drop-target { border-color: #6f94ad; background: #d6e6f0; }
-.unplaced-drag-ghost { position: fixed; z-index: 80; pointer-events: none; min-width: 126px; max-width: 230px; padding: 4px 6px; border: 1px solid #7f98ad; border-radius: 2px; background: rgba(248,251,253,.96); box-shadow: 0 10px 26px rgba(31,45,58,.22); color: #1f3342; display: flex; flex-direction: column; gap: 2px; }
-.unplaced-drag-ghost strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.unplaced-drag-ghost span { font-size: 11px; color: #536b7a; }
-.unplaced-ghost-shape { width: 94px; height: 58px; align-self: center; }
-.unplaced-ghost-shape polygon { fill: rgba(114,147,171,.25); stroke: #35556b; stroke-width: 2; }
+/* ─── Буфер нерозміщених деталей: права колонка 2D Розкрою (28.08) ───────
+   Був горизонтальною смугою над аркушами і з'їдав висоту робочого поля.
+   Тепер колонка з двома станами; від дошки її відділяє одна волосяна
+   лінія. Рамки тут мають лише ПРЕДМЕТИ — картки деталей. */
+.unplaced-panel { flex-shrink: 0; display: flex; flex-direction: column; height: 100%; min-height: 0; background: #f7fafc; border-left: 1px solid var(--border-color); transition: width .16s ease; }
+.unplaced-head { display: flex; align-items: center; gap: 7px; padding: 10px 8px 8px 12px; }
+.unplaced-head h3 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #4a6274; white-space: nowrap; }
+/* Лічильник теплий, а не червоний: нерозміщена деталь — це «розберись»,
+   а не аварія. Червоний у програмі зайнятий дефектами каменю. */
+.unplaced-count { min-width: 20px; height: 19px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: #fdf0e3; border: 1px solid #e8c89a; color: #8a5a20; font-size: 11px; font-weight: 700; }
+.unplaced-toggle { margin-left: auto; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #6b8397; }
+.unplaced-toggle:hover { background: #e8eff4; color: #23415a; }
+.unplaced-reason { margin: 0 10px 9px 12px; padding: 5px 8px; font-size: 11px; line-height: 1.35; color: #7a5a2e; background: #fdf6e8; border-left: 2px solid #e0b661; border-radius: 0 3px 3px 0; }
+.unplaced-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 10px 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.unplaced-card { display: flex; flex-direction: column; gap: 6px; padding: 8px; background: #fff; border: 1px solid #e2eaf0; border-radius: 6px; transition: border-color .12s ease, box-shadow .12s ease; }
+.unplaced-card:hover { border-color: #a9c3d6; box-shadow: 0 2px 8px rgba(31,45,58,.08); }
+.unplaced-card.dragging { opacity: .3; }
+.unplaced-thumb { width: 100%; display: block; background: #f4f8fb; border-radius: 4px; cursor: grab; }
+.unplaced-thumb:active { cursor: grabbing; }
+.unplaced-card-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.unplaced-card-text strong { font-size: 12px; font-weight: 600; color: #1f3342; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unplaced-card-text span { font-size: 11px; color: #6b8397; }
+.unplaced-remnants { margin: 0 10px 10px 12px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; border: 1px solid #0084ff; border-radius: 6px; background: #fff; color: #0084ff; font-size: 12px; font-weight: 700; }
+.unplaced-remnants:hover { background: #f0f7ff; }
+/* Згорнутий стан: та сама мова, що в рейках бічних панелей */
+.unplaced-panel.is-rail { background: #f7fafc; }
+.unplaced-rail { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; border: 0; border-radius: 0; background: transparent; color: #4a6274; }
+.unplaced-rail:hover { background: #eef4f8; }
+.unplaced-rail-label { writing-mode: vertical-rl; margin-top: 4px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6b8397; }
+/* Стан «сюди можна кинути» — єдиний момент, коли зона МАЄ рамку:
+   пунктир з'являється лише на час перетягування і зникає з ним. */
+.unplaced-panel.drop-target { background: #e6f0f7; }
+.unplaced-panel.drop-target .unplaced-list { outline: 2px dashed #6f94ad; outline-offset: -4px; border-radius: 6px; }
+.unplaced-fill { fill: rgba(114,147,171,.25); stroke: none; }
+.unplaced-stroke { fill: rgba(255,255,255,.06); stroke: #35556b; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
 .buffer-drag-ghost { position: fixed; z-index: 90; pointer-events: none; overflow: visible; filter: drop-shadow(0 10px 18px rgba(31,45,58,.22)); }
-.buffer-drag-ghost .unplaced-fill { fill: rgba(114,147,171,.27); }
-.buffer-drag-ghost .unplaced-stroke { fill: rgba(255,255,255,.12); stroke: #35556b; stroke-width: 1.4; }
-.buffer-drag-ghost text { fill: #1f3342; pointer-events: none; }
-.buffer-drag-ghost text + text { fill: #3a596c; }
+.buffer-drag-ghost .unplaced-fill { fill: rgba(114,147,171,.32); }
 .placement-drag-ghost { position: fixed; z-index: 90; pointer-events: none; overflow: visible; filter: drop-shadow(0 10px 18px rgba(31,45,58,.24)); }
 .placement-drag-ghost polygon { fill: rgba(114,147,171,.35); stroke: #2d4f6c; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .placement-drag-ghost text { fill: #1e2d3d; font-size: 13px; pointer-events: none; }
 .group-drag-preview { pointer-events: none; filter: drop-shadow(0 8px 14px rgba(31,45,58,.2)); }
 .group-drag-preview polygon { fill: rgba(114,147,171,.28); stroke: #1f78b4; stroke-width: 2; stroke-dasharray: 8 5; }
+/* Зріз кута натурального слеба: матеріалу тут немає (27.08).
+   Штриховка, а не заливка — під нею має лишатись видно фото каменю,
+   інакше менеджер не бачить, наскільки далеко реально йде скол. */
+.slab-corner-cut { fill: rgba(224,85,78,.14); stroke: #c0554e; stroke-width: 1.2; stroke-dasharray: 7 5; vector-effect: non-scaling-stroke; }
 .allowance-outline { stroke-dasharray: 8 6; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .edge-profile-marks line, .edge-profile-marks polyline { stroke: #1f5f87; stroke-width: 1.15; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; }
 .edge-profile-marks text { fill: #1f5f87; font-size: 9px; font-weight: 700; paint-order: stroke; stroke: rgba(248,251,253,.82); stroke-width: 3px; vector-effect: non-scaling-stroke; }
 .slab-svg-drop-active { cursor: copy; }
-.unplaced-empty { min-height: 62px; display: flex; align-items: center; color: #536b7a; background: rgba(255,255,255,.35); border: 1px dashed rgba(127,152,173,.55); border-radius: 2px; padding: 10px; }
-.unplaced-empty.drop-empty { justify-content: center; min-height: 96px; border-color: #6f94ad; color: #23415a; }
+.unplaced-empty { min-height: 62px; display: flex; align-items: center; color: #536b7a; background: rgba(255,255,255,.35); border: 1px dashed rgba(127,152,173,.55); border-radius: 6px; padding: 12px; font-size: 12px; line-height: 1.4; }
+.unplaced-empty.drop-empty { justify-content: center; text-align: center; min-height: 96px; border-color: #6f94ad; color: #23415a; }
 .muted { color: #536b7a; font-size: 13px; }
 .part-group { cursor: grab; }
 .part-group:active { cursor: grabbing; }
@@ -462,6 +556,9 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .placement-state-badges { pointer-events: none; }
 .placement-state-badges rect { fill: rgba(248,251,253,.9); stroke: #2d5f81; stroke-width: 1; }
 .placement-state-badges text { fill: #244d68; font-size: 9px; font-weight: 800; }
+/* Попередження про товщину (деталь ≠ сляб): янтарний, щоб відрізнявся від P/L */
+.placement-state-badges .badge-warn rect { fill: #fef3c7; stroke: #b45309; }
+.placement-state-badges .badge-warn text { fill: #92400e; }
 .slab-dimensions text, .slab-dimension-hint { fill: #31536b; font-size: 12px; font-weight: 700; pointer-events: none; user-select: none; }
 .slab-dimensions .dimension-guide { stroke: rgba(49,83,107,.42); stroke-width: 1; stroke-dasharray: 4 5; pointer-events: none; }
 .slab-dimensions .dimension-arrow { stroke: #31536b; stroke-width: 1.2; fill: none; pointer-events: none; }
@@ -639,3 +736,82 @@ text.dxf-overlay-label, .dxf-edge-overlay text {
 @keyframes fact-highlight-dash {
   to { stroke-dashoffset: -22; }
 }
+
+
+/* ── Картка слябу в списку (25.08.2026) ────────────────────────────
+   Було: картка → підкладка → мініатюра 86×60, тобто три рамки одна в
+   одній і фото розміром з нігтик. Тепер рамка одна — сама картка, а
+   фото і є її верхом, у справжній пропорції листа. */
+.slab-card {
+  border: 1px solid #dbe3ec;
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .12s, box-shadow .12s;
+}
+.slab-card:hover { border-color: #b9c9dc; }
+.slab-card.is-selected {
+  border-color: #7fb4ea;
+  box-shadow: 0 0 0 2px rgba(0,132,255,.12);
+}
+.slab-card-photo {
+  width: 100%;
+  display: block;
+  background-color: #eef2f6;
+  border-bottom: 1px solid #e6ecf3;
+}
+.slab-card-photo.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #97a6b6;
+  font-size: 12px;
+}
+.slab-card-body { padding: 9px 11px 11px; }
+.slab-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.slab-card-head strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e2d3d;
+}
+.slab-card-del {
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; flex-shrink: 0;
+}
+.slab-card-decor {
+  font-size: 13.5px;
+  color: #24303f;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slab-card-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 6px;
+}
+.slab-card-specs span {
+  font-size: 11.5px;
+  color: #55677a;
+  background: #f2f6fa;
+  border: 1px solid #e3ebf3;
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.slab-card-article {
+  margin-top: 7px;
+  font-size: 12px;
+  color: #55677a;
+}
+.slab-card-article b { font-family: "DejaVu Sans Mono", ui-monospace, monospace; color: #1e2d3d; }
+.slab-card-article.is-missing { color: #b3651a; }

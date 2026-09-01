@@ -18,6 +18,7 @@ export type JointShapeFields = {
   innerCutDepth?: number;
   innerCutOffset?: number;
   outerWidth?: number;
+  cornerOrientation?: 'TL' | 'TR' | 'BL' | 'BR';
   outerHeight?: number;
   innerHorizontal?: number;
   innerVertical?: number;
@@ -50,6 +51,15 @@ export function jointAnchorPoints(shape: string | undefined, g: JointShapeFields
     const height = g.outerHeight || 1200;
     const iw = g.innerHorizontal || 600;
     const ih = g.innerVertical || 600;
+    // ЛІВА Г ('BL', 26.08) — обхід той самий, що в lShapePoints рушія.
+    // Тримати всі три копії контуру (тут, рушій, прев'ю) однаковими —
+    // інакше стик стане на дзеркально не те ребро.
+    if (g.cornerOrientation === 'BL') {
+      return {
+        start: { x: 0, y: 0 }, A: { x: width, y: 0 }, B: { x: width, y: height }, C: { x: iw, y: height },
+        D: { x: iw, y: height - ih }, E: { x: 0, y: height - ih },
+      };
+    }
     return {
       start: { x: 0, y: 0 }, A: { x: width, y: 0 }, B: { x: width, y: height - ih }, C: { x: iw, y: height - ih },
       D: { x: iw, y: height }, E: { x: 0, y: height },
@@ -285,6 +295,24 @@ export function manualJointPosition(
 ): { requested: number; snapped: number } {
   const anchor = joint.anchorCorner ? anchors?.[joint.anchorCorner] : undefined;
   const base = anchor ? (joint.axis === 'vertical' ? anchor.x : anchor.y) : 0;
-  const requested = base + joint.offset;
+  /**
+   * Відступ відкладається ВСЕРЕДИНУ деталі, а не завжди в бік зростання
+   * координати. Формула була `base + offset`, і це працювало лише коли
+   * опорний кут лежав на початку осі. Кут на протилежному краю (наприклад E
+   * унизу Г-форми) виносив стик ЗА контур: у 3D лінія зникала — на хорду
+   * не лишалось матеріалу, — а рушій діставав позицію поза деталлю.
+   *
+   * Куди «всередину», визначаємо з самих кутів: рухаємось у той бік, де від
+   * опори більше матеріалу. Той самий прийом, що й у прив'язці вирізів
+   * (`domain/cutoutAnchor`) — знак рахуємо з геометрії, а не припускаємо.
+   */
+  const along = Object.values(anchors ?? {}).map((p) => (joint.axis === 'vertical' ? p.x : p.y));
+  const lo = along.length ? Math.min(...along) : 0;
+  const hi = along.length ? Math.max(...along) : 0;
+  const inward = hi - base >= base - lo ? 1 : -1;
+  // `offset` — ВІДСТАНЬ від опори, а не координата зі знаком: поле в інтерфейсі
+  // дає завжди додатне число. Модуль тут для сумісності зі старими виробами,
+  // де від'ємним відступом позначали «в інший бік».
+  const requested = base + inward * Math.abs(joint.offset);
   return { requested, snapped: snapJointPosition(anchors, corners, joint.axis, requested) };
 }

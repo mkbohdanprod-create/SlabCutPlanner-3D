@@ -1,6 +1,8 @@
 import type { DetailPart, EdgeProfileSelection, EdgeProfileType, Point, Rotation } from '../domain/types';
-import { polygonBounds, rotatePoint, rotatedPoints } from '../lib/project';
-import { pointInPolygonStrict as pointInPolygon, sideContourRange } from '../engines/geometryUtils';
+import { mirroredLocalPoints, polygonBounds, rotatePoint, rotatedPoints } from '../lib/project';
+import { pointInPolygonStrict as pointInPolygon, sideContourRange, sideVertexIndices, edgeLengthForSide } from '../engines/geometryUtils';
+import { edgeTreatmentProfileKinds, edgeTreatmentSpan, slicePolylineByLength } from '../domain/edgeTreatment';
+import { boxEdgeIndexForSide, rotationQuarter } from '../domain/sideNaming';
 
 export const DEFAULT_EDGE_PROFILE: EdgeProfileType = 'polished_straight';
 
@@ -11,12 +13,23 @@ export type EdgeProfileMarker = {
   end: Point;
   points?: Point[];
   labelPoint: Point;
+  /**
+   * Одиничний вектор ВСЕРЕДИНУ деталі в точці підпису (28.08, власник:
+   * «підписи по центру деталі, всередині деталі — і на розкрої, і в
+   * бланку»). Раніше кожен споживач зсував текст на кілька пікселів
+   * угору — на верхній стороні це виносило підпис за контур, на нижній
+   * заводило всередину, тобто одна крайка підписувалась двома способами.
+   * Тепер напрямок рахується з геометрії сторони і однаковий скрізь.
+   */
+  labelInward: Point;
 };
 
-function rotateLocalPoint(point: Point, rotation: Rotation, part: DetailPart) {
-  const rotatedReference = part.points.map((item) => rotatePoint(item, rotation, part.width, part.height));
+function rotateLocalPoint(point: Point, rotation: Rotation, part: DetailPart, mirror = false) {
+  const source = mirror ? mirroredLocalPoints(part.points, part.width) : part.points;
+  const rotatedReference = source.map((item) => rotatePoint(item, rotation, part.width, part.height));
   const bounds = polygonBounds(rotatedReference);
-  const rotated = rotatePoint(point, rotation, part.width, part.height);
+  const local = mirror ? { x: part.width - point.x, y: point.y } : point;
+  const rotated = rotatePoint(local, rotation, part.width, part.height);
   return { x: rotated.x - bounds.minX, y: rotated.y - bounds.minY };
 }
 
@@ -33,6 +46,21 @@ export function edgeProfilesForMaterial<T extends { materialGroup?: string }>(
   material?: string | null,
 ): T[] {
   const all = profiles ?? [];
+  /*
+   * ФІЛЬТР ВИМКНЕНИЙ 26.08.2026 за рішенням власника: показуємо ВСІ
+   * профілі на всіх матеріалах.
+   *
+   * Фільтр працював, поки матеріал проєкту виставлявся руками і часто
+   * лишався порожнім (нижче `if (!material) return all`). 25.08 матеріал
+   * почав братися з першого слеба автоматично — і список кромок мовчки
+   * звузився з 70 до 16. Це помітив власник, а не ми.
+   *
+   * Логіка «серія 12 — керамограніт, серія 20 — кварцит» лишається
+   * нижче в коді і не видалена: коли повернемось до обмеження, воно
+   * має вмикатись СВІДОМО і з попередженням, а не як побічний ефект.
+   */
+  return all;
+  // eslint-disable-next-line no-unreachable
   if (!material) return all;
   return all.filter((profile) => !profile.materialGroup || profile.materialGroup === material);
 }
@@ -42,32 +70,61 @@ export function edgeProfilesForMaterial<T extends { materialGroup?: string }>(
  * Експортовано, щоб підсвітка на карті крою малювала рівно ту саму лінію,
  * по якій нараховано послугу.
  */
-export function logicalSegmentForSide(part: DetailPart, side: string, rotation: Rotation) {
-  if (part.sideSegments?.[side]) {
+export function logicalSegmentForSide(part: DetailPart, side: string, rotation: Rotation, mirror = false) {
+  const resolvedSide = part.sideAliases?.[side] ?? side;
+  const points = rotatedPoints(part, rotation, { mirror });
+
+  /*
+   * ХВИЛЯ 3, крок 3.3 — позначка тримається за РЕБРО КОНТУРУ, а не за букву.
+   *
+   * Було: для прямокутних деталей сторони відновлювались із габаритного
+   * боксу, а поворот компенсувався окремою математикою «зсунь букву на
+   * чверть». Це працювало рівно для чотирьох кутів кратних 90° і не знало
+   * ні про радіуси, ні про фаски, ні про дзеркало.
+   *
+   * Стало: беремо ІНДЕКСИ вершин сторони (`sideVertexIndices`) і читаємо
+   * точки з УЖЕ трансформованого контуру. Нумерація вершин трансформацію
+   * переживає, тому позначка їде за деталлю сама — при будь-якому повороті,
+   * а коли з'явиться дзеркалення (крок 3.4), воно запрацює без правок тут.
+   */
+  const indices = sideVertexIndices(part, side);
+  if (indices && points[indices.startIdx] && points[indices.endIdx]) {
+    return { start: points[indices.startIdx], end: points[indices.endIdx] };
+  }
+
+  /*
+   * Коло й овал — єдиний випадок, де сторони не є ребрами контуру: це
+   * чверті дуги, і жодна з десятків вершин не «початок сторони A». Тільки
+   * тут лишається габаритний бокс.
+   */
+  if (part.shape === 'Кругла' || part.shape === 'Овальна') {
+    const sizeBounds = polygonBounds(points);
+    const edges = [
+      { start: { x: sizeBounds.minX, y: sizeBounds.maxY }, end: { x: sizeBounds.minX, y: sizeBounds.minY } }, // left
+      { start: { x: sizeBounds.minX, y: sizeBounds.minY }, end: { x: sizeBounds.maxX, y: sizeBounds.minY } }, // top
+      { start: { x: sizeBounds.maxX, y: sizeBounds.minY }, end: { x: sizeBounds.maxX, y: sizeBounds.maxY } }, // right
+      { start: { x: sizeBounds.maxX, y: sizeBounds.maxY }, end: { x: sizeBounds.minX, y: sizeBounds.maxY } }, // bottom
+    ];
+    const idx = boxEdgeIndexForSide(resolvedSide);
+    if (idx !== undefined) {
+      // Дзеркало по вертикальній осі міняє місцями ліве й праве ребро
+      // габариту (0 ↔ 2), верх і низ лишає. Застосовуємо ДО повороту —
+      // рівно в тому ж порядку, що й rotatedPoints.
+      const mirrored = mirror ? [2, 1, 0, 3][idx] : idx;
+      return edges[(mirrored + rotationQuarter(rotation)) % 4];
+    }
+  }
+
+  // Остання лінія оборони: сегмент є, але його кінці не лягли на вершини
+  // контуру (інша система координат). Краще повернути його як є, ніж нічого.
+  const raw = part.sideSegments?.[resolvedSide] ?? part.sideSegments?.[side];
+  if (raw) {
     return {
-      start: rotateLocalPoint(part.sideSegments[side].start, rotation, part),
-      end: rotateLocalPoint(part.sideSegments[side].end, rotation, part),
+      start: rotateLocalPoint(raw.start, rotation, part, mirror),
+      end: rotateLocalPoint(raw.end, rotation, part, mirror),
     };
   }
-  const resolvedSide = part.sideAliases?.[side] ?? side;
-  const points = rotatedPoints(part, rotation);
-  
-  if (part.shape === 'Прямокутна' || part.shape === 'Кругла' || part.shape === 'Овальна') {
-    const sizeBounds = polygonBounds(points);
-    if (resolvedSide === 'A') return { start: { x: sizeBounds.minX, y: sizeBounds.maxY }, end: { x: sizeBounds.minX, y: sizeBounds.minY } };
-    if (resolvedSide === 'B') return { start: { x: sizeBounds.minX, y: sizeBounds.minY }, end: { x: sizeBounds.maxX, y: sizeBounds.minY } };
-    if (resolvedSide === 'C') return { start: { x: sizeBounds.maxX, y: sizeBounds.minY }, end: { x: sizeBounds.maxX, y: sizeBounds.maxY } };
-    if (resolvedSide === 'D') return { start: { x: sizeBounds.maxX, y: sizeBounds.maxY }, end: { x: sizeBounds.minX, y: sizeBounds.maxY } };
-  }
-  
-  const byPointCount: Record<number, Partial<Record<string, number>>> = {
-    4: { B: 0, C: 1, D: 2, A: 3 },
-    6: { B: 0, C: 1, D: 2, E: 3, F: 4, A: 5 },
-    8: { B: 0, C: 1, D: 2, E: 3, F: 4, G: 5, H: 6, A: 7 },
-  };
-  const index = byPointCount[part.points.length]?.[resolvedSide];
-  if (index === undefined || !points[index]) return undefined;
-  return { start: points[index], end: points[(index + 1) % points.length] };
+  return undefined;
 }
 
 function insetPathForSide(
@@ -168,10 +225,11 @@ export function sideContourPolyline(
   part: DetailPart,
   side: string,
   rotation: Rotation,
+  mirror = false,
 ): Point[] | undefined {
   const range = sideContourRange(part, side);
   if (range) {
-    const polygon = rotatedPoints(part, rotation);
+    const polygon = rotatedPoints(part, rotation, { mirror });
     const n = polygon.length;
     const path: Point[] = [polygon[range.startIdx]];
     let index = range.startIdx;
@@ -183,8 +241,40 @@ export function sideContourPolyline(
     }
     return path;
   }
-  const segment = logicalSegmentForSide(part, side, rotation);
+  const segment = logicalSegmentForSide(part, side, rotation, mirror);
   return segment ? [segment.start, segment.end] : undefined;
+}
+
+/**
+ * Точка на середині ДОВЖИНИ полілінії і напрямок ходу в ній.
+ * Саме довжини, а не індексу: у прямої сторони дві точки, і середній
+ * індекс — це її кінець.
+ */
+function midOfPolyline(points: Point[]): { point: Point; dir: Point } {
+  let total = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  }
+  const half = total / 2;
+  let walked = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1];
+    const b = points[i];
+    const step = Math.hypot(b.x - a.x, b.y - a.y);
+    if (step <= 0) continue;
+    if (walked + step >= half || i === points.length - 1) {
+      const t = Math.max(0, Math.min(1, (half - walked) / step));
+      return {
+        point: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t },
+        dir: { x: (b.x - a.x) / step, y: (b.y - a.y) / step },
+      };
+    }
+    walked += step;
+  }
+  const a = points[0];
+  const b = points[points.length - 1];
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  return { point: a, dir: { x: (b.x - a.x) / len, y: (b.y - a.y) / len } };
 }
 
 export function edgeMarkersForPart(
@@ -192,39 +282,71 @@ export function edgeMarkersForPart(
   profiles: EdgeProfileSelection | undefined,
   rotation: Rotation,
   offset = 16,
+  mirror = false,
 ): EdgeProfileMarker[] {
   if (!part.isMain || !profiles) return [];
   const entries = Object.entries(profiles).filter((entry) => Boolean(entry[1]));
   if (!entries.length) return [];
 
-  const polygon = rotatedPoints(part, rotation);
+  const polygon = rotatedPoints(part, rotation, { mirror });
   return entries
     .map(([side, rawProfile]) => {
-      const treatment = (typeof rawProfile === 'string') 
-        ? { top: { profileId: rawProfile } } 
-        : rawProfile as any;
-        
-      const p1 = treatment.top?.profileId;
-      const p2 = treatment.bottom?.profileId;
-      if (!p1 && !p2) return undefined;
-      
-      const profileIds = [];
-      if (p1) profileIds.push(p1);
-      if (p2 && p2 !== p1) profileIds.push(p2);
+      const profileIds = edgeTreatmentProfileKinds(rawProfile);
+      if (!profileIds.length) return undefined;
 
-      const segment = logicalSegmentForSide(part, side, rotation);
+      const segment = logicalSegmentForSide(part, side, rotation, mirror);
       if (!segment) return undefined;
       // Позначка накриває і половини сусідніх кутових дуг — рівно ту
       // довжину, за якою рушій фактів рахує метри профілю.
-      const points = insetPathForSide(segment, polygon, offset, sideContourRange(part, side));
-      const middleIdx = Math.floor(points.length / 2);
+      const fullPath = insetPathForSide(segment, polygon, offset, sideContourRange(part, side));
+      // Крайка «не на всю довжину» має і на кресленні бути короткою: інакше
+      // лінія обіцяє цеху повне ребро, а кошторис рахує ділянку.
+      const sideLengthMm = edgeLengthForSide(part, side);
+      const span = edgeTreatmentSpan(rawProfile, sideLengthMm);
+      const points = slicePolylineByLength(fullPath, span.from, span.to);
+      if (points.length < 2) return undefined;
+
+      /*
+       * Підпис — на СЕРЕДИНІ ДОВЖИНИ лінії, не на середньому індексі:
+       * у прямої сторони точок усього дві, і `points[length/2]` давав її
+       * КІНЕЦЬ — підпис сідав у кут деталі.
+       */
+      const { point: labelPoint, dir: labelDir } = midOfPolyline(points);
+
+      /*
+       * Напрямок «усередину деталі» в точці підпису.
+       *
+       * Проба на одну відстань не годиться: лінія маркера вже відступлена
+       * від контуру на `offset` (16 мм), тож коротка проба НАЗОВНІ теж
+       * потрапляє в тіло деталі — саме на цьому напрямок і перевертався.
+       * Тому шукаємо відстань, на якій боки РОЗРІЗНЯЮТЬСЯ: один усередині,
+       * другий зовні. Великі відстані перші — вони дають чисту відповідь;
+       * дрібні лишаються для вузьких деталей на кшталт панелі 165 мм.
+       */
+      const leftNorm = { x: -labelDir.y, y: labelDir.x };
+      const rightNorm = { x: labelDir.y, y: -labelDir.x };
+      const probe = (norm: Point, d: number) => pointInPolygon(
+        { x: labelPoint.x + norm.x * d, y: labelPoint.y + norm.y * d },
+        polygon,
+      );
+      let labelInward = leftNorm;
+      for (const d of [60, 40, 26, 16, 8, 3]) {
+        const leftIn = probe(leftNorm, d);
+        const rightIn = probe(rightNorm, d);
+        if (leftIn !== rightIn) {
+          labelInward = leftIn ? leftNorm : rightNorm;
+          break;
+        }
+      }
+
       return {
         side,
         profiles: profileIds,
         start: points[0] ?? segment.start,
         end: points[points.length - 1] ?? segment.end,
         points,
-        labelPoint: points[middleIdx] ?? points[0] ?? segment.start,
+        labelPoint,
+        labelInward,
       };
     })
     .filter(Boolean) as EdgeProfileMarker[];

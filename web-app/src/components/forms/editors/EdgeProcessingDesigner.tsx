@@ -1,10 +1,15 @@
 import type { EdgeFeature, EdgeProfileType, EdgeProfileSelection } from '../../../domain/types';
 import { edgeProfilesForMaterial } from '../../../utils/edgeProfiles';
+import { CATALOG_OPTION_VALUE, EdgeProfileOptionGroups } from './EdgeProfileOptions';
 import { Field } from '../utils/sharedInputs';
 import { DEFAULT_EDGE_PROFILE } from '../../../utils/edgeProfiles';
 import { useProjectStore } from '../../../store/useProjectStore';
 import { useUIStore } from '../../../store/useStore';
 import { Scissors } from 'lucide-react';
+import { EdgeProfileThumb } from './EdgeProfileThumb';
+import { openEdgeCatalog } from '../../../store/useEdgeCatalog';
+import { topProfileId } from '../../../domain/edgeTreatment';
+import { EDGE_KIND_LABEL } from '../../../domain/ids';
 
 export function EdgeProcessingDesigner({
   edgeProfiles,
@@ -14,6 +19,7 @@ export function EdgeProcessingDesigner({
   blockedEdgeSides = [],
   linkedThickeningSides = [],
   linkedFoldSides = [],
+  showEdgeColumn = true,
   onChange,
 }: {
   edgeProfiles: EdgeProfileSelection;
@@ -23,6 +29,8 @@ export function EdgeProcessingDesigner({
   blockedEdgeSides?: string[];
   linkedThickeningSides?: string[];
   linkedFoldSides?: string[];
+  /** Сховати колонку кромок — коли кромки живуть в окремому треї. */
+  showEdgeColumn?: boolean;
   onChange: (patch: { edgeProfiles: EdgeProfileSelection; thickening: EdgeFeature; fold: EdgeFeature }) => void;
 }) {
   const blockedEdgeSet = new Set(blockedEdgeSides);
@@ -34,6 +42,11 @@ export function EdgeProcessingDesigner({
   // Профілі фільтруються за матеріалом проєкту: серія 12 — керамограніт, 20 — кварцит
   const availableProfiles = edgeProfilesForMaterial(project.referenceData?.edgeProfiles, project.projectMaterial);
 
+  /**
+   * Кромка і потовщення/підворот НЕ виключають одне одного (правило від
+   * власника, 10.08): на стороні буває і полірований торець, і підворот.
+   * Раніше вибір кромки вибивав галочки доповнень і навпаки — прибрано.
+   */
   const toggleAllSidesProfile = (checked: boolean) => {
     const nextProfiles = { ...edgeProfiles };
     sides.forEach((side) => {
@@ -42,14 +55,7 @@ export function EdgeProcessingDesigner({
         else delete nextProfiles[side];
       }
     });
-    // Remove thickening and fold from sides that now have a profile
-    const nextThickeningSides = thickening.sides.filter((s) => !nextProfiles[s]);
-    const nextFoldSides = fold.sides.filter((s) => !nextProfiles[s]);
-    onChange({
-      edgeProfiles: nextProfiles,
-      thickening: { ...thickening, enabled: nextThickeningSides.length > 0, sides: nextThickeningSides },
-      fold: { ...fold, enabled: nextFoldSides.length > 0, sides: nextFoldSides },
-    });
+    onChange({ edgeProfiles: nextProfiles, thickening, fold });
   };
 
   const toggleAllSidesFeature = (featureName: 'thickening' | 'fold', checked: boolean) => {
@@ -59,20 +65,13 @@ export function EdgeProcessingDesigner({
     const nextFeatureSides = checked
       ? [...new Set([...feature.sides, ...sides.filter((s) => !linkedSet.has(s))])]
       : feature.sides.filter((s) => !sides.includes(s) || linkedSet.has(s));
-      
-    const nextProfiles = { ...edgeProfiles };
-    if (checked) {
-      sides.forEach((s) => {
-        if (!linkedSet.has(s)) delete nextProfiles[s];
-      });
-    }
-    
+
     const nextSideSizes = feature.sideSizes
       ? Object.fromEntries(nextFeatureSides.map((s) => [s, feature.sideSizes?.[s] ?? feature.size]))
       : undefined;
 
     onChange({
-      edgeProfiles: nextProfiles,
+      edgeProfiles,
       thickening: isThickening ? { ...thickening, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides, sideSizes: nextSideSizes } : thickening,
       fold: !isThickening ? { ...fold, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides, sideSizes: nextSideSizes } : fold,
     });
@@ -83,15 +82,7 @@ export function EdgeProcessingDesigner({
     const nextProfiles = { ...edgeProfiles };
     if (profile) nextProfiles[side] = profile;
     else delete nextProfiles[side];
-
-    const nextThickeningSides = profile ? thickening.sides.filter((s) => s !== side) : thickening.sides;
-    const nextFoldSides = profile ? fold.sides.filter((s) => s !== side) : fold.sides;
-
-    onChange({
-      edgeProfiles: nextProfiles,
-      thickening: { ...thickening, enabled: nextThickeningSides.length > 0, sides: nextThickeningSides },
-      fold: { ...fold, enabled: nextFoldSides.length > 0, sides: nextFoldSides },
-    });
+    onChange({ edgeProfiles: nextProfiles, thickening, fold });
   };
 
   const toggleSideFeature = (side: string, featureName: 'thickening' | 'fold') => {
@@ -104,17 +95,12 @@ export function EdgeProcessingDesigner({
       ? feature.sides.filter((s) => s !== side)
       : [...feature.sides, side];
 
-    const nextProfiles = { ...edgeProfiles };
-    if (!feature.sides.includes(side)) {
-      delete nextProfiles[side];
-    }
-
     const nextSideSizes = feature.sideSizes
       ? Object.fromEntries(nextFeatureSides.map((s) => [s, feature.sideSizes?.[s] ?? feature.size]))
       : undefined;
 
     onChange({
-      edgeProfiles: nextProfiles,
+      edgeProfiles,
       thickening: isThickening ? { ...thickening, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides, sideSizes: nextSideSizes } : thickening,
       fold: !isThickening ? { ...fold, enabled: nextFeatureSides.length > 0, sides: nextFeatureSides, sideSizes: nextSideSizes } : fold,
     });
@@ -144,7 +130,7 @@ export function EdgeProcessingDesigner({
         </div>
         
         <div className="edge-processing-global-sizes">
-          <Field label="Розмір потовщення, мм">
+          <Field label={`Розмір «${EDGE_KIND_LABEL.thickening}», мм`}>
             <input 
               type="number" 
               value={thickening.size} 
@@ -157,7 +143,7 @@ export function EdgeProcessingDesigner({
               }} 
             />
           </Field>
-          <Field label="Розмір підвороту, мм">
+          <Field label={`Розмір «${EDGE_KIND_LABEL.fold}», мм`}>
             <input 
               type="number" 
               value={fold.size} 
@@ -178,6 +164,7 @@ export function EdgeProcessingDesigner({
           <thead>
             <tr>
               <th className="ep-side-col">Сторона</th>
+              {showEdgeColumn && (
               <th className="ep-edge-col">
                 <label className="ep-toggle-all">
                   <input
@@ -189,6 +176,7 @@ export function EdgeProcessingDesigner({
                   Кромка
                 </label>
               </th>
+              )}
               <th className="ep-feature-col">
                 <label className="ep-toggle-all">
                   <input
@@ -197,7 +185,7 @@ export function EdgeProcessingDesigner({
                     ref={(el) => { if (el) el.indeterminate = someThickeningSelected && !allThickeningSelected; }}
                     onChange={(e) => toggleAllSidesFeature('thickening', e.target.checked)}
                   />
-                  Потовщення
+                  {EDGE_KIND_LABEL.thickening}
                 </label>
               </th>
               <th className="ep-feature-col">
@@ -208,14 +196,14 @@ export function EdgeProcessingDesigner({
                     ref={(el) => { if (el) el.indeterminate = someFoldSelected && !allFoldSelected; }}
                     onChange={(e) => toggleAllSidesFeature('fold', e.target.checked)}
                   />
-                  Підворот
+                  {EDGE_KIND_LABEL.fold}
                 </label>
               </th>
             </tr>
           </thead>
           <tbody>
             {sides.map((side) => {
-              const profile = edgeProfiles[side];
+              const profile = topProfileId(edgeProfiles[side]);
               const hasThickening = thickening.sides.includes(side);
               const hasFold = fold.sides.includes(side);
               const linkedThick = linkedThickeningSet.has(side);
@@ -227,22 +215,34 @@ export function EdgeProcessingDesigner({
                   <td className="ep-side-col">
                     <span className="ep-chip">{side}</span>
                   </td>
+                  {showEdgeColumn && (
                   <td className="ep-edge-col">
                     <div className="ep-edge-select-wrapper">
-                      <EdgeProfileIcon profile={profile} />
-                      <select 
-                        disabled={blockedEdge} 
-                        title={blockedEdge ? 'На стороні вже є прив’язаний елемент DXF' : undefined} 
-                        value={profile ?? ''} 
-                        onChange={(e) => setSideProfile(side, e.target.value as EdgeProfileType | '')}
+                      <EdgeProfileThumb profileId={profile} height={30} />
+                      <select
+                        disabled={blockedEdge}
+                        title={blockedEdge ? 'На стороні вже є прив’язаний елемент DXF' : undefined}
+                        value={profile ?? ''}
+                        onChange={(e) => {
+                          if (e.target.value === CATALOG_OPTION_VALUE) {
+                            openEdgeCatalog({
+                              title: `Сторона ${side}`,
+                              material: project.projectMaterial,
+                              value: profile,
+                              allowNone: true,
+                              onSelect: (id) => setSideProfile(side, id as EdgeProfileType | ''),
+                            });
+                            return;
+                          }
+                          setSideProfile(side, e.target.value as EdgeProfileType | '');
+                        }}
                       >
                         <option value="">Без кромки</option>
-                        {availableProfiles.map((opt) => (
-                          <option key={opt.id} value={opt.id}>{opt.label}</option>
-                        ))}
+                        <EdgeProfileOptionGroups profiles={availableProfiles} material={project.projectMaterial} short={false} />
                       </select>
                     </div>
                   </td>
+                  )}
                   <td className="ep-feature-col">
                     <label className={`ep-checkbox-wrapper ${linkedThick ? 'linked' : ''}`} title={linkedThick ? 'Прив’язано з DXF' : undefined}>
                       <input 
@@ -311,4 +311,4 @@ export function EdgeProfileIcon({ profile }: { profile?: EdgeProfileType }) {
       />
     </svg>
   );
-}
+}

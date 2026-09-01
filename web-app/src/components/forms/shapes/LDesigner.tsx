@@ -18,9 +18,10 @@ export function LDesigner({ detail, updateDetail, activeSides, onSideClick, lang
         <TemplateInput x={366} y={254} value={detail.innerVertical} onChange={(innerVertical) => updateDetail({ innerVertical })} />
         <TemplateInput x={244} y={352} value={detail.innerHorizontal} onChange={(innerHorizontal) => updateDetail({ innerHorizontal })} />
         <TemplateInput x={585} y={255} width={58} value={detail.quantity} onChange={(quantity) => updateDetail({ quantity })} />
+        <TemplateCheck x={520} y={278} label="Ліва (дзеркально)" checked={Boolean(detail.mirrorL)} onChange={(checked) => updateDetail({ mirrorL: checked || undefined })} />
         <TemplateCheck x={520} y={306} label="Стик вертикальний" checked={detail.jointDirection === 'vertical'} onChange={(checked) => updateDetail({ jointDirection: checked ? 'vertical' : undefined })} />
         <TemplateCheck x={520} y={334} label="Стик горизонтальний" checked={detail.jointDirection === 'horizontal'} onChange={(checked) => updateDetail({ jointDirection: checked ? 'horizontal' : undefined })} />
       </div>
     </div>
   );
-}
+}

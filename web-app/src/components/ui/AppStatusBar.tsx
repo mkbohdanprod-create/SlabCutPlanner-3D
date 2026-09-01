@@ -2,7 +2,7 @@ import React from 'react';
 import { localeForLanguage, statusLabel, t } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
 import { calculateTotalArea } from '../../utils/export';
-import { CheckCircle2, Clock, AlertCircle, Maximize, Layers } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle, Maximize, Layers, ClipboardCheck } from 'lucide-react';
 
 export function AppStatusBar() {
   const { project, parts } = useProjectStore();
@@ -24,9 +24,11 @@ export function AppStatusBar() {
   };
 
   const statusInfo = getStatusDisplay();
+  const order = project.quoteCalc?.order;
+  const orderNumber = order?.externalId || order?.orderId || '';
 
   return (
-    <footer className="h-8 flex-none bg-white border-t border-slate-200 flex items-center px-4 text-xs font-medium text-slate-600 gap-6">
+    <footer className="app-status-bar h-8 flex-none bg-white border-t border-slate-200 flex items-center px-4 text-xs font-medium text-slate-600 gap-6">
       {/* Status */}
       <div className={`flex items-center gap-1.5 ${statusInfo.color}`}>
         {statusInfo.icon}
@@ -53,6 +55,19 @@ export function AppStatusBar() {
         <Layers className="w-3.5 h-3.5 text-slate-400" />
         <span>{t(language, 'slabCount')}: {project.slabs.length}</span>
       </div>
+
+      {/* Номер замовлення в Orders Service — з'являється після підтвердження
+          прорахунку. Саме він і є номером замовлення для менеджера, тому
+          видно його з будь-якої вкладки, а не лише в «Прорахунку». */}
+      {orderNumber && (
+        <>
+          <div className="h-4 w-px bg-slate-300"></div>
+          <div className="flex items-center gap-1.5 text-emerald-700" title={t(language, 'orderNumber')}>
+            <ClipboardCheck className="w-3.5 h-3.5" />
+            <span className="font-semibold tabular-nums">{orderNumber}</span>
+          </div>
+        </>
+      )}
 
       {/* Updated */}
       <div className="ml-auto text-slate-400 font-normal">

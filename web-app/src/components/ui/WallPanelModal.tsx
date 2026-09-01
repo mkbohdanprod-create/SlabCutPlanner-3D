@@ -1,29 +1,34 @@
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { DraggableDialog } from './DraggableDialog';
 
 interface Props {
   edgeId: string;
+  /**
+   * Довжина ребра, на якому створюється деталь. Стає шириною за
+   * замовчуванням: доповнення майже завжди роблять на всю сторону, а
+   * жорсткий дефолт 1100 змушував щоразу перебивати число вручну.
+   */
+  sideLength?: number;
   initialData?: any;
   onSave: (data: any) => void;
   onClose: () => void;
 }
 
-export function WallPanelModal({ edgeId, initialData, onSave, onClose }: Props) {
+export function WallPanelModal({ edgeId, sideLength, initialData, onSave, onClose }: Props) {
   const [material] = useState(initialData?.material || 'Керамограніт Inalco Silk Negro Natural 12 mm 3200x1600');
-  const [width, setWidth] = useState(initialData?.width || 1100);
+  const [width, setWidth] = useState(initialData?.width || (sideLength ? Math.round(sideLength) : 1100));
   const [height, setHeight] = useState(initialData?.height || 600);
   const [offset, setOffset] = useState(initialData?.offset || 0);
   const [thickness, setThickness] = useState(initialData?.thickness || 12);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-      <div className="bg-[#eaf4fc] rounded-md shadow-lg w-[360px] overflow-hidden border border-[#b8d4ee]">
-        <div className="bg-[#3b82f6] px-4 py-3 flex justify-between items-center text-white">
-          <h3 className="font-bold">Стінова панель</h3>
-          <button onClick={onClose} className="hover:text-white/80 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <DraggableDialog
+      title="Стінова панель"
+      onClose={onClose}
+      width={360}
+      headerClassName="bg-[#3b82f6] text-white"
+      className="bg-[#eaf4fc] border border-[#b8d4ee] overflow-hidden"
+    >
         
         <div className="p-4 flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-4">
@@ -94,7 +99,6 @@ export function WallPanelModal({ edgeId, initialData, onSave, onClose }: Props) 
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </DraggableDialog>
   );
-}
+}

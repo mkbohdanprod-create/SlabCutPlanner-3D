@@ -1,30 +1,35 @@
 import  { useState } from 'react';
-import { X } from 'lucide-react';
+import { DraggableDialog } from './DraggableDialog';
 import type { Skirting } from '../../../domain/types';
 
 interface Props {
   edgeId: string;
+  /**
+   * Довжина ребра, на якому створюється деталь. Стає шириною за
+   * замовчуванням: доповнення майже завжди роблять на всю сторону, а
+   * жорсткий дефолт 1100 змушував щоразу перебивати число вручну.
+   */
+  sideLength?: number;
   initialData?: Skirting;
   onSave: (data: Skirting) => void;
   onClose: () => void;
 }
 
-export function SkirtingModal({ edgeId, initialData, onSave, onClose }: Props) {
+export function SkirtingModal({ edgeId, sideLength, initialData, onSave, onClose }: Props) {
   const [form, setForm] = useState(initialData?.form || 'Під прямим кутом');
   const [height, setHeight] = useState(initialData?.height || 50);
-  const [width, setWidth] = useState(initialData?.width || 1100);
+  const [width, setWidth] = useState(initialData?.width || (sideLength ? Math.round(sideLength) : 1100));
   const [offset, setOffset] = useState(initialData?.offset || 0);
   const [type, setType] = useState(initialData?.type || 'Плінтус R3');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-      <div className="bg-[#eaf4fc] rounded-md shadow-lg w-[360px] overflow-hidden border border-[#b8d4ee]">
-        <div className="bg-[#3b82f6] px-4 py-3 flex justify-between items-center text-white">
-          <h3 className="font-bold">Бортик</h3>
-          <button onClick={onClose} className="hover:text-white/80 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <DraggableDialog
+      title="Бортик"
+      onClose={onClose}
+      width={360}
+      headerClassName="bg-[#3b82f6] text-white"
+      className="bg-[#eaf4fc] border border-[#b8d4ee] overflow-hidden"
+    >
         
         <div className="p-4 flex flex-col gap-4">
           <div className="flex flex-col gap-1">
@@ -108,7 +113,6 @@ export function SkirtingModal({ edgeId, initialData, onSave, onClose }: Props) {
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </DraggableDialog>
   );
-}
+}

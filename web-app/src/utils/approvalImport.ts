@@ -321,12 +321,19 @@ function approvalSpecRowText(row: ApprovalSpecRow) {
   return `${row.elementType} ${row.profile}`.toLocaleLowerCase('uk-UA');
 }
 
+/**
+ * Розпізнавання рядків бланка. Слова тут — ЦЕХОВІ, і 10.08 вони помінялись
+ * місцями (див. EDGE_KIND_LABEL): «потовщення» на бланку означає заусовку
+ * 45° (код `fold`), «підворот» — пряму підклейку знизу (код `thickening`).
+ * До цього імпорт бланка ставив їх навхрест — тихо, бо обидва рядки все
+ * одно перетворювались на доповнення і на око різниці не було.
+ */
 function isApprovalFoldRow(row: ApprovalSpecRow) {
-  return /підвор|підгин|fold|miter/u.test(approvalSpecRowText(row));
+  return /потовщ|заусов|miter|waterfall/u.test(approvalSpecRowText(row));
 }
 
 function isApprovalThickeningRow(row: ApprovalSpecRow) {
-  return /опуск|потовщ|підклей|thicken|drop/u.test(approvalSpecRowText(row));
+  return /підвор|підгин|опуск|підклей|thicken|drop/u.test(approvalSpecRowText(row));
 }
 
 function isApprovalLegRow(row: ApprovalSpecRow) {

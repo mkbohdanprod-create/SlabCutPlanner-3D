@@ -1,4 +1,5 @@
 import type { DetailPart, Point } from '../domain/types';
+import { CONTOUR_SIDE_INDEX } from '../domain/sideNaming';
 
 /**
  * Ключ текстурної групи — деталі з однаковим ключем нестинг кладе разом.
@@ -127,14 +128,66 @@ export function sideSegmentOfPart(part: DetailPart, side: string) {
   const custom = part.sideSegments?.[side];
   if (custom) return custom;
   const resolvedSide = part.sideAliases?.[side] ?? side;
-  const byPointCount: Record<number, Partial<Record<string, number>>> = {
-    4: { B: 0, C: 1, D: 2, A: 3 },
-    6: { B: 0, C: 1, D: 2, E: 3, F: 4, A: 5 },
-    8: { B: 0, C: 1, D: 2, E: 3, F: 4, G: 5, H: 6, A: 7 },
-  };
-  const index = byPointCount[part.points.length]?.[resolvedSide];
+  // ХВИЛЯ 3, крок 3.2. Тут жила копія «контурної» угоди, де A вважалась
+  // ОСТАННІМ ребром. Через неї `edgeLengthForSide` віддавала для сторони A
+  // стільниці 2000×600 довжину 600 мм — і рівно ця цифра йшла в метри
+  // обробки торця у кошторис. Тепер угода одна, з domain/sideNaming.
+  const index = CONTOUR_SIDE_INDEX[part.points.length]?.[resolvedSide];
   if (index === undefined || !part.points[index]) return undefined;
   return { start: part.points[index], end: part.points[(index + 1) % part.points.length] };
+}
+
+/**
+ * ІНДЕКСИ ВЕРШИН, якими сторона починається і закінчується на контурі
+ * (хвиля 3, крок 3.3).
+ *
+ * Ключова відмінність від `sideSegmentOfPart`: та повертає КООРДИНАТИ, а ця —
+ * ІНДЕКСИ. Координати доводиться перераховувати під кожну трансформацію
+ * (поворот, а завтра дзеркало), і саме на цьому FG-28 ламався: позначка
+ * лишалась там, де було ребро ДО повороту. Індекси трансформацію переживають
+ * без змін — контур повертається цілком, разом із нумерацією вершин.
+ *
+ * Тому правило просте: спершу знайти індекси, потім узяти точки з УЖЕ
+ * трансформованого контуру. Позначка їде за деталлю сама, без окремої
+ * математики на кожен вид перетворення.
+ *
+ * Дуги кутів сюди НЕ додаються — це «гола» сторона, рівно та, що в
+ * `sideSegments`. Для метражу з половинами дуг є `sideContourRange`.
+ */
+export function sideVertexIndices(
+  part: DetailPart,
+  side: string,
+): { startIdx: number; endIdx: number } | undefined {
+  const n = part.points.length;
+  if (n < 3) return undefined;
+  const resolved = part.sideSegments?.[side] ? side : (part.sideAliases?.[side] ?? side);
+
+  const segment = part.sideSegments?.[resolved];
+  if (segment) {
+    // Кінці сегментів — точні вершини контуру (їх туди кладуть будівельники
+    // геометрії). Пів міліметра допуску: далі — це сегмент з іншої системи
+    // координат, і чесніше відмовитись, ніж вказати не на те ребро.
+    const TOLERANCE_SQ = 0.25;
+    const nearest = (target: Point): number | undefined => {
+      let best = 0;
+      let bestDist = Infinity;
+      part.points.forEach((point, index) => {
+        const dist = (point.x - target.x) ** 2 + (point.y - target.y) ** 2;
+        if (dist < bestDist) { bestDist = dist; best = index; }
+      });
+      return bestDist <= TOLERANCE_SQ ? best : undefined;
+    };
+    const startIdx = nearest(segment.start);
+    const endIdx = nearest(segment.end);
+    if (startIdx !== undefined && endIdx !== undefined) return { startIdx, endIdx };
+    return undefined;
+  }
+
+  // Простий контур без обробки кутів: сторона — це рівно одне ребро,
+  // за єдиною угодою імен (domain/sideNaming).
+  const index = CONTOUR_SIDE_INDEX[n]?.[resolved];
+  if (index === undefined) return undefined;
+  return { startIdx: index, endIdx: (index + 1) % n };
 }
 
 /**
@@ -155,13 +208,60 @@ export function sideSegmentOfPart(part: DetailPart, side: string) {
 export function sideContourRange(
   part: DetailPart,
   side: string,
+  opts?: {
+    /**
+     * Забрати кутовий перехід ПЕРЕД стороною цілком, а не половину.
+     * Потрібно різакам торців (01.09): якщо на куті стоїть «Обробка
+     * торців», а сусідня сторона без профілю — фреза цієї сторони йде
+     * через усю дугу. Метраж кошторису цього параметра НЕ використовує.
+     */
+    fullGapBefore?: boolean;
+    /** Те саме для переходу ПІСЛЯ сторони. */
+    fullGapAfter?: boolean;
+    /**
+     * НЕ брати кутовий перехід перед стороною зовсім: сторона закінчується
+     * там, де починається дуга. Різакам торців (01.09, «хай наскрізь
+     * проходить фреза»): кут без «Обробки торців» дуга не профілюється —
+     * фреза сторони доходить до початку дуги і вибігає по дотичній, а не
+     * зупиняється сходинкою посеред радіуса. Метраж це не використовує.
+     */
+    noGapBefore?: boolean;
+    /** Те саме для переходу ПІСЛЯ сторони. */
+    noGapAfter?: boolean;
+  },
 ): { startIdx: number; endIdx: number } | undefined {
+  const resolved = resolveSideKey(part, side);
+  const ranges = sideRanges(part);
+  if (!ranges) return undefined;
+  const mine = ranges.find((item) => item.key === resolved);
+  if (!mine) return undefined;
+  const others = ranges.filter((item) => item.key !== resolved);
+  if (!others.length) return { startIdx: mine.startIdx, endIdx: mine.endIdx };
+
+  const n = part.points.length;
+  const forward = (from: number, to: number) => (to - from + n) % n;
+  const gapBefore = Math.min(...others.map((item) => forward(item.endIdx, mine.startIdx)));
+  const gapAfter = Math.min(...others.map((item) => forward(mine.endIdx, item.startIdx)));
+
+  const takeBefore = opts?.noGapBefore ? 0 : opts?.fullGapBefore ? gapBefore : Math.floor(gapBefore / 2);
+  const takeAfter = opts?.noGapAfter ? 0 : opts?.fullGapAfter ? gapAfter : Math.ceil(gapAfter / 2);
+  return {
+    startIdx: (mine.startIdx - takeBefore + n) % n,
+    endIdx: (mine.endIdx + takeAfter) % n,
+  };
+}
+
+function resolveSideKey(part: DetailPart, side: string): string {
+  return part.sideSegments?.[side] ? side : (part.sideAliases?.[side] ?? side);
+}
+
+/**
+ * «Голі» діапазони всіх сторін із `sideSegments` — без кутових переходів.
+ * Спільна основа для `sideContourRange` і `sideNeighbours`.
+ */
+function sideRanges(part: DetailPart): Array<{ key: string; startIdx: number; endIdx: number }> | undefined {
   const segments = part.sideSegments;
   if (!segments) return undefined;
-  const resolved = segments[side] ? side : (part.sideAliases?.[side] ?? side);
-  const segment = segments[resolved];
-  if (!segment) return undefined;
-
   const n = part.points.length;
   if (n < 3) return undefined;
 
@@ -180,24 +280,47 @@ export function sideContourRange(
     return bestDist <= TOLERANCE_SQ ? best : undefined;
   };
 
-  const ranges = Object.entries(segments).flatMap(([key, item]) => {
+  return Object.entries(segments).flatMap(([key, item]) => {
     const startIdx = nearestIdx(item.start);
     const endIdx = nearestIdx(item.end);
     return startIdx === undefined || endIdx === undefined ? [] : [{ key, startIdx, endIdx }];
   });
+}
+
+/**
+ * Сусідні сторони за обходом контуру: `prev` закінчується перед
+ * кутовим переходом до `side`, `next` починається після переходу за нею.
+ * Потрібно, щоб зрозуміти, який кут між якими сторонами стоїть
+ * (`corners` деталі ключуються іменами сторін, не індексами вершин).
+ * Без `sideSegments` сусідів немає.
+ */
+export function sideNeighbours(part: DetailPart, side: string): { prev?: string; next?: string } {
+  const resolved = resolveSideKey(part, side);
+  const ranges = sideRanges(part);
+  if (!ranges) return {};
   const mine = ranges.find((item) => item.key === resolved);
-  if (!mine) return undefined;
+  if (!mine) return {};
   const others = ranges.filter((item) => item.key !== resolved);
-  if (!others.length) return { startIdx: mine.startIdx, endIdx: mine.endIdx };
-
+  if (!others.length) return {};
+  const n = part.points.length;
   const forward = (from: number, to: number) => (to - from + n) % n;
-  const gapBefore = Math.min(...others.map((item) => forward(item.endIdx, mine.startIdx)));
-  const gapAfter = Math.min(...others.map((item) => forward(mine.endIdx, item.startIdx)));
+  let prev = others[0];
+  let next = others[0];
+  for (const item of others) {
+    if (forward(item.endIdx, mine.startIdx) < forward(prev.endIdx, mine.startIdx)) prev = item;
+    if (forward(mine.endIdx, item.startIdx) < forward(mine.endIdx, next.startIdx)) next = item;
+  }
+  return { prev: prev.key, next: next.key };
+}
 
-  return {
-    startIdx: (mine.startIdx - Math.floor(gapBefore / 2) + n) % n,
-    endIdx: (mine.endIdx + Math.ceil(gapAfter / 2)) % n,
-  };
+/**
+ * Сторони в порядку обходу контуру (за початковою вершиною). Потрібно
+ * різакам, щоб пройти по кутах між сусідніми сторонами.
+ */
+export function sidesInContourOrder(part: DetailPart): string[] {
+  const ranges = sideRanges(part);
+  if (!ranges) return [];
+  return [...ranges].sort((a, b) => a.startIdx - b.startIdx).map((item) => item.key);
 }
 
 /** Точки контуру вздовж сторони разом із половинами сусідніх кутових дуг */

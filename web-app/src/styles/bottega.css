@@ -1,0 +1,99 @@
+/*
+ * ОФОРМЛЕННЯ BOTTEGA В ІНТЕРФЕЙСІ (01.09.2026).
+ *
+ * Ті самі кольори й ритм, що в наших документах (Works/Bottega/_ШАБЛОН.html,
+ * МАНІФЕСТ §9.2): акцент #0084ff — лінія під заголовком і активні елементи;
+ * рамки #dde5ee, тло панелей #fbfcfe, шапки таблиць #eef3f8 із капітеллю
+ * #55627a; маркери — пігулки: синя #dbeafe/#0058ab (матеріал), бурштинова
+ * #fef3c7/#92500e (увага, гіпотеза, лише з потовщенням), зелена
+ * #dcf5e6/#15703f (факт, збіг), червона #fde2e1/#b3322c (питання, спадок),
+ * нейтральна #eef1f5/#64748b. Запит власника: «оформлення в стилі bottega» —
+ * довідник обробок торців і каталог кромок мають виглядати як наші PDF.
+ * Шрифт лишається шрифтом застосунку; розміри — з шаблону (10–13pt ≈ 13–17px).
+ */
+
+.bt-brand { font-size: 12px; font-weight: 700; color: #16202e; letter-spacing: .1px; }
+.bt-brand span { font-weight: 400; color: #8792a2; }
+.bt-h1 { font-size: 22px; font-weight: 700; color: #16202e; letter-spacing: -.3px; line-height: 1.2; margin: 4px 0 2px; }
+.bt-sub { color: #6b7684; font-size: 13px; }
+.bt-rule { height: 3px; background: #0084ff; border-radius: 2px; margin: 8px 0 0; }
+
+.bt-panel { border: 1px solid #dde5ee; border-radius: 7px; background: #fbfcfe; padding: 10px 13px; }
+.bt-panel-title { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: #8792a2; margin-bottom: 8px; }
+.bt-k { font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #8792a2; }
+
+.bt-table { width: 100%; border-collapse: collapse; font-size: 13px; color: #24303f; }
+.bt-table th { background: #eef3f8; text-align: left; padding: 8px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #55627a; border: 1px solid #dde5ee; }
+.bt-table td { padding: 8px 10px; border: 1px solid #dde5ee; vertical-align: top; }
+.bt-table tr:hover td { background: #f8fbff; }
+.bt-table td.bt-group { background: #f4f7fb; font-weight: 700; color: #24303f; font-size: 12px; letter-spacing: .3px; }
+.bt-table tr:hover td.bt-group { background: #f4f7fb; }
+
+.bt-tag { display: inline-block; vertical-align: middle; font-size: 10px; font-weight: 700; letter-spacing: .4px; padding: 2px 8px; border-radius: 20px; text-transform: uppercase; white-space: nowrap; line-height: 1.5; }
+.bt-tag-blue { background: #dbeafe; color: #0058ab; border: 1px solid #b9d5f5; }
+.bt-tag-amber { background: #fef3c7; color: #92500e; border: 1px solid #f2ddaa; }
+.bt-tag-green { background: #dcf5e6; color: #15703f; border: 1px solid #b6e2c9; }
+.bt-tag-red { background: #fde2e1; color: #b3322c; border: 1px solid #f2c4c1; }
+.bt-tag-neutral { background: #eef1f5; color: #64748b; border: 1px solid #dde5ee; }
+.bt-tag-orange { background: #fde8d2; color: #9a4b0f; border: 1px solid #f5cfae; }
+.bt-tag-sky { background: #e6f0fb; color: #0058ab; border: 1px solid #c9dcf3; }
+.bt-tag-lc { text-transform: none; letter-spacing: 0; font-weight: 600; }
+
+.bt-code { font-family: "DejaVu Sans Mono", ui-monospace, monospace; font-size: 12px; background: #f1f5f9; padding: 1px 5px; border-radius: 3px; color: #24303f; }
+
+.bt-btn { display: inline-flex; align-items: center; gap: 6px; background: #0084ff; color: #fff; font-size: 13px; font-weight: 700; padding: 7px 14px; border-radius: 20px; border: none; cursor: pointer; }
+.bt-btn:hover { background: #0072dd; }
+.bt-btn-ghost { display: inline-flex; align-items: center; gap: 6px; background: #fff; color: #24303f; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 20px; border: 1px solid #dde5ee; cursor: pointer; }
+.bt-btn-ghost:hover { background: #f4f7fb; }
+
+.bt-input { border: 1px solid #dde5ee; border-radius: 6px; background: #fff; padding: 6px 10px; font-size: 13px; color: #24303f; margin: 0; }
+.bt-input:focus { outline: none; border-color: #0084ff; }
+
+.bt-find { border-left: 4px solid #cbd5e1; background: #fafbfd; border-radius: 0 5px 5px 0; padding: 8px 12px; font-size: 12.5px; color: #3f4a5a; }
+.bt-find-warn { border-left-color: #e0a03a; background: #fffbf3; }
+.bt-find-good { border-left-color: #2f9e68; background: #f5fbf8; }
+
+.bt-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e3e8ee; color: #8792a2; font-size: 11px; text-align: center; font-style: italic; }
+
+/* Картка каталогу: як картка розрізу в PDF — рамка #dde5ee, радіус 6, зображення на #fbfcfe */
+.bt-card { border: 1px solid #dde5ee; border-radius: 7px; background: #fff; padding: 8px; text-align: left; cursor: pointer; transition: box-shadow .12s, border-color .12s; }
+.bt-card:hover { box-shadow: 0 4px 14px rgba(22, 32, 46, .10); border-color: #b9d5f5; }
+.bt-card.is-selected { border-color: #0084ff; box-shadow: 0 0 0 2px #0084ff inset; }
+.bt-card .bt-im { height: 104px; border: 1px solid #edf1f6; border-radius: 5px; background: #fbfcfe; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.bt-card .bt-code-title { font-weight: 700; font-size: 14px; color: #16202e; margin-top: 7px; }
+.bt-card .bt-form { font-size: 12px; color: #3f4a5a; line-height: 1.35; min-height: 32px; margin-top: 2px; }
+.bt-chip { font-size: 10px; font-weight: 700; width: 20px; height: 20px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #dde5ee; background: #f8fafc; color: #c3cad3; }
+.bt-chip.on { background: #dbeafe; color: #0058ab; border-color: #b9d5f5; }
+.bt-group-h { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font-size: 14px; font-weight: 700; color: #16202e; padding: 0 0 5px; margin: 14px 0 8px; border-bottom: 1px solid #e2e8f0; background: none; border-top: none; border-left: none; border-right: none; cursor: pointer; }
+.bt-group-h:first-child { margin-top: 0; }
+.bt-group-h .bt-count { color: #8792a2; font-weight: 400; font-size: 12px; }
+
+/* Панель «Кромки» в редакторі виробу: компактні рядки сторін, розширене — під шевроном.
+   Без рамок-у-рамках (власник 01.09: «рамки ці прибирай») — сторони ділить тонка лінія. */
+.edge-panel { padding: 2px 0 0; }
+.edge-side { padding: 6px 0; border-bottom: 1px solid #edf1f6; }
+.edge-side:last-child { border-bottom: none; }
+.edge-side-more { margin: 8px 0 2px 32px; padding: 8px 0 0; border-top: 1px dashed #e2e8f0; display: flex; flex-direction: column; gap: 8px; }
+.edge-side .bt-input:disabled { background: #f4f7fb; color: #8792a2; }
+.edge-side select.bt-input { margin: 0; }
+
+/* Літера сторони як кнопка (01.09): взірець — зелена, заблокована — бліда. */
+button.bt-chip { padding: 0; margin: 0; line-height: 1; font-family: inherit; }
+.bt-chip.src { background: #dcf5e6; color: #15703f; border-color: #b6e2c9; box-shadow: 0 0 0 2px #86efac; }
+.bt-chip.locked { background: #f8fafc; color: #cbd5e1; border-style: dashed; }
+.edge-thumb-src { outline: 2px solid #22c55e; outline-offset: 1px; border-radius: 3px; background: #f0fdf4; }
+
+/* Позначки сторін у 3D (01.09, власник: «квадрати Bottega, літера дивиться
+   на мене, як не крути камеру») — HTML-накладка над полотном, тому завжди
+   у площині екрана. Кольори ті самі, що в панелі: синій — є обробка,
+   зелений — взірець, бурштиновий — стики, помаранчевий — кути. */
+.bt-chip3d { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid #dde5ee; background: #fff; color: #64748b; font: 700 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .2px; box-shadow: 0 2px 6px rgba(22, 32, 46, .18); cursor: pointer; user-select: none; white-space: nowrap; transform: translate(-50%, -50%); margin: 0; }
+.bt-chip3d:hover { border-color: #b9d5f5; box-shadow: 0 3px 10px rgba(22, 32, 46, .22); }
+.bt-chip3d.on { background: #dbeafe; color: #0058ab; border-color: #b9d5f5; }
+.bt-chip3d.src { background: #dcf5e6; color: #15703f; border-color: #b6e2c9; box-shadow: 0 0 0 2px #86efac, 0 2px 6px rgba(22, 32, 46, .18); }
+.bt-chip3d.amber { background: #fef3c7; color: #92500e; border-color: #f2ddaa; }
+.bt-chip3d.amber.hot { background: #fde68a; color: #78350f; border-color: #f59e0b; box-shadow: 0 0 0 2px #fcd34d, 0 2px 6px rgba(22, 32, 46, .18); }
+.bt-chip3d.orange { background: #fde8d2; color: #9a4b0f; border-color: #f5cfae; }
+.bt-chip3d.teal { background: #ccfbf1; color: #0f766e; border-color: #99f6e4; font-weight: 600; }
+.bt-chip3d.locked { color: #cbd5e1; border-style: dashed; cursor: not-allowed; }
+.bt-chip3d.small { min-width: 22px; height: 22px; font-size: 11px; }

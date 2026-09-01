@@ -1,6 +1,6 @@
 import { uid } from '../domain/defaults';
 import type { DefectZone, DetailPart, PackingMode, Placement, Point, Project, Rotation, SlabInstance } from '../domain/types';
-import { rotatePoint as rotateProjectPoint, rotatedLocalPoints, rotatedSize as projectRotatedSize } from '../lib/project';
+import { mirroredLocalPoints, rotatePoint as rotateProjectPoint, rotatedLocalPoints, rotatedSize as projectRotatedSize } from '../lib/project';
 import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
 import { pointInPolygonStrict, pointInPolygonOrOn, pointOnSegment, outwardNormal, textureGroupKey, polygonDistance } from './geometryUtils';
 
@@ -24,6 +24,28 @@ const REASON_OUT_OF_BOUNDS = 'вихід за межі слеба';
 const REASON_MARGIN = 'порушення мінімального відступу';
 const REASON_COLLISION = 'неможливо розмістити без колізії';
 const REASON_ONE_SLAB = 'Неможливо розмістити деталь та її елементи на одному слебі';
+
+/**
+ * Товщина деталі проти товщини слеба (рішення 25.08, зроблено 26.08).
+ *
+ * Деталь 12 мм на слебі 20 мм — помилка, яку раніше бачили вже на
+ * виробництві. РІШЕННЯ ВЛАСНИКА 26.08: поки що це ПОПЕРЕДЖЕННЯ, а не
+ * заборона — деталь лягає, але розбіжність підсвічується на дошці й
+ * названа числами. Жорстку заборону (findPlacementOnSlab повертає
+ * відмову ще до геометрії) вмикати ТІЛЬКИ окремим погодженим рішенням:
+ * вона міняє поведінку розкрою для всіх збережених проєктів одразу.
+ *
+ * Порівняння з допуском 0.01 мм — товщини бувають дробові (12.5).
+ * Якщо котрась із товщин не задана (старі проєкти, деталі без товщини) —
+ * попередження НЕ з'являється: нема з чим порівнювати.
+ */
+export function thicknessMismatch(part: DetailPart, slab: SlabInstance): string | undefined {
+  const partThickness = part.thickness ?? 0;
+  const slabThickness = slab.thickness ?? 0;
+  if (partThickness <= 0 || slabThickness <= 0) return undefined;
+  if (Math.abs(partThickness - slabThickness) < 0.01) return undefined;
+  return `товщина деталі ${partThickness} мм ≠ товщині слеба ${slabThickness} мм`;
+}
 const TARGET_REMAINDER_WIDTH = 600;
 const MIN_GRID_STEP = 24;
 const MIN_REMNANT_GRID_STEP = 42;
@@ -85,14 +107,28 @@ function rotatePoint(point: Point, rotation: Rotation, width: number, height: nu
   return rotateProjectPoint(point, rotation, width, height);
 }
 
+/**
+ * Контур деталі під розміщення (хвиля 3, крок 3.4 — з урахуванням дзеркала).
+ * Дзеркалимо в локальних координатах ДО повороту: габарит не змінюється,
+ * нумерація вершин лишається, тож позначки обробки їдуть за деталлю самі.
+ */
+function localPointsFor(part: DetailPart, placement: Pick<Placement, 'mirror'>): Point[] {
+  return placement.mirror ? mirroredLocalPoints(part.points, part.width) : part.points;
+}
+
 function polygonForPlacement(part: DetailPart, placement: Placement): Point[] {
-  return rotatedLocalPoints(part.points, placement.rotation, part.width, part.height, part.points).map((rotated) => {
+  const source = localPointsFor(part, placement);
+  return rotatedLocalPoints(source, placement.rotation, part.width, part.height, source).map((rotated) => {
     return { x: rotated.x + placement.x, y: rotated.y + placement.y };
   });
 }
 
 function holesForPlacement(part: DetailPart, placement: Placement): Point[][] {
-  return (part.holes ?? []).map((hole) => rotatedLocalPoints(hole, placement.rotation, part.width, part.height, part.points).map((rotated) => {
+  const source = localPointsFor(part, placement);
+  const holes = placement.mirror
+    ? (part.holes ?? []).map((hole) => mirroredLocalPoints(hole, part.width))
+    : (part.holes ?? []);
+  return holes.map((hole) => rotatedLocalPoints(hole, placement.rotation, part.width, part.height, source).map((rotated) => {
     return { x: rotated.x + placement.x, y: rotated.y + placement.y };
   }));
 }
@@ -255,11 +291,12 @@ function validatePlacement(
   x: number,
   y: number,
   rotation: Rotation,
+  mirror: boolean,
   slab: SlabInstance,
   occupied: OccupiedShape[],
   clearance = 0,
 ): PlacementValidation {
-  const placement = placementFor(part, 'probe', x, y, rotation);
+  const placement = placementFor(part, 'probe', x, y, rotation, mirror);
   const polygon = polygonForPlacement(part, placement);
   const holes = holesForPlacement(part, placement);
   const box = polygonBounds(polygon);
@@ -291,11 +328,7 @@ function validatePlacement(
   return { ok: true };
 }
 
-function canPlace(part: DetailPart, x: number, y: number, rotation: Rotation, slab: SlabInstance, occupied: OccupiedShape[], clearance = 0): boolean {
-  return validatePlacement(part, x, y, rotation, slab, occupied, clearance).ok;
-}
-
-function placementFor(part: DetailPart, slabId: string, x: number, y: number, rotation: Rotation): Placement {
+function placementFor(part: DetailPart, slabId: string, x: number, y: number, rotation: Rotation, mirror = false): Placement {
   return {
     id: uid('placement'),
     slabId,
@@ -303,6 +336,7 @@ function placementFor(part: DetailPart, slabId: string, x: number, y: number, ro
     x,
     y,
     rotation,
+    ...(mirror ? { mirror: true } : {}),
     manualLocked: false,
   };
 }
@@ -366,21 +400,31 @@ function findPlacementOnSlab(
   stepDivisor = 4,
   preference: PlacementPreference = 'first',
   clearance = 0,
+  /**
+   * Дзеркальні варіанти (хвиля 3, крок 3.4). Вмикається проєктом
+   * (`Project.allowMirroring`) і НІКОЛИ не вмикається сам: дзеркало
+   * розвертає малюнок каменю, і на декорах із напрямком це видно
+   * в готовому виробі. Прямий варіант завжди пробується першим — за
+   * інших рівних деталь лягає як намальована.
+   */
+  allowMirroring = false,
 ): PlacementSearchResult {
   let reason: string | undefined = REASON_NO_SPACE;
   let best: { placement: Placement; score: number } | undefined;
   let attempts = 0;
   let validAttempts = 0;
   const orderedRotations = preference === 'remnant' ? longitudinalRotations(part, slab, rotations) : rotations;
+  const mirrorVariants = allowMirroring ? [false, true] : [false];
+  for (const mirror of mirrorVariants) {
   for (const rotation of orderedRotations) {
     const size = rotatedSize(part, rotation);
     const step = Math.max(preference === 'remnant' ? MIN_REMNANT_GRID_STEP : MIN_GRID_STEP, Math.floor(Math.min(size.width, size.height) / stepDivisor));
     for (let y = slab.minMargin; y <= slab.height - size.height - slab.minMargin; y += step) {
       for (let x = slab.minMargin; x <= slab.width - size.width - slab.minMargin; x += step) {
         attempts += 1;
-        const validation = validatePlacement(part, x, y, rotation, slab, occupied, clearance);
+        const validation = validatePlacement(part, x, y, rotation, mirror, slab, occupied, clearance);
         if (validation.ok) {
-          const placement = placementFor(part, slab.id, x, y, rotation);
+          const placement = placementFor(part, slab.id, x, y, rotation, mirror);
           if (preference === 'first') return { placement };
           const score = remnantScore(slab, occupied, occupiedShape(part, placement));
           validAttempts += 1;
@@ -394,7 +438,23 @@ function findPlacementOnSlab(
       }
     }
   }
+  }
   return best ? { placement: best.placement } : { reason };
+}
+
+/**
+ * Чи можна класти деталі дзеркально (хвиля 3, крок 3.4).
+ *
+ * Дві умови, обидві обов'язкові:
+ *   · проєкт це дозволив (`allowMirroring`) — рішення про декор;
+ *   · деталь не бере участі в підборі текстури — інакше дзеркало
+ *     розверне малюнок і зруйнує підібраний малюнок каменю.
+ */
+function mirroringAllowed(project: Project, part: DetailPart): boolean {
+  if (!project.allowMirroring) return false;
+  if (project.textureSelectionEnabled) return false;
+  if (part.textureGroupLabel) return false;
+  return true;
 }
 
 function findPlacement(project: Project, part: DetailPart, context: PackingContext, stepDivisor: number, preference: PlacementPreference = 'first'): PlacementSearchResult {
@@ -403,7 +463,7 @@ function findPlacement(project: Project, part: DetailPart, context: PackingConte
   const slabs = pinnedSlabId ? project.slabs.filter((slab) => slab.id === pinnedSlabId) : project.slabs;
   const clearance = packingClearance(project);
   for (const slab of slabs) {
-    const result = findPlacementOnSlab(part, slab, getOccupied(context, slab.id), ROTATIONS, stepDivisor, preference, clearance);
+    const result = findPlacementOnSlab(part, slab, getOccupied(context, slab.id), ROTATIONS, stepDivisor, preference, clearance, mirroringAllowed(project, part));
     if (result.placement) return result;
     reason = result.reason ?? reason;
   }
@@ -549,6 +609,10 @@ function tryPlaceGroupOnOneSlab(project: Project, group: DetailPart[], context: 
     let ok = true;
 
     for (const part of sorted) {
+      // Свідомо БЕЗ дзеркалення: це гілка «деталі одного виробу на одному
+      // слебі». Саме там сусідні деталі лежать поруч у готовому виробі, і
+      // одна перевернута деталь — це видимий стик малюнку. Дзеркало
+      // працює на звичайних деталях (див. findPlacementOnSlab вище).
       const result = findPlacementOnSlab(part, slab, tempOccupied, ROTATIONS, stepDivisor, preference, clearance);
       if (!result.placement) {
         ok = false;
@@ -1230,7 +1294,7 @@ function placeFullTextureElements(
       ? placementCandidates(main.placement, main.part, element, group, elementIndex, clearance, mainPlacements)
       : [];
     const placement = candidates.find((candidate) => (
-      validatePlacement(element, candidate.x, candidate.y, candidate.rotation, slab, occupied, clearance).ok
+      validatePlacement(element, candidate.x, candidate.y, candidate.rotation, false, slab, occupied, clearance).ok
     ));
 
     if (!placement) return { placements: tempPlacements, reason: REASON_NO_SPACE };
@@ -1280,7 +1344,7 @@ function tryPlaceFullTextureGroup(project: Project, group: DetailPart[], context
     for (const mainPart of orderedMainParts) {
       if (existingPlacementForPart(context, mainPart.id)) continue;
       const mainPlacement = placementForGroupOffset(mainPart, slab.id, anchor.x, anchor.y, rotation, bounds);
-      const validation = validatePlacement(mainPart, mainPlacement.x, mainPlacement.y, rotation, slab, tempOccupied, clearance);
+      const validation = validatePlacement(mainPart, mainPlacement.x, mainPlacement.y, rotation, Boolean(mainPlacement.mirror), slab, tempOccupied, clearance);
       if (!validation.ok) return false;
       tempOccupied.push(occupiedShape(mainPart, mainPlacement));
       mainPlacements.push({ part: mainPart, placement: mainPlacement });
@@ -1312,7 +1376,7 @@ function tryPlaceFullTextureGroup(project: Project, group: DetailPart[], context
 
           for (const mainPart of orderedMainParts) {
             const mainPlacement = placementForGroupOffset(mainPart, slab.id, x, y, rotation, bounds);
-            const validation = validatePlacement(mainPart, mainPlacement.x, mainPlacement.y, rotation, slab, tempOccupied, clearance);
+            const validation = validatePlacement(mainPart, mainPlacement.x, mainPlacement.y, rotation, Boolean(mainPlacement.mirror), slab, tempOccupied, clearance);
             if (!validation.ok) {
               ok = false;
               break;
@@ -1365,7 +1429,7 @@ function placePartialFullTextureElements(
       ? placementCandidates(main.placement, main.part, element, group, elementIndex, clearance, mainPlacements)
       : [];
     const placement = candidates.find((candidate) => (
-      validatePlacement(element, candidate.x, candidate.y, candidate.rotation, slab, occupied, clearance).ok
+      validatePlacement(element, candidate.x, candidate.y, candidate.rotation, false, slab, occupied, clearance).ok
     ));
     if (!placement) continue;
     occupied.push(occupiedShape(element, placement));
@@ -1407,7 +1471,7 @@ function tryPlacePartialFullTextureGroup(project: Project, group: DetailPart[], 
     for (const mainPart of orderedMainParts) {
       if (context.placedIds.has(mainPart.id)) continue;
       const placement = placementForGroupOffset(mainPart, slab.id, x, y, rotation, bounds);
-      const validation = validatePlacement(mainPart, placement.x, placement.y, rotation, slab, tempOccupied, clearance);
+      const validation = validatePlacement(mainPart, placement.x, placement.y, rotation, Boolean(placement.mirror), slab, tempOccupied, clearance);
       if (!validation.ok) {
         if (orderedMainParts.length === 1) return;
         continue;
@@ -1477,7 +1541,7 @@ function tryPlaceImportedTextureGroup(project: Project, group: DetailPart[], con
     for (const part of orderedParts) {
       if (context.placedIds.has(part.id)) continue;
       const placement = placementForGroupOffset(part, slab.id, x, y, rotation, bounds);
-      const validation = validatePlacement(part, placement.x, placement.y, rotation, slab, tempOccupied, clearance);
+      const validation = validatePlacement(part, placement.x, placement.y, rotation, Boolean(placement.mirror), slab, tempOccupied, clearance);
       if (!validation.ok) return false;
       tempOccupied.push(occupiedShape(part, placement));
       pending.push({ part, placement });
@@ -1545,7 +1609,7 @@ function tryPlacePartialImportedTextureGroup(project: Project, group: DetailPart
       if (context.placedIds.has(part.id)) continue;
       if (!part.isMain && groupMainLabels.has(part.parentLabel) && !acceptedMainLabels.has(part.parentLabel)) continue;
       const placement = placementForGroupOffset(part, slab.id, x, y, rotation, bounds);
-      const validation = validatePlacement(part, placement.x, placement.y, rotation, slab, tempOccupied, clearance);
+      const validation = validatePlacement(part, placement.x, placement.y, rotation, Boolean(placement.mirror), slab, tempOccupied, clearance);
       if (!validation.ok) continue;
       tempOccupied.push(occupiedShape(part, placement));
       pending.push({ part, placement });
@@ -1606,7 +1670,7 @@ function placeTextureMainGroupFallback(project: Project, group: DetailPart[], co
   const tempPlacements: Array<{ part: DetailPart; placement: Placement }> = [];
   for (const part of mainParts) {
     const placement = placementForGroupOffset(part, slab.id, x, y, 0, bounds);
-    const validation = validatePlacement(part, placement.x, placement.y, placement.rotation, slab, tempOccupied, packingClearance(project));
+    const validation = validatePlacement(part, placement.x, placement.y, placement.rotation, Boolean(placement.mirror), slab, tempOccupied, packingClearance(project));
     if (!validation.ok) return false;
     tempOccupied.push(occupiedShape(part, placement));
     tempPlacements.push({ part, placement });
@@ -1617,10 +1681,23 @@ function placeTextureMainGroupFallback(project: Project, group: DetailPart[], co
   return true;
 }
 
-function buildContext(project: Project, parts: DetailPart[]) {
+function buildContext(project: Project, parts: DetailPart[], preserveManual = false) {
   const partIds = new Set(parts.map((part) => part.id));
   const slabIds = new Set(project.slabs.map((slab) => slab.id));
-  const locked = project.placements.filter((p) => p.manualLocked && partIds.has(p.partId) && slabIds.has(p.slabId));
+  /*
+   * ХВИЛЯ 5, крок 5.2 — що переживає перерахунок.
+   *
+   * Завжди: деталі із замком (`manualLocked`) — явне «не чіпати».
+   * При `preserveManual` (перерахунок ПІСЛЯ ПРАВКИ виробу, а не свідоме
+   * перескладання) — ще й ті, які людина ставила руками: перетягнула,
+   * повернула, дістала з буфера. Раніше будь-яка правка зносила все, і
+   * зібраний малюнок каменю доводилось робити наново.
+   */
+  const keep = (p: typeof project.placements[number]) => (
+    (p.manualLocked || (preserveManual && p.manualPlaced))
+    && partIds.has(p.partId) && slabIds.has(p.slabId)
+  );
+  const locked = project.placements.filter(keep);
   const context: PackingContext = {
     occupiedBySlab: new Map(),
     placements: [...locked],
@@ -1743,7 +1820,7 @@ function sanitizeAutoPlacements(
 
     const occupied = occupiedBySlab.get(slab.id) ?? [];
     occupiedBySlab.set(slab.id, occupied);
-    const validation = validatePlacement(part, placement.x, placement.y, placement.rotation, slab, occupied, clearance);
+    const validation = validatePlacement(part, placement.x, placement.y, placement.rotation, Boolean(placement.mirror), slab, occupied, clearance);
 
     if (placement.manualLocked || validation.ok) {
       kept.push(placement);
@@ -1758,8 +1835,18 @@ function sanitizeAutoPlacements(
   return kept;
 }
 
-export function autoPack(project: Project, parts: DetailPart[], mode: PackingMode = 'economy'): { placements: Placement[]; unplacedPartIds: string[]; unplacedReasons: Record<string, string> } {
-  const context = buildContext(project, parts);
+export function autoPack(
+  project: Project,
+  parts: DetailPart[],
+  mode: PackingMode = 'economy',
+  /**
+   * Крок 5.2/5.3: зберегти розміщення, зроблені руками, і докласти решту
+   * у вільне місце. Вмикається на перерахунках після правки виробу;
+   * свідоме перескладання з кнопки викликає без нього.
+   */
+  preserveManual = false,
+): { placements: Placement[]; unplacedPartIds: string[]; unplacedReasons: Record<string, string> } {
+  const context = buildContext(project, parts, preserveManual);
   let unplaced: Set<string>;
 
   if (mode === 'full_texture') unplaced = autoPackFullTexture(project, parts, context);
@@ -1777,11 +1864,52 @@ export function autoPack(project: Project, parts: DetailPart[], mode: PackingMod
   };
 }
 
+/**
+ * ЧИ Є СЕНС ПЕРЕСКЛАДАТИ — хвиля 5, крок 5.4.
+ *
+ * Менеджер розклав деталі руками і не знає, скільки це коштує: може, дві
+ * хвилини совання зекономили сляб, а може навпаки — розкладка «розповзлась»
+ * на зайвий. Раніше дізнатись можна було ЛИШЕ перескладанням, тобто
+ * знищивши свою роботу. Тепер рахуємо в пам'яті й показуємо різницю:
+ * рішення лишається за людиною.
+ *
+ * Порівнюємо два числа, які видно на екрані: скільки слябів задіяно і
+ * скільки деталей не влізло.
+ */
+export function nestingSavings(
+  project: Project,
+  parts: DetailPart[],
+  mode: PackingMode = 'economy',
+): { currentSlabs: number; optimalSlabs: number; slabsSaved: number; currentUnplaced: number; optimalUnplaced: number } {
+  const usedSlabs = (placements: Placement[]) => new Set(placements.map((item) => item.slabId)).size;
+
+  const currentSlabs = usedSlabs(project.placements);
+  const currentUnplaced = (project.unplacedPartIds ?? []).length;
+
+  // Перескладання «з нуля»: ручні позиції свідомо ігноруємо — саме це і
+  // станеться, якщо натиснути кнопку автоматичного розкрою.
+  const fresh = autoPack({ ...project, placements: [] } as Project, parts, mode, false);
+  const optimalSlabs = usedSlabs(fresh.placements);
+
+  return {
+    currentSlabs,
+    optimalSlabs,
+    slabsSaved: currentSlabs - optimalSlabs,
+    currentUnplaced,
+    optimalUnplaced: fresh.unplacedPartIds.length,
+  };
+}
+
 export function detectConflicts(project: Project, parts: DetailPart[], placements: Placement[]): Placement[] {
   return placements.map((placement) => {
     const slab = project.slabs.find((s) => s.id === placement.slabId);
     const part = parts.find((p) => p.id === placement.partId);
     if (!slab || !part) return placement;
+    /* Попередження про товщину живе тут, а не в пакувальнику: сюди
+       проходить КОЖНЕ розміщення — авторозкрій, ручне перетягування,
+       відновлений збережений проєкт. Поле перераховується щоразу, тому
+       зміна товщини слеба одразу оновлює і попередження. */
+    const thicknessWarning = thicknessMismatch(part, slab);
     const polygon = polygonForPlacement(part, placement);
     const outOfBounds =
       polygon.some((point) => (
@@ -1828,7 +1956,7 @@ export function detectConflicts(project: Project, parts: DetailPart[], placement
       }
       return false;
     }) || slab.defects.some((defect) => polygonsOverlap(polygon, defectPolygon(defect)));
-    return { ...placement, conflict, outOfBounds };
+    return { ...placement, conflict, outOfBounds, thicknessWarning };
   });
 }
 
@@ -1898,4 +2026,4 @@ export function buildTextureLayout(placements: Placement[], parts: DetailPart[] 
   });
 
   return layouts;
-}
+}

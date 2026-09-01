@@ -1,13 +1,16 @@
 import {  useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
-import { referenceData, uid } from '../../domain/defaults';
+import { Loader2 , Plus, SquarePlus, FileUp, ClipboardList, StretchHorizontal, FileBox, AlertTriangle } from 'lucide-react';
+import { referenceData, uid, MATERIALS_IN_USE } from '../../domain/defaults';
 import { ChangeEvent, useEffect, useRef } from 'react';
 import type { BindingAnchor, Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, EdgeProfileType, MaterialType, SlabInstance, UiLanguage } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
+import { DEFAULT_MIN_SIDE_MM } from '../../domain/manufacturability';
 import { parseSketchupProduct, formatSketchupReport } from '../../utils/sketchupImport';
 import { getAllProjectDetails } from '../../store/projectHelpers';
 import { useUIStore } from '../../store/useStore';
+import { SlabCatalogModal, type SlabPick } from './SlabCatalogModal';
 import type { ApprovalImportItem, ApprovalImportPreview } from '../../utils/approvalImport';
 import {
   parseApprovalFile,
@@ -15,6 +18,9 @@ import {
   layoutItems,
 } from '../../utils/approvalImport';
 import { DEFAULT_EDGE_PROFILE } from '../../utils/edgeProfiles';
+import { applyUCutout } from '../../domain/uCutout';
+import type { UCutoutSpec } from '../../domain/uCutout';
+import { contourEdges, edgeNamedContour } from '../../domain/baseContour';
 import type {
   DxfPoint, DxfPreviewContour, DxfBindingSession,
   DxfBlockDraft, DxfModalResize, DxfPreviewDrag, DxfImportRole,
@@ -32,7 +38,7 @@ const rectDetailTemplateSrc = new URL('../../assets/rect-detail-template.svg', i
 const lDetailTemplateSrc = new URL('../../assets/l-detail-template.svg', import.meta.url).href;
 
 import type { ShapeKind, CircleSizeMode, DetailDraft } from '../forms/utils/draftHelpers';
-import { visibleDetailTypes, TYPE_COUNTERTOP,  TYPE_SINK, TYPE_SUPPORT, TYPE_METAL, SHAPE_RECT, SHAPE_L, SHAPE_U, SHAPE_CIRCLE,  baseDesigns, sinkDesigns, metalDesigns, allSides, curveSides,  createDraft, defaultsForKind,   draftFromDetail } from '../forms/utils/draftHelpers';
+import { visibleDetailTypes, TYPE_COUNTERTOP,  TYPE_SINK, TYPE_SUPPORT, TYPE_METAL, SHAPE_RECT, SHAPE_L, SHAPE_U, SHAPE_CIRCLE,  baseDesigns, visibleBaseDesigns, sinkDesigns, metalDesigns, allSides, curveSides,  createDraft, defaultsForKind,   draftFromDetail } from '../forms/utils/draftHelpers';
 
 
 function ImportedDetailPreview({ detail, linkedElements }: { detail: Detail; linkedElements: Detail[] }) {
@@ -53,7 +59,7 @@ function ImportedDetailPreview({ detail, linkedElements }: { detail: Detail; lin
           <strong>Прив'язані елементи</strong>
           {linkedElements.map((element) => (
             <span key={element.id}>
-              {element.importRole === 'fold' ? 'Підворот' : 'Потовщення'}: {element.label || 'DXF контур'}
+              {EDGE_KIND_LABEL[element.importRole === 'fold' ? 'fold' : 'thickening']}: {element.label || 'DXF контур'}
               {element.parentDetailSide ? `, сторона ${element.parentDetailSide}` : ''}
             </span>
           ))}
@@ -63,10 +69,11 @@ function ImportedDetailPreview({ detail, linkedElements }: { detail: Detail; lin
   );
 }
 
-export function designsForType(type: DetailType) {
+export function designsForType(type: DetailType, isAdminUnlocked = false, currentKind?: ShapeKind) {
   if (type === TYPE_SINK) return sinkDesigns;
   if (type === TYPE_METAL) return metalDesigns;
-  if (type === TYPE_COUNTERTOP) return baseDesigns;
+  // Стільниця: усі базові форми (коло й овал повернуті всім 01.09).
+  if (type === TYPE_COUNTERTOP) return visibleBaseDesigns(isAdminUnlocked, currentKind);
   return baseDesigns.filter((item) => item.kind === 'rect');
 }
 
@@ -74,7 +81,24 @@ export function designForKind(kind: ShapeKind) {
   return [...baseDesigns, ...sinkDesigns, ...metalDesigns].find((item) => item.kind === kind) ?? baseDesigns[0];
 }
 
-export function sideOptionsFor(kind: ShapeKind) {
+/**
+ * Сторони деталі — те, що видно в треях «Сторони» і «Кромки».
+ *
+ * ХВИЛЯ 4, крок 4.4 (FG-34): другий аргумент. Ніша ділить свою сторону на
+ * п'ять ділянок, і три з них — реальні торці, які цех обробляє й за які
+ * бере гроші. Поки список сторін залежав ЛИШЕ від `kind`, ці торці не
+ * існували для решти застосунку: ні кромки задати, ні панель повісити.
+ * Тому, коли деталь має нішу, імена беремо з її контуру.
+ */
+export function sideOptionsFor(kind: ShapeKind, detail?: { uCutout?: UCutoutSpec } & object) {
+  const niche = detail?.uCutout;
+  if (niche) {
+    // РЕМОНТ 19.08: сторони деталі з нішею читаються з її РЕАЛЬНОГО
+    // контуру (rect/Г/П), а не з прямокутника за габаритом.
+    const base = edgeNamedContour({ ...(detail as object), kind } as never);
+    const points = base ? applyUCutout(base, niche) : undefined;
+    if (points) return contourEdges(points).map((edge) => edge.name);
+  }
   if (kind === 'circle' || kind === 'ellipse') return curveSides;
   if (kind === 'u') return allSides;
   if (kind === 'l') return ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -117,8 +141,17 @@ import type { ApprovalJointToolMode, ApprovalJointHover } from '../forms/import/
 import {   ShapeIcon, Field } from '../forms/utils/sharedInputs';
 import { splitApprovalItemByJoint } from '../../engines/approvalSplit';
 import { ApprovalItemEditors } from '../forms/import/ApprovalItemEditors';
-export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
+import { EDGE_KIND_LABEL } from '../../domain/ids';
+/**
+ * compact — просунутий режим: панель стає вузькою колонкою значків.
+ * Кнопки ті самі, обробники ті самі (усі модалки та file-input-и живуть
+ * тут же) — міняється лише подача. Назва кожної дії — у підказці.
+ */
+export function FormsPanel({ activeTab, compact = false }: { activeTab?: 'details' | 'slabs'; compact?: boolean }) {
   const { addSlab, addDetail, addDetails, updateDetailRecord, updateAllowances, updateProjectHeader, project, editingDetailId, clearEditDetail } = useProjectStore();
+  /** FG-10 — поріг короткої сторони за матеріалом (налаштування застосунку). */
+  const minSideMm = useSettingsStore((s) => s.minSideMm);
+  const setMinSideMm = useSettingsStore((s) => s.setMinSideMm);
   // Частина інструментів прихована за супер-адміном (щит у шапці, PIN)
   const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
   const language = project.uiLanguage ?? 'uk';
@@ -189,16 +222,51 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   const [approvalJointDraft, setApprovalJointDraft] = useState<{ itemId: string; point: DxfPoint } | null>(null);
   const [approvalJointHover, setApprovalJointHover] = useState<ApprovalJointHover | null>(null);
   const [approvalJointNotice, setApprovalJointNotice] = useState('');
-  const [slab, setSlab] = useState({
-    width: 3200,
-    height: 1600,
-    thickness: 20,
-    material: referenceData.materials[0] as MaterialType,
-    decor: '',
-    comment: '',
-    minMargin: 10,
-    serialNumber: 'SL-1',
-  });
+  const [slabCatalogOpen, setSlabCatalogOpen] = useState(false);
+
+  /**
+   * Слеб із каталогу → екземпляри проєкту. Фото натуралки додається вручну.
+   *
+   * Кількість приходить із кроку підтвердження (для натуралки завжди 1).
+   * Нумерація йде від МАКСИМАЛЬНОГО зайнятого номера, а не від довжини
+   * масиву: по-перше, `project.slabs` не встигає оновитись між викликами
+   * в одному циклі, по-друге, після видалення слеба довжина повертається
+   * назад і номери починають повторюватись. Дірки в нумерації нормальні,
+   * два SL-1 у розкрої — ні: за серійним номером цех упізнає лист.
+   */
+  const addSlabFromCatalog = (pick: SlabPick) => {
+    const usedNumbers = project.slabs
+      .map((slab) => Number(/^SL-(\d+)$/.exec(slab.serialNumber)?.[1]))
+      .filter((value) => Number.isFinite(value));
+    const startFrom = usedNumbers.length ? Math.max(...usedNumbers) : 0;
+
+    for (let index = 0; index < Math.max(1, pick.quantity); index += 1) {
+      const item: SlabInstance = {
+        id: uid('slab'),
+        width: pick.width,
+        height: pick.height,
+        thickness: pick.thickness,
+        material: pick.material,
+        decor: pick.decor,
+        // Артикул — в СВОЄ поле. Коментар лишається вільною нотаткою
+        // менеджера: якби артикул жив у ньому, будь-яка правка тексту
+        // тихо рвала б зв'язок слебу з номенклатурою 1С.
+        article: pick.article,
+        manufacturer: pick.manufacturer,
+        finish: pick.finish,
+        comment: '',
+        minMargin: 10,
+        photo: pick.photo || undefined,
+        ...(pick.photoBacklit ? { photoBacklit: pick.photoBacklit } : {}),
+        ...(pick.customerOwn ? { customerOwn: true } : {}),
+        serialNumber: `SL-${startFrom + index + 1}`,
+        defects: [],
+        textureTransform: { scale: 1, offsetX: 0, offsetY: 0, rotation: 0, opacity: 0.85 },
+      };
+      addSlab(item);
+    }
+  };
+
   const [detail, setDetail] = useState<DetailDraft>(() => createDraft());
   const allDetails = getAllProjectDetails(project);
   const editingDetail = editingDetailId ? allDetails.find((item) => item.id === editingDetailId) : undefined;
@@ -243,7 +311,10 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   }, [dxfBlockEditorIds, visibleDxfPreview]);
   const dxfBlockEditorViewport = useMemo(() => dxfViewportForContours(dxfBlockEditorContours), [dxfBlockEditorContours]);
 
-  const designs = useMemo(() => designsForType(detail.type), [detail.type]);
+  const designs = useMemo(
+    () => designsForType(detail.type, isAdminUnlocked, detail.kind),
+    [detail.type, isAdminUnlocked, detail.kind],
+  );
   const currentDesign = designForKind(detail.kind);
   const sides = sideOptionsFor(detail.kind);
   const showEdges = supportsEdges(detail.type);
@@ -334,24 +405,6 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
     }
     return next;
   });
-
-  const addSlabClick = () => {
-    const item: SlabInstance = {
-      id: uid('slab'),
-      width: slab.width,
-      height: slab.height,
-      thickness: slab.thickness,
-      material: slab.material,
-      decor: slab.decor,
-      comment: slab.comment,
-      minMargin: slab.minMargin,
-      serialNumber: slab.serialNumber,
-      defects: [],
-      textureTransform: { scale: 1, offsetX: 0, offsetY: 0, rotation: 0, opacity: 0.85 },
-    };
-    addSlab(item);
-    setSlab((prev) => ({ ...prev, serialNumber: `SL-${Number(prev.serialNumber.match(/\d+/)?.[0] ?? '1') + 1}` }));
-  };
 
   const validateDetail = () => {
     if (detail.kind === 'u' && detail.innerCutOffset + detail.innerCutWidth > detail.width) {
@@ -685,14 +738,8 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
       orderNumber: approvalPreview.orderNumber,
       customer: approvalPreview.customer,
     });
-    if (approvalPreview.material) {
-      setSlab((current) => ({
-        ...current,
-        material: approvalPreview.material as MaterialType,
-        thickness: approvalPreview.thickness || current.thickness,
-        decor: approvalPreview.decor || current.decor,
-      }));
-    }
+    // Матеріал і декор із бланку більше нікуди не кладемо: ручної форми
+    // слебу немає, а сам слеб береться з каталогу за артикулом.
 
     // P1.2 — розбиття позначених деталей по стику (no-op, якщо нічого не позначено)
     const importedItems = importableItems.flatMap((item) => (
@@ -761,6 +808,8 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
           outerHeight: detail.outerHeight,
           innerHorizontal: detail.innerHorizontal,
           innerVertical: detail.innerVertical,
+          // Ліва Г — та сама геометрія рушія, інша орієнтація вирізу
+          cornerOrientation: detail.mirrorL ? 'BL' as const : 'BR' as const,
           wholeDetail: detail.wholeDetail && !detail.jointDirection,
           jointDirection: detail.jointDirection,
         }
@@ -802,7 +851,7 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   };
 
   const setType = (type: DetailType) => {
-    const nextDesigns = designsForType(type);
+    const nextDesigns = designsForType(type, isAdminUnlocked, detail.kind);
     setDetail((prev) => ({
       ...prev,
       type,
@@ -927,14 +976,6 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
         orderNumber: approvalContext.orderNumber,
         customer: approvalContext.customer,
       });
-      if (approvalContext.material) {
-        setSlab((current) => ({
-          ...current,
-          material: approvalContext.material as MaterialType,
-          thickness: approvalContext.thickness || current.thickness,
-          decor: approvalContext.decor || current.decor,
-        }));
-      }
     }
     const approvalItemsById = new Map(approvalContext?.items.map((item) => [item.id, item]) ?? []);
     const importedIds = new Map(visibleDxfPreview.map((contour) => [contour.id, uid('detail')]));
@@ -1468,54 +1509,68 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   return (
     <section className="panel forms-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         {(!activeTab || activeTab === 'slabs') && (
-          <div className="form-zone" style={{ margin: 0 }}>
-            <h3>Додати слеб</h3>
-            <div className="preset-row">
-              {referenceData.slabSizes.map((s) => (
-                <button key={`${s.width}-${s.height}`} type="button" onClick={() => setSlab((p) => ({ ...p, width: s.width, height: s.height }))}>{s.width}×{s.height}</button>
-              ))}
-            </div>
-            <div className="form-grid compact">
-              <Field label="Серійний номер"><input value={slab.serialNumber} onChange={(e) => setSlab({ ...slab, serialNumber: e.target.value })} /></Field>
-              <Field label="Матеріал"><select value={slab.material} onChange={(e) => setSlab({ ...slab, material: e.target.value as MaterialType })}>{referenceData.materials.map((m) => <option key={m} value={m}>{ui(m)}</option>)}</select></Field>
-              <Field label="Ширина"><input type="number" value={slab.width} onChange={(e) => setSlab({ ...slab, width: Number(e.target.value) })} /></Field>
-              <Field label="Висота"><input type="number" value={slab.height} onChange={(e) => setSlab({ ...slab, height: Number(e.target.value) })} /></Field>
-              <Field label="Товщина"><input type="number" value={slab.thickness} onChange={(e) => setSlab({ ...slab, thickness: Number(e.target.value) })} /></Field>
-              <Field label="Мін. відступ"><input type="number" value={slab.minMargin} onChange={(e) => setSlab({ ...slab, minMargin: Number(e.target.value) })} /></Field>
-              <Field label="Декор"><input value={slab.decor} onChange={(e) => setSlab({ ...slab, decor: e.target.value })} /></Field>
-              <Field label="Коментар"><input value={slab.comment} onChange={(e) => setSlab({ ...slab, comment: e.target.value })} /></Field>
-            </div>
-            <button type="button" onClick={addSlabClick}>Додати слеб</button>
-          </div>
+          /* Ні рамки, ні заголовка «Слеби»: вкладка вже називається так, і
+             підпис над єдиною кнопкою нічого не додавав. Кнопка стоїть
+             сама і виглядає як «Додати виріб» — це головна дія вкладки.
+             Ручна форма замінена каталогом (інваріант 2.48: рівно один
+             рядок переходу), ручного додавання немає з 25.08.2026 — слеб
+             має нести артикул, інакше за ним нема чого спитати ціну. */
+          <button
+            type="button"
+            className="primary-action detail-open-button"
+            title="Додати слеб із каталогу"
+            style={{ background: '#28a745', borderColor: '#28a745', width: compact ? undefined : '100%' }}
+            onClick={() => setSlabCatalogOpen(true)}
+          >
+            {compact ? <Plus className="w-4 h-4" /> : 'Додати слеб'}
+          </button>
         )}
+        <SlabCatalogModal
+          open={slabCatalogOpen}
+          onClose={() => setSlabCatalogOpen(false)}
+          onPick={addSlabFromCatalog}
+          hasContragent={Boolean(project.quoteCalc?.contragentId)}
+          /* Контрагент прорахунку — за ним 1С накладає знижку на ціну
+             листа. Без нього ціна теж питається, але загальним прайсом. */
+          contragentId={project.quoteCalc?.contragentId}
+          /* Матеріал і виробник замикаються на першому слебі проєкту:
+             у замовлення береться один матеріал і один виробник. */
+          lockMaterial={project.slabs[0]?.material}
+          lockManufacturer={project.slabs[0]?.manufacturer}
+        />
         {(!activeTab || activeTab === 'details') && (
           <div className="detail-launcher form-zone" style={{ margin: 0 }}>
-            <h3>Деталі</h3>
+            {!compact && <h3>Деталі</h3>}
             {/* «Додати деталь» (сира деталь повз редактор виробу) — інструмент
                 супер-адміна; звичайний менеджер працює через «Додати виріб» */}
             {isAdminUnlocked && (
-              <button type="button" className="primary-action detail-open-button" onClick={() => { clearEditDetail(); setDetail(createDraft()); setDetailOpen(true); }}>Додати деталь</button>
+              <button type="button" className="primary-action detail-open-button" title="Додати деталь (супер-адмін)" onClick={() => { clearEditDetail(); setDetail(createDraft()); setDetailOpen(true); }}>{compact ? <SquarePlus className="w-4 h-4" /> : 'Додати деталь'}</button>
             )}
             <button
               type="button"
               className="primary-action detail-open-button"
               style={{ marginTop: '8px', background: '#28a745', borderColor: '#28a745' }}
               onClick={() => { useUIStore.getState().setProductEditorSession({ subDetails: {}, activeDetailId: null } as any); }}
+              title="Додати виріб"
             >
-              Додати виріб
+              {compact ? <Plus className="w-4 h-4" /> : 'Додати виріб'}
             </button>
-            <button type="button" onClick={() => dxfInputRef.current?.click()}>Імпортувати DXF</button>
-            <button type="button" disabled={isImporting} onClick={() => approvalInputRef.current?.click()}>
-              {isImporting ? 'Обробка бланку (OCR)...' : 'Імпортувати бланк погодження'}
+            <button type="button" title="Імпортувати DXF" onClick={() => dxfInputRef.current?.click()}>{compact ? <FileUp className="w-4 h-4" /> : 'Імпортувати DXF'}</button>
+            <button type="button" title="Імпортувати бланк погодження" disabled={isImporting} onClick={() => approvalInputRef.current?.click()}>
+              {compact
+                ? <ClipboardList className={`w-4 h-4 ${isImporting ? 'animate-pulse' : ''}`} />
+                : (isImporting ? 'Обробка бланку (OCR)...' : 'Імпортувати бланк погодження')}
             </button>
             {isAdminUnlocked && (
-              <button type="button" onClick={() => sketchupInputRef.current?.click()}>Імпортувати зі SketchUp</button>
+              <button type="button" title="Імпортувати зі SketchUp" onClick={() => sketchupInputRef.current?.click()}>{compact ? <FileBox className="w-4 h-4" /> : 'Імпортувати зі SketchUp'}</button>
             )}
-            <button type="button" onClick={() => setAllowancesOpen(true)}>Припуски</button>
+            <button type="button" title="Припуски" onClick={() => setAllowancesOpen(true)}>{compact ? <StretchHorizontal className="w-4 h-4" /> : 'Припуски'}</button>
             <input ref={dxfInputRef} type="file" accept=".dxf,.dwg" hidden onChange={onDxfFile} />
             <input ref={sketchupInputRef} type="file" accept=".json" hidden onChange={onSketchupFile} />
             <input ref={approvalInputRef} type="file" accept=".pdf,.xlsx,.xls,.docx" hidden onChange={onApprovalFile} />
-            {!detailOpen && error && <div className="error-box" style={{ marginTop: '1rem' }}>{error}</div>}
+            {!detailOpen && error && (compact
+              ? <span title={error} className="flex justify-center text-red-500 py-1"><AlertTriangle className="w-4 h-4" /></span>
+              : <div className="error-box" style={{ marginTop: '1rem' }}>{error}</div>)}
           </div>
         )}
 
@@ -1545,6 +1600,33 @@ export function FormsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
                 <Field label="Великі внутрішні вирізи понад 100 мм"><input type="number" value={project.allowances.elementLargeCutout} onChange={(event) => updateAllowances({ elementLargeCutout: Number(event.target.value) })} /></Field>
               </section>
             </div>
+            <section className="pdf-section allowance-spacing-section">
+              {/* FG-10. Поріг короткої сторони. Живе НЕ в припусках проєкту, а в
+                  налаштуваннях застосунку: це властивість матеріалу і верстата,
+                  однакова для всіх замовлень. Порожнє поле = 150 мм за
+                  замовчуванням, 0 = не попереджати взагалі. */}
+              <h3>Мінімальна сторона деталі, мм</h3>
+              <p className="pdf-hint">
+                Попередження, а не заборона: деталь усе одно можна зберегти.
+                Порожньо — 150 мм. Нуль — не попереджати.
+              </p>
+              <div className="allowances-grid">
+                {MATERIALS_IN_USE.map((material) => (
+                  <Field key={material} label={material}>
+                    <input
+                      type="number"
+                      min={0}
+                      placeholder={String(DEFAULT_MIN_SIDE_MM)}
+                      value={minSideMm[material] ?? ''}
+                      onChange={(event) => setMinSideMm(
+                        material,
+                        event.target.value === '' ? undefined : Number(event.target.value),
+                      )}
+                    />
+                  </Field>
+                ))}
+              </div>
+            </section>
             <section className="pdf-section allowance-spacing-section">
               <h3>Пропил між деталями</h3>
               <Field label="Відстань між деталями та елементами, мм"><input type="number" value={project.allowances.interPartSpacing} onChange={(event) => updateAllowances({ interPartSpacing: Number(event.target.value) })} /></Field>
@@ -2261,4 +2343,4 @@ export function DesignerCanvas({ detail, updateDetail, language, onCornerClick, 
 
 function sideClass(side: string, className: string, activeSides: Set<string>) {
   return `${className}${activeSides.has(side) ? ' active' : ''}`;
-}
+}

@@ -2,6 +2,8 @@ import type { DetailPart, Placement, Project } from '../domain/types';
 import { DEFAULT_ALLOWANCES, defaultCommercialQuoteSettings, mergeBuiltinEdgeProfiles, referenceData } from '../domain/defaults';
 import { explodeDetails } from '../engines/geometry';
 import { detectConflicts } from '../engines/packing';
+import { EDGE_KIND_LABEL, parseAdditionSlot, toSlot } from '../domain/ids';
+import { migrateProject } from '../domain/projectMigrations';
 
 /**
  * Нога (опора) клеїться під 45° — «водоспад». Старі проєкти створені до
@@ -26,10 +28,49 @@ function fixLegJoints(products: Project['products']): Project['products'] {
   }));
 }
 
-export function normalizeProject(project: Project): Project {
+/**
+ * МІГРАЦІЯ НАЗВ (10.08): «Потовщення» і «Підворот» помінялись місцями.
+ *
+ * Внутрішні коди (`fold_`, `thickening_`) лишились ті самі, а от підпис
+ * `type` зберігається В ПРОЄКТІ — і в старих файлах він старий. Без
+ * міграції той самий елемент називався б у дереві одним словом, а в
+ * кресленні (де назва рахується заново з коду слота) — іншим.
+ *
+ * Джерело істини — слот елемента, не збережений рядок: слот не мінявся
+ * ніколи, тому переіменування ідемпотентне і на нових проєктах нічого
+ * не робить.
+ */
+function retypeEdgeAdditions(products: Project['products']): Project['products'] {
+  if (!products?.length) return products ?? [];
+  const fixElement = (element: any): any => {
+    const parsed = parseAdditionSlot(toSlot(element?.id));
+    const label = parsed.kind === 'fold' || parsed.kind === 'thickening'
+      ? EDGE_KIND_LABEL[parsed.kind]
+      : undefined;
+    return {
+      ...element,
+      ...(label && element.type !== label ? { type: label } : {}),
+      ...(label && element.baseDefinition && element.baseDefinition.type !== label
+        ? { baseDefinition: { ...element.baseDefinition, type: label } }
+        : {}),
+      additions: (element.additions ?? []).map(fixElement),
+    };
+  };
+  return products.map((product) => ({
+    ...product,
+    elements: (product.elements ?? []).map(fixElement),
+  }));
+}
+
+export function normalizeProject(rawProject: Project): Project {
+  // Версійовані міграції формату — ПЕРШИМИ, до будь-якої нормалізації:
+  // вони мають бачити файл таким, яким його записала стара програма.
+  // Анонімні міграції нижче (ноги, підвороти) лишаються навмисне — див.
+  // коментар у domain/projectMigrations.ts.
+  const project = migrateProject(rawProject);
   return {
     ...project,
-    products: fixLegJoints(project.products),
+    products: retypeEdgeAdditions(fixLegJoints(project.products)),
     // Довідник профілів їде разом із проєктом — доливаємо нові вбудовані,
     // інакше старі проєкти ніколи не побачать AR12/D20/ZS20 у випадачках.
     referenceData: {
@@ -143,7 +184,7 @@ export function genitiveLabel(label: string) {
 
 export function partNameForLabel(part: DetailPart, label: string) {
   if (part.isMain || !part.edgeKind || !part.edgeSide) return label;
-  const prefix = part.edgeKind === 'fold' ? 'Підворот' : 'Потовщення';
+  const prefix = EDGE_KIND_LABEL[part.edgeKind === 'fold' ? 'fold' : 'thickening'];
   return `${prefix} ${genitiveLabel(label)} сторона ${part.edgeSide}`;
 }
 
@@ -250,50 +291,22 @@ export function getAllProjectDetails(project: Project): Detail[] {
   return [...legacyDetails, ...productDetails];
 }
 
-export function explodeDetailsWrapped(details: any[], allowances: any = { cut: 5, edge: 2 }) {
-  const detailsForNesting = details.map(d => {
-    if (d.id && d.id.includes('prod_')) {
-      return { 
-        ...d, 
-        fold: d.fold ? { ...d.fold, enabled: false } : undefined, 
-        thickening: d.thickening ? { ...d.thickening, enabled: false } : undefined 
-      };
-    }
-    return d;
-  });
-
-  const parts = explodeDetails(detailsForNesting, allowances);
-  
-  const derivedJoints: any[] = [];
-  
-  details.forEach(detail => {
-    if (detail.shape === 'Г-подібна') {
-      const g = detail.geometry as any;
-      if (!g.wholeDetail) {
-        const nominalOW = g.outerWidth ?? 1800;
-        const nominalOH = g.outerHeight ?? 1200;
-        const ih = Math.min(g.innerHorizontal ?? 900, nominalOW - 20);
-        const iv = Math.min(g.innerVertical ?? 500, nominalOH - 20);
-        
-        let length = 0;
-        if (g.jointDirection === 'vertical') {
-          length = iv; 
-        } else {
-          length = ih; 
-        }
-        
-        derivedJoints.push({
-          id: `joint_derived_${detail.id}`,
-          origin: 'derived',
-          a: { elementPath: detail.id, sideId: 'derived_A', from: 0, to: length },
-          b: { elementPath: detail.id, sideId: 'derived_B', from: 0, to: length },
-          type: 'butt',
-          dominant: 'a',
-          textureContinuity: true
-        });
-      }
-    }
-  });
-
-  return { parts, derivedJoints };
-}
+/*
+ * ТУТ БУВ `explodeDetailsWrapped` — обгортка, яка мала «дорахувати» шви
+ * Г-форми і віддати їх кошторису (SC-02). Її прибрано свідомо, а не за
+ * прибирання заради прибирання:
+ *
+ *   1. Її не викликав НІХТО — нуль викликів у всій кодовій базі. Тобто
+ *      діагноз «розкрій кличе сиру функцію замість обгортки» був неточний:
+ *      обгортку не забули підключити, її просто ніколи не було в роботі.
+ *   2. Вона вигадувала сторони `derived_A`/`derived_B`, яких не існує в
+ *      жодній іншій частині програми — такий стик неможливо підсвітити на
+ *      карті крою і неможливо зіставити з деталлю.
+ *   3. Довжина шва в ній була помилковою: для вертикального стику вона
+ *      брала `innerVertical`, тоді як шов іде по `outerHeight - innerVertical`.
+ *      Якби її колись підключили, цех отримав би склейку не тієї довжини.
+ *
+ * Замість неї шов тепер приходить із самого різу: рушій кладе фактичну
+ * довжину хорди в `DetailPart.jointSeams`, а `productionFacts` читає її
+ * звідти. Джерело правди одне — те, що реально порізали.
+ */

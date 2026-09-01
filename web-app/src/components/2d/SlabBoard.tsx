@@ -1,12 +1,13 @@
 import type { ChangeEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { referenceData, uid } from '../../domain/defaults';
-import { Loader2, Play, ChevronDown } from 'lucide-react';
-import type { CutAllowances, DetailPart, DefectZone, EdgeProfileSelection, ManualDimension, MaterialType, Placement, Point, SlabInstance, UiLanguage } from '../../domain/types';
+import { uid } from '../../domain/defaults';
+import { Loader2, Play, ChevronDown, Lock, LockOpen, PenTool, Camera, Palette, Ruler, FlipHorizontal2, ZoomIn, Eraser, Trash2, Coins, Gauge, Wallpaper, ClipboardCheck } from 'lucide-react';
+import type { CutAllowances, DetailPart, DefectZone, EdgeProfileSelection, ManualDimension, Placement, Point, SlabInstance, UiLanguage } from '../../domain/types';
 import { t, translateStaticUiText } from '../../i18n';
 import { normalizeRotation, placementPolygon, pointString, polygonBounds, rotatedLocalPoints, rotatedPoints, rotatedSize, translatePoints } from '../../lib/project';
 import { useProjectStore } from '../../store/useProjectStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
+import { nestingSavings } from '../../engines/packing';
 import { useUIStore } from '../../store/useStore';
 import { edgeMarkersForPart } from '../../utils/edgeProfiles';
 import { readFileAsDataUrl } from '../../utils/file';
@@ -21,15 +22,33 @@ import {
   type CanvasDrag, type SelectionBox, type CanvasContextMenu, type AngleEditorState, type SlabEditorDraft,
 } from './canvasUtils';
 import { SlabLayer } from "./board/SlabLayer";
+import { SlabHeaderTab, SlabTabShadow } from "./board/SlabHeaderTab";
+import { useSlabOutlines } from "./board/useSlabOutlines";
+import { useAutoCornerDefects } from "./board/useAutoCornerDefects";
+import { AUTO_DEFECT_PREFIX } from "../../engines/slabOutline";
 import { PartShape } from "./board/PartShape";
 import { PlacementStateBadges } from "./board/PlacementStateBadges";
 import { EdgeProfileMarks } from "./board/EdgeProfileMarks";
+import { DrainGrateMarks } from "./board/DrainGrateMarks";
 import { FactHighlight } from "./board/FactHighlight";
 import { SelectionRect } from "./board/SelectionRect";
 import { GroupDragPreview, PlacementDragGhost } from "./board/DragPreviews";
 import { ManualDimensions, SlabDimensionHints, SlabMagnifierWindow } from "./board/BoardOverlays";
 
-export function SlabBoard() {
+/**
+ * Запас ліворуч від колонки буфера (28.08): зона «поверни в нерозміщені»
+ * починається трохи раніше за саму панель, щоб не вимагати влучання
+ * піксель-у-піксель, поки деталь тягнуть управо.
+ */
+const BUFFER_REVEAL_MARGIN = 48;
+
+/**
+ * compact — режим «Спліту» (26.08): панель удвічі вужча, і два ряди
+ * текстових кнопок збивались у кашу з переносами. У компакті кожна
+ * кнопка — значок; підпис живе в title: навів — почекав — прочитав.
+ * Логіка кнопок та сама, міняється лише подача.
+ */
+export function SlabBoard({ compact = false }: { compact?: boolean } = {}) {
   const {
     project,
     parts,
@@ -52,6 +71,7 @@ export function SlabBoard() {
     runPacking,
     packingMode,
     setPackingMode,
+    setNestingLocked,
     addDetail,
     startEditDetail,
     deleteDetail,
@@ -99,13 +119,30 @@ export function SlabBoard() {
   const [manualSlabHeight, setManualSlabHeight] = useState<number | null>(null);
   const [defaultSlabHeight, setDefaultSlabHeight] = useState<number | null>(null);
   const [slabResizeDrag, setSlabResizeDrag] = useState<{ startY: number; startHeight: number } | null>(null);
+  /* Фільтр слябів на аркуші: коли їх багато, у списку губишся.
+     Фільтрується тільки показ — самі сляби й розкладка не змінюються. */
+  const [slabFilterDecor, setSlabFilterDecor] = useState('');
+  const [slabFilterThickness, setSlabFilterThickness] = useState('');
+  const visibleSlabs = useMemo(() => project.slabs.filter((s) => (
+    (!slabFilterDecor || (s.decor || '—') === slabFilterDecor)
+    && (!slabFilterThickness || String(s.thickness) === slabFilterThickness)
+  )), [project.slabs, slabFilterDecor, slabFilterThickness]);
+  const slabDecors = useMemo(
+    () => [...new Set(project.slabs.map((s) => s.decor || '—'))],
+    [project.slabs],
+  );
+  const slabThicknesses = useMemo(
+    () => [...new Set(project.slabs.map((s) => s.thickness))].sort((a, b) => a - b),
+    [project.slabs],
+  );
+
   const maxW = Math.max(...project.slabs.map((s) => s.width), 3200);
   const scale = Math.min(1080 / maxW, 0.34);
 
   const slabOffsets = useMemo(() => {
     let y = 20;
-    return project.slabs.map((slab) => { const v = { slabId: slab.id, x: 36, y }; y += slab.height * scale + 54; return v; });
-  }, [project.slabs, scale]);
+    return visibleSlabs.map((slab) => { const v = { slabId: slab.id, x: 36, y }; y += slab.height * scale + 54; return v; });
+  }, [visibleSlabs, scale]);
   const canvasHeight = useMemo(() => {
     if (!project.slabs.length) return 320;
     const last = project.slabs[project.slabs.length - 1];
@@ -129,11 +166,7 @@ export function SlabBoard() {
     setSlabEditor({
       id: slabId,
       draft: {
-        width: slab.width,
-        height: slab.height,
-        thickness: slab.thickness,
-        material: slab.material,
-        decor: slab.decor,
+        halfSheet: Boolean(slab.halfSheet),
         comment: slab.comment,
         minMargin: slab.minMargin,
         serialNumber: slab.serialNumber,
@@ -478,15 +511,27 @@ export function SlabBoard() {
     });
   }, [clearAngleSnap, clientToSlabPoint, selectedPlacementIds, setSelectedSlabId]);
 
-  const isCursorAboveTopSlab = useCallback((clientX: number, clientY: number) => {
-    const firstSlab = project.slabs[0];
-    const firstOff = firstSlab ? slabOffsets.find((item) => item.slabId === firstSlab.id) : undefined;
-    const point = clientToSvgPoint(clientX, clientY);
-    if (!firstSlab || !firstOff || !point) return false;
-    const localX = (point.x - firstOff.x) / scale;
-    const localY = (point.y - firstOff.y) / scale;
-    return localY < 0 && localX >= -firstSlab.minMargin * 4 && localX <= firstSlab.width + firstSlab.minMargin * 4;
-  }, [clientToSvgPoint, project.slabs, scale, slabOffsets]);
+  /**
+   * Курсор у зоні повернення в буфер.
+   *
+   * До 28.08 зоною була смуга НАД верхнім слебом — буфер тоді лежав
+   * угорі. Після переїзду буфера в праву колонку жест змінився: деталь
+   * тягнуть УПРАВО, тому зона рахується від самої панелі.
+   *
+   * Основний шлях — прямокутник панелі в DOM із запасом ліворуч: він
+   * правильний і коли колонка розгорнута, і коли згорнута в рейку.
+   * Запасний — географія дошки: коли буфер порожній, панелі в DOM ще
+   * немає, а кинути деталь у неї людина вже мусить мати змогу.
+   */
+  const isCursorInBufferZone = useCallback((clientX: number, clientY: number) => {
+    const panel = document.querySelector('.unplaced-panel')?.getBoundingClientRect();
+    if (panel) {
+      return clientY >= panel.top && clientY <= panel.bottom && clientX >= panel.left - BUFFER_REVEAL_MARGIN;
+    }
+    const board = svgRef.current?.getBoundingClientRect();
+    if (!board) return false;
+    return clientX >= board.right - BUFFER_REVEAL_MARGIN && clientY >= board.top && clientY <= board.bottom;
+  }, []);
 
   useEffect(() => {
     if (!selectedPlacementIds.length) return undefined;
@@ -707,7 +752,11 @@ export function SlabBoard() {
           clearAngleSnap();
         }
 
-        if (part && isCursorAboveTopSlab(event.clientX, event.clientY)) {
+        /* Буфер тепер справа (28.08): зона підсвічується, щойно деталь
+           притягли до правого краю. Затримка коротка — це захист від
+           блимання при прольоті повз, а не «потримай і почекай»: жест
+           «тягну вправо» і так свідомий. */
+        if (part && isCursorInBufferZone(event.clientX, event.clientY)) {
           const anchor = unplacedRevealPoint.current;
           const moved = anchor ? Math.hypot(anchor.x - event.clientX, anchor.y - event.clientY) : Infinity;
           if (!anchor || moved > 8) {
@@ -715,7 +764,7 @@ export function SlabBoard() {
             unplacedRevealPoint.current = { x: event.clientX, y: event.clientY };
             unplacedRevealTimer.current = window.setTimeout(() => {
               showUnplacedDropZone();
-            }, 700);
+            }, 250);
           }
         } else {
           clearUnplacedReveal();
@@ -800,7 +849,7 @@ export function SlabBoard() {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [armAngleSnap, clearAngleSnap, clearPlacementDrag, clearUnplacedReveal, clientToSvgPoint, drag, findSlabAtClientPoint, hideUnplacedDropZone, isCursorAboveTopSlab, movePlacement, movePlacements, parts, placementClientPoint, previewTextureSource, project.placements, scale, showUnplacedDropZone, slabOffsets, unplacePart, updateDefect]);
+  }, [armAngleSnap, clearAngleSnap, clearPlacementDrag, clearUnplacedReveal, clientToSvgPoint, drag, findSlabAtClientPoint, hideUnplacedDropZone, isCursorInBufferZone, movePlacement, movePlacements, parts, placementClientPoint, previewTextureSource, project.placements, scale, showUnplacedDropZone, slabOffsets, unplacePart, updateDefect]);
 
   const contextPlacement = contextMenu?.kind === 'part'
     ? project.placements.find((item) => item.id === contextMenu.placementId)
@@ -821,55 +870,117 @@ export function SlabBoard() {
   const language = project.uiLanguage ?? 'uk';
   const ui = (value: string) => translateStaticUiText(language, value);
   const textureSelectionEnabled = project.textureSelectionEnabled;
+  /** Крок 3.4 — дозвіл на дзеркальні деталі. Живе у проєкті, за замовчуванням вимкнено. */
+  const allowMirroring = Boolean(project.allowMirroring);
   const updateProjectHeader = useProjectStore((s) => s.updateProjectHeader);
+  /** FG-32 — чи зафіксована розкладка. Живе у проєкті, тож переживає перезавантаження. */
+  const nestingLocked = Boolean(project.nestingLocked);
+  /** Крок 5.4 — результат порівняння «як зараз» vs «якби переклали». */
+  const [nestingCheck, setNestingCheck] = useState<ReturnType<typeof nestingSavings> | null>(null);
+
+  /**
+   * Контури натуральних слебів із фото: нерівна кромка і відкушені кути.
+   * Для рівних матеріалів мапа порожня і дошка малюється як завжди.
+   */
+  const slabOutlines = useSlabOutlines(project.slabs);
+  // Зрізані кути одразу стають дефектами — щоб рушій не клав деталі в порожнечу
+  useAutoCornerDefects(project, slabOutlines, updateSlab);
 
   return (
     <section className="panel canvas-panel">
+      {/* ОДИН ПОВЗУНОК НА ЕКРАН (27.08). Кнопки й фільтр зібрані в
+          липку шапку: зона слебів більше не має власної прокрутки,
+          натомість прокручується вся робоча область — а шапка при
+          цьому лишається на місці. Раніше повзунків було два поруч,
+          і зовнішній тягнув угору разом зі слебами й самі кнопки. */}
+      <div className="slab-board-head">
       <div className="toolbar flex items-center w-full">
-        <div className="flex flex-wrap gap-4 items-center flex-1">
+        <div className={`flex flex-wrap ${compact ? 'gap-2' : 'gap-4'} items-center flex-1`}>
           <div className="segmented">
-            <button className={viewMode === 'technical' ? 'active' : ''} onClick={() => setViewMode('technical')}>{t(language, 'technical')}</button>
-            <button className={viewMode === 'photo' ? 'active' : ''} onClick={() => setViewMode('photo')}>{t(language, 'photoSurface')}</button>
-            <button className={viewMode === 'texture' ? 'active' : ''} onClick={() => setViewMode('texture')}>{t(language, 'textureMode')}</button>
-            <button className={showDimensions ? 'active' : ''} onClick={() => setShowDimensions((value) => !value)}>{t(language, 'dimensions')}</button>
+            <button className={viewMode === 'technical' ? 'active' : ''} title={t(language, 'technical')} onClick={() => setViewMode('technical')}>{compact ? <PenTool className="w-4 h-4" /> : t(language, 'technical')}</button>
+            <button className={viewMode === 'photo' ? 'active' : ''} title={t(language, 'photoSurface')} onClick={() => setViewMode('photo')}>{compact ? <Camera className="w-4 h-4" /> : t(language, 'photoSurface')}</button>
+            <button className={viewMode === 'texture' ? 'active' : ''} title={t(language, 'textureMode')} onClick={() => setViewMode('texture')}>{compact ? <Palette className="w-4 h-4" /> : t(language, 'textureMode')}</button>
+            <button className={showDimensions ? 'active' : ''} title={t(language, 'dimensions')} onClick={() => setShowDimensions((value) => !value)}>{compact ? <Ruler className="w-4 h-4" /> : t(language, 'dimensions')}</button>
           </div>
 
           <div className="segmented">
-            <button className={textureSelectionEnabled ? 'active' : ''} onClick={() => updateProjectHeader({ textureSelectionEnabled: !textureSelectionEnabled })}>{ui('Підбір текстури')}</button>
-            <button className={magnifierOpen ? 'active' : ''} onClick={() => setMagnifierOpen((value) => !value)}>{t(language, 'magnifier')}</button>
+            {/* Кнопки «Підбір текстури» тут більше немає (прибрана 26.08):
+                підбір живе у ВЕРХНІЙ вкладці «Підбір текстури», і вмикається
+                звідти. Дублювання перемикача на дошці плутало — здавалось,
+                що це два різні режими. Прапорець textureSelectionEnabled
+                лишився: його читають прорахунок (послуга «підбір текстури»),
+                PDF і заборона дзеркалення нижче. */}
+            {/* Хвиля 3, крок 3.4 — дзеркалення деталей у розкрої. Вимкнене за
+                замовчуванням: на камені з напрямком малюнка дзеркальна деталь
+                приїде «в інший бік», і цього не видно на технічній схемі.
+                Прикладається на наступному автоматичному розкрої. */}
+            <button
+              className={allowMirroring ? 'active' : ''}
+              disabled={textureSelectionEnabled}
+              title={textureSelectionEnabled
+                ? 'Недоступно, поки увімкнено підбір текстури: дзеркальна деталь ламає підібраний малюнок.'
+                : (allowMirroring
+                  ? 'Дзеркалення увімкнено: автоматичний розкрій може перевертати деталі, щоб щільніше вкластись. Деталі з групою текстури не дзеркаляться ніколи. Прикладеться на наступному розкрої.'
+                  : 'Дозволити дзеркалення деталей у автоматичному розкрої (щільніша розкладка). Увага: на матеріалі з напрямком малюнка дзеркальна деталь буде «в інший бік».')}
+              onClick={() => updateProjectHeader({ allowMirroring: !allowMirroring })}
+            >
+              {compact ? <FlipHorizontal2 className="w-4 h-4" /> : ui('Дзеркалення')}
+            </button>
+            <button className={magnifierOpen ? 'active' : ''} title={t(language, 'magnifier')} onClick={() => setMagnifierOpen((value) => !value)}>{compact ? <ZoomIn className="w-4 h-4" /> : t(language, 'magnifier')}</button>
           </div>
 
           <div className="segmented">
             <button
               disabled={!activeSlabId || !activeSlabManualDimensionCount}
+              title={t(language, 'clearManualDimensions')}
               onClick={() => {
                 if (!activeSlabId) return;
                 clearManualDimensionsForSlab(activeSlabId);
                 setSelectedManualDimensionId(undefined);
               }}
             >
-              {t(language, 'clearManualDimensions')}
+              {compact ? <Eraser className="w-4 h-4" /> : t(language, 'clearManualDimensions')}
             </button>
             <button
               disabled={!selectedManualDimensionId}
+              title={t(language, 'deleteManualDimension')}
               onClick={() => {
                 if (!selectedManualDimensionId) return;
                 deleteManualDimension(selectedManualDimensionId);
                 setSelectedManualDimensionId(undefined);
               }}
             >
-              {t(language, 'deleteManualDimension')}
+              {compact ? <Trash2 className="w-4 h-4" /> : t(language, 'deleteManualDimension')}
             </button>
           </div>
         </div>
 
-        <div className="flex items-center ml-4">
+        <div className="flex items-center ml-4 gap-2">
+          {/* FG-32 — замок розкладки. Стоїть саме тут, впритул до кнопок
+              автоматичного розкрою: це та сама пара дій, і видно, чому вони
+              погасли. Значок без підпису, пояснення — у підказці. */}
+          <button
+            type="button"
+            aria-pressed={nestingLocked}
+            onClick={() => setNestingLocked(!nestingLocked)}
+            title={nestingLocked
+              ? 'Розкрій заблоковано: правки виробу більше не перескладають розкладку і не збивають підбір текстури. Нові деталі чекають у буфері нерозміщених. Натисніть, щоб розблокувати.'
+              : 'Заблокувати розкрій: зафіксувати поточну розкладку і підбір текстури, щоб правки виробу їх не збивали.'}
+            className={`flex items-center justify-center w-8 h-8 rounded-md border transition-colors ${
+              nestingLocked
+                ? 'bg-amber-100 border-amber-400 text-amber-700 hover:bg-amber-200'
+                : 'bg-white border-[#c6d3dd] text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+            }`}
+          >
+            {nestingLocked ? <Lock className="w-4 h-4" /> : <LockOpen className="w-4 h-4" />}
+          </button>
           <div className="segmented">
-            <button 
-              className={packingMode === 'economy' ? 'active' : ''} 
-              disabled={isPacking}
+            <button
+              className={packingMode === 'economy' ? 'active' : ''}
+              disabled={isPacking || nestingLocked}
+              title={nestingLocked ? 'Спершу розблокуйте розкрій' : 'Економний автоматичний розкрій — мінімум слябів'}
               onClick={() => {
-                if (isPacking) return;
+                if (isPacking || nestingLocked) return;
                 useUIStore.getState().showConfirm({
                   title: 'Автоматичний розкрій',
                   message: 'Увага! При запуску автоматичного розкрою всі деталі, які ви переміщали, змінять свої позиції на слебах. Продовжити?',
@@ -881,14 +992,17 @@ export function SlabBoard() {
                 });
               }}
             >
-              {isPacking && packingMode === 'economy' && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5 inline-block" />}
-              Економний
+              {isPacking && packingMode === 'economy'
+                ? <Loader2 className={`w-3.5 h-3.5 animate-spin inline-block${compact ? '' : ' mr-1.5'}`} />
+                : compact && <Coins className="w-4 h-4" />}
+              {!compact && 'Економний'}
             </button>
-            <button 
-              className={packingMode === 'optimal' ? 'active' : ''} 
-              disabled={isPacking}
+            <button
+              className={packingMode === 'optimal' ? 'active' : ''}
+              disabled={isPacking || nestingLocked}
+              title={nestingLocked ? 'Спершу розблокуйте розкрій' : 'Оптимальний автоматичний розкрій — баланс матеріалу і різів'}
               onClick={() => {
-                if (isPacking) return;
+                if (isPacking || nestingLocked) return;
                 useUIStore.getState().showConfirm({
                   title: 'Автоматичний розкрій',
                   message: 'Увага! При запуску автоматичного розкрою всі деталі, які ви переміщали, змінять свої позиції на слебах. Продовжити?',
@@ -900,14 +1014,17 @@ export function SlabBoard() {
                 });
               }}
             >
-              {isPacking && packingMode === 'optimal' && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5 inline-block" />}
-              Оптимальний
+              {isPacking && packingMode === 'optimal'
+                ? <Loader2 className={`w-3.5 h-3.5 animate-spin inline-block${compact ? '' : ' mr-1.5'}`} />
+                : compact && <Gauge className="w-4 h-4" />}
+              {!compact && 'Оптимальний'}
             </button>
-            <button 
-              className={packingMode === 'full_texture' ? 'active' : ''} 
-              disabled={isPacking}
+            <button
+              className={packingMode === 'full_texture' ? 'active' : ''}
+              disabled={isPacking || nestingLocked}
+              title={nestingLocked ? 'Спершу розблокуйте розкрій' : 'Автоматичний розкрій з повною текстурою — малюнок неперервний між деталями'}
               onClick={() => {
-                if (isPacking) return;
+                if (isPacking || nestingLocked) return;
                 useUIStore.getState().showConfirm({
                   title: 'Автоматичний розкрій',
                   message: 'Увага! При запуску автоматичного розкрою всі деталі, які ви переміщали, змінять свої позиції на слебах. Продовжити?',
@@ -919,21 +1036,114 @@ export function SlabBoard() {
                 });
               }}
             >
-              {isPacking && packingMode === 'full_texture' && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5 inline-block" />}
-              Повна текстура
+              {isPacking && packingMode === 'full_texture'
+                ? <Loader2 className={`w-3.5 h-3.5 animate-spin inline-block${compact ? '' : ' mr-1.5'}`} />
+                : compact && <Wallpaper className="w-4 h-4" />}
+              {!compact && 'Повна текстура'}
             </button>
           </div>
+
+          {/* ХВИЛЯ 5, крок 5.4 — «а чи є сенс перескладати?».
+              Раніше дізнатись це можна було лише перескладанням, тобто
+              знищивши свою роботу. Тепер рахуємо в пам'яті й показуємо
+              різницю в слябах; рішення за менеджером. */}
+          <button
+            type="button"
+            disabled={isPacking || !project.placements.length}
+            title="Порахувати, скільки слябів дало б автоматичне перескладання. Розкладку не змінює."
+            onClick={() => {
+              const savings = nestingSavings(project, parts, packingMode);
+              setNestingCheck(savings);
+            }}
+          >
+            {compact ? <ClipboardCheck className="w-4 h-4" /> : 'Перевірити розкладку'}
+          </button>
+
+          {nestingCheck && (
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs ${
+              nestingCheck.slabsSaved > 0
+                ? 'bg-amber-50 border-amber-300 text-amber-900'
+                : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+            }`}>
+              <span>
+                {nestingCheck.slabsSaved > 0
+                  ? `Перескласти → мінус ${nestingCheck.slabsSaved} ${nestingCheck.slabsSaved === 1 ? 'сляб' : 'сляби'} (${nestingCheck.currentSlabs} → ${nestingCheck.optimalSlabs})`
+                  : nestingCheck.slabsSaved < 0
+                    ? `Ваша розкладка КРАЩА за автоматичну на ${Math.abs(nestingCheck.slabsSaved)} — перескладати не варто`
+                    : `Розкладка вже оптимальна: ${nestingCheck.currentSlabs} слябів`}
+                {nestingCheck.optimalUnplaced < nestingCheck.currentUnplaced
+                  && ` · нерозміщених стало б менше на ${nestingCheck.currentUnplaced - nestingCheck.optimalUnplaced}`}
+              </span>
+              {nestingCheck.slabsSaved > 0 && !nestingLocked && (
+                <button
+                  type="button"
+                  className="underline font-medium"
+                  onClick={() => {
+                    useUIStore.getState().showConfirm({
+                      title: 'Перескласти розкрій',
+                      message: `Перескласти автоматично? Виграш — ${nestingCheck.slabsSaved} сляб(и). Усі деталі, які ви переміщали, змінять свої позиції.`,
+                      confirmText: 'Перескласти',
+                      onConfirm: () => { setNestingCheck(null); runPacking(packingMode); },
+                    });
+                  }}
+                >
+                  Перескласти
+                </button>
+              )}
+              <button type="button" className="opacity-60 hover:opacity-100" onClick={() => setNestingCheck(null)}>✕</button>
+            </div>
+          )}
         </div>
       </div>
-      <div ref={slabShellRef} className="slab-scroll-shell" style={slabShellHeight ? { height: `${slabShellHeight}px` } : undefined}>
+      {project.slabs.length > 1 && (
+        <div className="flex items-center gap-2 px-2 pb-1 text-[12px] text-slate-600">
+          <span className="font-semibold">Фільтр слябів:</span>
+          <select className="border border-slate-300 rounded px-2 py-1 bg-white"
+            value={slabFilterDecor} onChange={(e) => setSlabFilterDecor(e.target.value)}>
+            <option value="">усі декори</option>
+            {slabDecors.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select className="border border-slate-300 rounded px-2 py-1 bg-white"
+            value={slabFilterThickness} onChange={(e) => setSlabFilterThickness(e.target.value)}>
+            <option value="">усі товщини</option>
+            {slabThicknesses.map((th) => <option key={th} value={String(th)}>{th} мм</option>)}
+          </select>
+          {(slabFilterDecor || slabFilterThickness) && (
+            <>
+              <button type="button" className="underline"
+                onClick={() => { setSlabFilterDecor(''); setSlabFilterThickness(''); }}>скинути</button>
+              <span className="text-slate-400">показано {visibleSlabs.length} з {project.slabs.length}</span>
+            </>
+          )}
+        </div>
+      )}
+      </div>
+      <div ref={slabShellRef} className="slab-scroll-shell">
       <svg id="main-svg" ref={svgRef} className={`slab-svg${bufferDragPartId ? ' slab-svg-drop-active' : ''}`} viewBox={`0 0 ${maxW * scale + 80} ${canvasHeight}`} style={{ height: `${canvasHeight}px` }}>
-        {project.slabs.map((slab) => {
+        {visibleSlabs.map((slab) => {
           const off = slabOffsets.find((item) => item.slabId === slab.id)!;
           const placements = project.placements.filter((p) => p.slabId === slab.id);
           return (
             <g key={slab.id} transform={`translate(${off.x},${off.y})`} onMouseDown={(event) => startSelectionBox(slab, event)} onContextMenu={(event) => openSlabContextMenu(slab, event)}>
-              <rect x={-8} y={-22} width={slab.width * scale + 16} height={slab.height * scale + 30} fill={selectedSlabId === slab.id ? 'rgba(186,208,224,0.18)' : 'transparent'} rx={12} />
-              <SlabLayer slab={slab} scale={scale} viewMode={viewMode} />
+              {/* Вибраний слеб позначає КОРІНЕЦЬ (акцентна лінія на стику з
+                  каменем), а не підкладка навколо аркуша: та підкладка
+                  читалась як рамка, від якої ми щойно позбулись. */}
+              <rect x={-8} y={-22} width={slab.width * scale + 16} height={slab.height * scale + 30} fill="transparent" rx={12} />
+              {/* Корінець — ДО аркуша: нижній край язичка ховається за
+                  каменем, і він читається як приліплений з тилу. */}
+              <SlabHeaderTab
+                slab={slab}
+                selected={selectedSlabId === slab.id}
+                slabWidth={slab.width * scale}
+                text={`${slab.serialNumber} • ${ui(slab.material)} • ${slab.decor || ui('без декору')}`}
+              />
+              <SlabLayer slab={slab} scale={scale} viewMode={viewMode} outline={slabOutlines[slab.id]} />
+              <SlabTabShadow
+                slab={slab}
+                slabWidth={slab.width * scale}
+                text={`${slab.serialNumber} • ${ui(slab.material)} • ${slab.decor || ui('без декору')}`}
+                id={slab.id}
+              />
               {placements.map((placement) => {
                 const part = parts.find((p) => p.id === placement.partId); if (!part) return null;
                 const allDetails = getAllProjectDetails(project);
@@ -984,7 +1194,7 @@ export function SlabBoard() {
                     const groupIds = selectedPlacementIds.includes(placement.id) ? selectedPlacementIds : [placement.id];
                     const groupStart = Object.fromEntries(project.placements
                       .filter((item) => groupIds.includes(item.id))
-                      .map((item) => [item.id, { x: item.x, y: item.y, slabId: item.slabId, partId: item.partId, rotation: item.rotation }]));
+                      .map((item) => [item.id, { x: item.x, y: item.y, slabId: item.slabId, partId: item.partId, rotation: item.rotation, mirror: item.mirror }]));
                     setSelectedPlacementIds(groupIds);
                     setDrag({
                       type: 'placement',
@@ -994,6 +1204,7 @@ export function SlabBoard() {
                       offsetX: (point.x - off.x) / scale - placement.x,
                       offsetY: (point.y - off.y) / scale - placement.y,
                       rotation: placement.rotation,
+                      mirror: placement.mirror,
                       clientX: e.clientX,
                       clientY: e.clientY,
                       groupIds,
@@ -1014,6 +1225,16 @@ export function SlabBoard() {
                           ? placement.edgeProfiles
                           : (detail?.edgeProfiles as never)
                       }
+                      scale={scale}
+                    />
+                    {/* Решітка зливу — контур водоструменевого різу на тій
+                        самій деталі, яку ріже верстат (кругла деталь дна). */}
+                    {/* Решітка зливу — контур водоструменевого різу на тій
+                        самій деталі, яку ріже верстат (кругла деталь дна). */}
+                    <DrainGrateMarks
+                      part={part}
+                      placement={placement}
+                      grate={detail?.geometry?.drainGrate}
                       scale={scale}
                     />
                     {highlightedFactRefs && (
@@ -1077,9 +1298,14 @@ export function SlabBoard() {
               {showDimensions && dimensionDraft?.slabId === slab.id && dimensionDraft.start && (
                 <circle className="manual-dimension-anchor" cx={dimensionDraft.start.x * scale} cy={dimensionDraft.start.y * scale} r={5} />
               )}
-              {slab.defects.map((defect) => {
+              {(slab.defects ?? []).map((defect) => {
                 const pts = defectPoints(defect);
-                return <g key={defect.id} className="defect-shape" onMouseDown={(e) => { const point = clientToSvgPoint(e.clientX, e.clientY); if (!point) return; e.preventDefault(); e.stopPropagation(); setDrag({ type: 'defect', id: defect.id, slabId: slab.id, offsetX: (point.x - off.x) / scale - defect.x, offsetY: (point.y - off.y) / scale - defect.y }); }}><polygon points={pointString(pts, scale)} fill="rgba(214,40,40,0.12)" stroke="#d62828" strokeWidth={2} /><circle cx={(defect.x + defect.width) * scale} cy={(defect.y + defect.height) * scale} r={4} fill="#d62828" /></g>;
+                return <g key={defect.id} className="defect-shape" onMouseDown={(e) => { const point = clientToSvgPoint(e.clientX, e.clientY); if (!point) return; e.preventDefault(); e.stopPropagation(); setDrag({ type: 'defect', id: defect.id, slabId: slab.id, offsetX: (point.x - off.x) / scale - defect.x, offsetY: (point.y - off.y) / scale - defect.y }); }}><polygon points={pointString(pts, scale)} fill="rgba(214,40,40,0.12)" stroke="#d62828" strokeWidth={2} />{/* Ручка розміру — лише для дефектів, заведених руками. Скол із
+                    фото не тягають мишею: його межа приходить із знімка, і
+                    червона крапка посеред каменю тільки збивала з пантелику. */}
+                  {!defect.id.startsWith(AUTO_DEFECT_PREFIX) && (
+                    <circle cx={(defect.x + defect.width) * scale} cy={(defect.y + defect.height) * scale} r={4} fill="#d62828" />
+                  )}</g>;
               })}
               {selectionBox?.slabId === slab.id && (
                 <SelectionRect box={selectionBox} scale={scale} />
@@ -1118,7 +1344,17 @@ export function SlabBoard() {
                   </g>
                 );
               })}
-              <text x={0} y={-6} fontSize={13} fill="#2d4f6c">{slab.serialNumber} • {ui(slab.material)} • {slab.decor || ui('без декору')}</text>
+              {/* Товщина деталей ≠ товщині слеба: попередження, не заборона
+                  (рішення 26.08). Рахуємо по розміщеннях цього слеба. */}
+              {(() => {
+                const mismatched = project.placements.filter((p) => p.slabId === slab.id && p.thicknessWarning);
+                if (!mismatched.length) return null;
+                return (
+                  <text x={0} y={-30} fontSize={12} fontWeight={700} fill="#b45309">
+                    ⚠ {mismatched[0].thicknessWarning}{mismatched.length > 1 ? ` (деталей: ${mismatched.length})` : ''}
+                  </text>
+                );
+              })()}
             </g>
           );
         })}
@@ -1137,18 +1373,9 @@ export function SlabBoard() {
           onClose={() => setMagnifierOpen(false)}
         />
       )}
-      <div
-        className="slab-resize-handle"
-        onMouseDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setSlabResizeDrag({ startY: event.clientY, startHeight: slabShellRef.current?.clientHeight ?? manualSlabHeight ?? 520 });
-        }}
-        onDoubleClick={() => setManualSlabHeight(null)}
-        title="Потягніть, щоб змінити висоту зони слебів"
-      >
-        <span />
-      </div>
+      {/* Ручки зміни висоти зони слебів більше немає: зона не має власної
+          прокрутки і росте під кількість слебів, а гортає її загальний
+          повзунок робочої області. */}
       {drag?.type === 'placement' && (!drag.groupIds || drag.groupIds.length <= 1) && (
         <PlacementDragGhost drag={drag} part={parts.find((part) => part.id === drag.partId)} scale={scale} screenScale={svgCssScale} />
       )}
@@ -1257,19 +1484,42 @@ export function SlabBoard() {
             <div className="detail-modal-header">
               <div>
                 <h2>{t(language, 'editSlab')}</h2>
-                <p>{ui('Змінюються тільки параметри слеба. Розкладка, фото і дефекти залишаються на місці.')}</p>
+                <p>{ui('Габарит, товщина, матеріал і декор приходять із каталогу за артикулом — тут вони не редагуються. Потрібен інший слеб — додайте його з каталогу.')}</p>
               </div>
               <button type="button" className="icon-button" aria-label={ui('Закрити')} onClick={() => setSlabEditor(null)}>×</button>
             </div>
+            {(() => {
+              const source = project.slabs.find((item) => item.id === slabEditor.id);
+              if (!source) return null;
+              return (
+                <div className="slab-edit-source">
+                  <div className="slab-edit-source-row">
+                    <span>{ui('Артикул')}</span>
+                    <b>{source.article || ui('немає — слеб доданий до появи каталогу')}</b>
+                  </div>
+                  <div className="slab-edit-source-row">
+                    <span>{ui('Матеріал')}</span>
+                    <b>{[ui(source.material), source.manufacturer, source.decor].filter(Boolean).join(' · ')}</b>
+                  </div>
+                  <div className="slab-edit-source-row">
+                    <span>{ui('Виконання')}</span>
+                    <b>{`${source.width}×${source.height}×${source.thickness} мм`}{source.finish ? ` · ${source.finish}` : ''}</b>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="form-grid compact slab-edit-grid">
               <label><span>{ui('Серійний номер')}</span><input value={slabEditor.draft.serialNumber} onChange={(event) => updateSlabEditorDraft({ serialNumber: event.target.value })} /></label>
-              <label><span>{ui('Матеріал')}</span><select value={slabEditor.draft.material} onChange={(event) => updateSlabEditorDraft({ material: event.target.value as MaterialType })}>{referenceData.materials.map((material) => <option key={material} value={material}>{ui(material)}</option>)}</select></label>
-              <label><span>{ui('Ширина')}</span><input type="number" value={slabEditor.draft.width} onChange={(event) => updateSlabEditorDraft({ width: Number(event.target.value) })} /></label>
-              <label><span>{ui('Висота')}</span><input type="number" value={slabEditor.draft.height} onChange={(event) => updateSlabEditorDraft({ height: Number(event.target.value) })} /></label>
-              <label><span>{ui('Товщина')}</span><input type="number" value={slabEditor.draft.thickness} onChange={(event) => updateSlabEditorDraft({ thickness: Number(event.target.value) })} /></label>
               <label><span>{ui('Мін. відступ')}</span><input type="number" value={slabEditor.draft.minMargin} onChange={(event) => updateSlabEditorDraft({ minMargin: Number(event.target.value) })} /></label>
-              <label><span>{ui('Декор')}</span><input value={slabEditor.draft.decor} onChange={(event) => updateSlabEditorDraft({ decor: event.target.value })} /></label>
-              <label><span>{ui('Коментар')}</span><input value={slabEditor.draft.comment} onChange={(event) => updateSlabEditorDraft({ comment: event.target.value })} /></label>
+              {/* Артикула на півлиста в 1С немає: у прорахунку такий слеб
+                  важить 0.5, а ціна питається за цілий лист і множиться. */}
+              <label className="slab-edit-wide" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" style={{ width: 16, height: 16, minWidth: 16 }}
+                  checked={slabEditor.draft.halfSheet}
+                  onChange={(event) => updateSlabEditorDraft({ halfSheet: event.target.checked })} />
+                <span style={{ flex: 1 }}>{ui('Половина листа — у прорахунку 0.5')}</span>
+              </label>
+              <label className="slab-edit-wide"><span>{ui('Коментар')}</span><input value={slabEditor.draft.comment} onChange={(event) => updateSlabEditorDraft({ comment: event.target.value })} /></label>
             </div>
             <div className="detail-modal-footer">
               <button type="button" onClick={() => setSlabEditor(null)}>{ui('Закрити')}</button>
@@ -1303,4 +1553,4 @@ export function SlabBoard() {
       )}
     </section>
   );
-}
+}

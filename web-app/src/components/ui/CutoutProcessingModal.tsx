@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Check, ArrowLeftRight, ArrowUpDown } from 'lucide-react';
 import { DraggableDialog } from './DraggableDialog';
 import type { SurfaceCutout } from '../../domain/types';
+import { cutoutOutsideContour, type AnchorShapeContext } from '../../domain/cutoutAnchor';
 import { translateStaticUiText } from '../../i18n';
 import type { UiLanguage } from '../../store/useDictionaryStore';
 
@@ -11,9 +12,55 @@ interface CutoutProcessingModalProps {
   onSave: (data: SurfaceCutout) => void;
   onClose: () => void;
   language?: UiLanguage;
+  /** Габарит деталі — для перевірки, що виріз не виходить за її межі (FG-16). */
+  detailWidth?: number;
+  detailHeight?: number;
+  /**
+   * Форма і геометрія деталі — для перевірки по РЕАЛЬНОМУ контуру (FG-18).
+   * На Г- і П-подібній габарит бреше: у виїмці матеріалу немає.
+   */
+  shapeCtx?: AnchorShapeContext;
 }
 
-export function CutoutProcessingModal({ initialData, corners, onSave, onClose, language = 'uk' }: CutoutProcessingModalProps) {
+/**
+ * FG-16: відступ + розмір вирізу мають вміщатись у деталь. Раніше «від кута
+ * AB по B = 1000» при вирізі 450 мм мовчки ставив виріз за межі деталі —
+ * контур рвався, текстура розлазилась, а помилку помічали вже на кресленні.
+ *
+ * Геометрія (див. domain/cutoutAnchor.cutoutCenter): x завжди йде вздовж
+ * ШИРИНИ деталі, y — вздовж ВИСОТИ, від прив'язаного кута всередину.
+ * Для прямокутного вирізу відступ міряється до ближнього кута вирізу,
+ * для круглого — до центру отвору.
+ */
+function cutoutOverflow(
+  args: {
+    shape: 'circle' | 'rect';
+    bindCorner: string;
+    x: number; y: number;
+    radius: number; width: number; height: number;
+    detailWidth?: number; detailHeight?: number;
+  },
+): string | null {
+  const { shape, bindCorner, x, y, radius, width, height, detailWidth, detailHeight } = args;
+  if (!detailWidth || !detailHeight) return null;
+  // Перевіряємо лише кути габариту: у складних форм (DE, EF…) точка кута
+  // залежить від контуру — це зона FG-18, не вгадуємо.
+  if (!['DA', 'AB', 'BC', 'CD'].includes(bindCorner)) return null;
+
+  const spanX = shape === 'circle' ? { from: x - radius, to: x + radius } : { from: x, to: x + width };
+  const spanY = shape === 'circle' ? { from: y - radius, to: y + radius } : { from: y, to: y + height };
+
+  const overX = Math.max(0, spanX.to - detailWidth, -spanX.from);
+  const overY = Math.max(0, spanY.to - detailHeight, -spanY.from);
+  if (overX <= 0 && overY <= 0) return null;
+
+  const parts: string[] = [];
+  if (overX > 0) parts.push(`по ширині на ${Math.ceil(overX)} мм`);
+  if (overY > 0) parts.push(`по висоті на ${Math.ceil(overY)} мм`);
+  return `Виріз виходить за межі деталі ${parts.join(' і ')}`;
+}
+
+export function CutoutProcessingModal({ initialData, corners, onSave, onClose, language = 'uk', detailWidth, detailHeight, shapeCtx }: CutoutProcessingModalProps) {
   const ui = (value: string) => translateStaticUiText(language, value);
 
   const [shape, setShape] = React.useState<'circle' | 'rect'>(initialData?.shape || 'circle');
@@ -33,7 +80,35 @@ export function CutoutProcessingModal({ initialData, corners, onSave, onClose, l
     else if (type === 'faucet') setRadius(17.5);
   }, [type]);
 
+  const boxError = cutoutOverflow({
+    shape, bindCorner, x, y, radius, width, height, detailWidth, detailHeight,
+  });
+
+  /*
+   * FG-18. Габаритна перевірка (FG-16) лишається першою — вона дає точне
+   * «на скільки міліметрів». Якщо вона мовчить, а форма складна, питаємо
+   * контур: виріз може вміщатись у прямокутник і при цьому стояти у
+   * виїмці, де каменю немає.
+   */
+  const outsideContour = shapeCtx ? cutoutOutsideContour(
+    { shape, x, y, radius, width, height, bindCorner } as never,
+    shapeCtx,
+  ) : undefined;
+
+  /*
+   * Помилка — це заголовок і уточнення окремо, а не один рядок.
+   * Раніше тут різали рядок на частини `replace`-ом, і будь-яке нове
+   * формулювання ламало підпис; перекладачу інтерфейсу така склейка теж
+   * не давалась.
+   */
+  const overflowError: { title: string; detail?: string } | null = boxError
+    ? { title: 'Виріз виходить за межі деталі', detail: boxError.replace('Виріз виходить за межі деталі ', '') }
+    : outsideContour
+      ? { title: 'Виріз виходить за контур деталі', detail: 'у цьому місці немає матеріалу' }
+      : null;
+
   const handleSave = () => {
+    if (overflowError) return;
     onSave({
       id: initialData?.id || `cutout_${Date.now()}`,
       shape,
@@ -214,16 +289,26 @@ export function CutoutProcessingModal({ initialData, corners, onSave, onClose, l
             </div>
           </div>
 
+          {overflowError && (
+            <div className="bg-red-50 border border-red-300 text-red-700 text-xs font-medium rounded-sm px-3 py-2">
+              <span>{ui(overflowError.title)}</span>
+              {overflowError.detail && <>{': '}<span>{overflowError.detail}</span>{'.'}</>}
+              {' '}
+              <span>{ui('Зменшіть відступ або розмір вирізу')}</span>
+            </div>
+          )}
+
           <div className="flex gap-2 mt-4">
-            <button 
+            <button
               onClick={onClose}
               className="flex-1 h-9 border border-[#1f93ef] text-[#1f93ef] font-bold rounded-sm hover:bg-[#1f93ef]/10 transition-colors"
             >
               Скасувати
             </button>
-            <button 
+            <button
               onClick={handleSave}
-              className="flex-1 h-9 bg-transparent border border-[#1f93ef] text-[#1f93ef] font-bold rounded-sm hover:bg-[#1f93ef]/10 transition-colors"
+              disabled={!!overflowError}
+              className="flex-1 h-9 bg-transparent border border-[#1f93ef] text-[#1f93ef] font-bold rounded-sm hover:bg-[#1f93ef]/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Застосувати
             </button>
@@ -231,4 +316,4 @@ export function CutoutProcessingModal({ initialData, corners, onSave, onClose, l
         </div>
     </DraggableDialog>
   );
-}
+}

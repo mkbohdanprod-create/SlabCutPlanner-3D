@@ -27,6 +27,16 @@ import type {
   ProductElement,
   Project,
 } from '../domain/types';
+import { edgeTreatmentLengthMm, edgeTreatmentProfiles } from '../domain/edgeTreatment';
+import {
+  classifyRadiusMatrix,
+  classifyRadiusService,
+  cornerArcLengthMm,
+  radiusMatrixKey,
+  radiusMethodFor,
+  radiusRoleForType,
+  type RadiusMatrixKind,
+} from '../domain/radiusElement';
 import {
   edgeLengthForSide,
   pointsBounds,
@@ -67,7 +77,11 @@ export type ProductionFactKind =
   /** Площа задіяних слябів, м² */
   | 'slab_area'
   /** Відхід: площа слябів мінус площа деталей, м² */
-  | 'waste_area';
+  | 'waste_area'
+  /** Радіусний елемент як штука. Variant — категорія з domain/radiusElement */
+  | 'radius_element'
+  /** Матриця для гнуття, штука. Variant — категорія матриці */
+  | 'radius_matrix';
 
 export interface FactRef {
   /**
@@ -271,17 +285,16 @@ export function extractProductionFacts(
       if (!raw) return;
       // Крайка задається або рядком (старий формат), або EdgeTreatment
       // з лицьовим і тильним ребром — обидва ребра фрезеруються окремо.
-      const profileIds: string[] = [];
-      if (typeof raw === 'string') {
-        profileIds.push(raw);
-      } else {
-        const treatment = raw as { top?: { profileId?: string }; bottom?: { profileId?: string } };
-        if (treatment.top?.profileId) profileIds.push(treatment.top.profileId);
-        if (treatment.bottom?.profileId) profileIds.push(treatment.bottom.profileId);
-      }
+      // Розбір — спільним нормалізатором, щоб кошторис і позначка на
+      // кресленні рахували ту саму ділянку.
+      const profileIds = edgeTreatmentProfiles(raw as Parameters<typeof edgeTreatmentProfiles>[0]);
       if (!profileIds.length) return;
 
-      const lengthMm = edgeLengthForSide(part, side);
+      // Довжина — РЕАЛЬНА ділянка обробки, а не вся сторона. «Довільна,
+      // 300 мм» раніше все одно нараховувалась цеху на повне ребро.
+      const sideLengthMm = edgeLengthForSide(part, side);
+      const lengthMm = edgeTreatmentLengthMm(raw as Parameters<typeof edgeTreatmentLengthMm>[0], sideLengthMm);
+      if (lengthMm <= 0) return;
       profileIds.forEach((profileId) => {
         push({
           kind: 'edge',
@@ -343,6 +356,35 @@ export function extractProductionFacts(
     });
   });
 
+  // ── 4b. Шви ВСЕРЕДИНІ деталі (SC-02) ───────────────────────────────
+  //  Стик, яким деталь розрізали навпіл, — це теж шов: цех його пиляє і
+  //  клеїть. Але в дереві виробу його немає (там живуть лише стики МІЖ
+  //  елементами), тому раніше кутовий стик Г-форми і будь-який довільний
+  //  стик не давали ані склейки, ані пропилу — цех робив, компанія не
+  //  виставляла. Джерело правди тут — сам різ: довжину шва рушій кладе на
+  //  парт у `jointSeams`, по одному носію на шов, щоб не порахувати двічі.
+  mainParts.forEach((part) => {
+    (part.jointSeams ?? []).forEach((seam) => {
+      const lengthMm = seam.lengthMm;
+      if (!(lengthMm > 0)) return;
+      const ref: FactRef = { partId: part.id, detailId: part.detailId };
+      push({
+        kind: 'joint_length',
+        qty: mm2m(lengthMm),
+        unit: 'm',
+        variant: seam.jointType ?? 'butt',
+        ref,
+      });
+      push({
+        kind: 'joint_count',
+        qty: 1,
+        unit: 'pcs',
+        variant: lengthMm < JOINT_LENGTH_THRESHOLD_MM ? 'lt500' : 'gt500',
+        ref,
+      });
+    });
+  });
+
   // ── 5. Оброблені кути ──────────────────────────────────────────────
   walkElements(project.products).forEach(({ productId, path, element }) => {
     const corners = element.baseDefinition?.corners as Record<string, CornerProcessing> | undefined;
@@ -373,6 +415,102 @@ export function extractProductionFacts(
         ref: { detailId: detail.id, cornerId },
       });
     });
+  });
+
+  // ── 5a. Торець на дугах, фасках і вирізах (FG-22) ──────────────────
+  //  Галочка «Обробка торців» у вікні кута і вікні вирізу існувала давно,
+  //  але не давала НІЧОГО: метри дуг, фасок і периметрів вирізів не
+  //  потрапляли ані в кошторис, ані в завдання цеху — клієнту виставлялось
+  //  менше, ніж робилось. Тепер кожна така галочка дає факт `edge` зі
+  //  своєю довжиною: дуга — по зовнішньому радіусу, фаска — гіпотенузою,
+  //  Г-заріз — двома полицями, виріз — периметром.
+  details.forEach((detail) => {
+    const detailRef = { detailId: detail.id };
+
+    Object.entries(detail.geometry?.corners ?? {}).forEach(([cornerId, corner]) => {
+      if (!corner?.edgeProcessing || corner.edgeProcessing === 'Без фрезерування') return;
+      let lengthMm = 0;
+      if (corner.type === 'radius') lengthMm = cornerArcLengthMm(corner.radius ?? 0);
+      else if (corner.type === 'chamfer') lengthMm = Math.hypot(corner.sizeB ?? 0, corner.sizeC ?? 0);
+      else if (corner.type === 'l-cut') lengthMm = (corner.sizeB ?? 0) + (corner.sizeC ?? 0);
+      if (lengthMm <= 0) return;
+      push({
+        kind: 'edge',
+        qty: mm2m(lengthMm),
+        unit: 'm',
+        variant: corner.edgeProcessing,
+        ref: { ...detailRef, cornerId },
+      });
+    });
+
+    Object.entries(detail.geometry?.cutouts ?? {}).forEach(([cutoutId, cutout], index) => {
+      if (!cutout?.edgeProcessing || cutout.edgeProcessing === 'Без фрезерування') return;
+      const lengthMm = cutout.shape === 'circle'
+        ? 2 * Math.PI * (cutout.radius ?? 0)
+        : 2 * ((cutout.width ?? 0) + (cutout.height ?? 0));
+      if (lengthMm <= 0) return;
+      void cutoutId;
+      push({
+        kind: 'edge',
+        qty: mm2m(lengthMm),
+        unit: 'm',
+        variant: cutout.edgeProcessing,
+        ref: { ...detailRef, cutoutIndex: index },
+      });
+    });
+  });
+
+  // ── 5b. Радіусні (гнуті) елементи ──────────────────────────────────
+  //  ТЗ від 19.08.2026. Послуга — ЗА ШТУКУ на кожен елемент; категорію
+  //  визначає матеріал (камінь ріжуть сегментами, акрил гнуть), роль
+  //  (край стільниці чи опора) і розмір. Матеріал самої деталі сюди не
+  //  входить — він уже порахований по прямокутнику в розкрої.
+  //
+  //  Матриця для гнуття рахується ОКРЕМО і не за кількістю радіусів, а за
+  //  кількістю унікальних геометрій: чотири однакові R500 гнуть на одній
+  //  матриці. Тому дедуплікація тут, на рівні всього проєкту, а не парта.
+  const projectMaterial = project.projectMaterial as MaterialType | undefined;
+  const matrixSeen = new Map<string, RadiusMatrixKind>();
+
+  allParts.forEach((part) => {
+    const mark = part.radiusElement;
+    if (!mark) return;
+
+    const method = mark.method ?? radiusMethodFor(projectMaterial);
+    const role = mark.role ?? radiusRoleForType(part.type);
+    const bandSizeMm = mark.bandSizeMm ?? Math.min(part.width, part.height);
+    const classifyInput = {
+      method,
+      role,
+      bandSizeMm,
+      radiusMm: mark.radiusMm,
+      complex: mark.complex,
+    };
+
+    const ref: FactRef = { partId: part.id, detailId: part.detailId, cornerId: mark.cornerId };
+    push({
+      kind: 'radius_element',
+      qty: 1,
+      unit: 'pcs',
+      variant: classifyRadiusService(classifyInput),
+      ref,
+    });
+
+    if (method !== 'bending') return;
+    const key = radiusMatrixKey({
+      radiusMm: mark.radiusMm,
+      bandSizeMm,
+      arcAngleDeg: mark.arcAngleDeg ?? 90,
+      complex: mark.complex,
+    });
+    if (!matrixSeen.has(key)) matrixSeen.set(key, classifyRadiusMatrix(classifyInput));
+  });
+
+  // Одна матриця на кожну унікальну геометрію (ТЗ, п. 3.4).
+  const matrixByKind = new Map<RadiusMatrixKind, number>();
+  matrixSeen.forEach((kind) => matrixByKind.set(kind, (matrixByKind.get(kind) ?? 0) + 1));
+  matrixByKind.forEach((qty, kind) => {
+    push({ kind: 'radius_matrix', qty, unit: 'pcs', variant: kind });
   });
 
   // ── 6. Площі й матеріал ────────────────────────────────────────────

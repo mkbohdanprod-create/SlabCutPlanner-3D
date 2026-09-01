@@ -1,4 +1,20 @@
 import type { Project, ReferenceData, CommercialQuoteSettings } from './types';
+import { CURRENT_PROJECT_FORMAT_VERSION } from './projectMigrations';
+
+/**
+ * Матеріали, які пропонуються В РОБОТУ (рішення власника 26.08.2026).
+ *
+ * Компакт-плити тут немає: у програмі її більше не буде. Але зі списку
+ * `referenceData.materials` нижче вона НЕ прибрана навмисно — імпорт
+ * бланка погодження кодує матеріал ПОРЯДКОВИМ НОМЕРОМ у тому списку
+ * (див. approvalImport.ts), і зсув індексів мовчки перетворив би один
+ * матеріал на інший у вже збережених документах.
+ *
+ * Тобто: обирати не можна, читати старе — можна.
+ */
+export const MATERIALS_IN_USE: ReferenceData['materials'] = [
+  'Керамограніт', 'Кварцит', 'Натуральний камінь', 'Акрил',
+];
 
 export const referenceData: ReferenceData = {
   materials: ['Керамограніт', 'Кварцит', 'Натуральний камінь', 'Акрил', 'Компакт-плита'],
@@ -49,6 +65,72 @@ export const referenceData: ReferenceData = {
     { id: 'zs_20', label: 'Крайка ZS20', shortLabel: 'ZS20', description: 'Кварцит 219993 / керамограніт 203100', allowance: 2.5, operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
     { id: 'edge_45', label: 'Торець 45°', shortLabel: '45°', description: 'Фрезування крайки 45° (195350 / 195685)', allowance: 2.5, operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
     { id: 'antik', label: 'Крайка «Антик»', shortLabel: 'Антик', description: 'Алмазні щітки для матових покриттів (195717)', allowance: 2.5, materialGroup: 'Кварцит', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+
+    /*
+     * ── Каталог «Все кромки» від цеху (PDF 17.09.25) ──────────────────
+     *
+     * Джерело — 9 сторінок креслень перерізів: керамограніт, кварцит,
+     * акрил. Правила відбору:
+     *   · профіль = ФОРМА кромки; «на плінтусі», «на борті з фанерою»,
+     *     «на підклейці 33», «на мийці» — це КОНТЕКСТИ застосування тієї
+     *     самої форми, окремих записів вони не отримують;
+     *   · форми, що вже покриті наявними записами, не дублюються:
+     *     R2 верх → r2_top, R2+R2 → r2_top_bottom, фаска 2×2 →
+     *     chamfer_2x2, 2×2+2×2 → chamfer_2x2_top_bottom, R0 (пряма) →
+     *     polished_straight;
+     *   · ZR20 (R3 верх), A20R5 (R5), A20 (R10) з каталогу, ймовірно,
+     *     і є наші r_3 / r_5 / r_10 з прайсу NC300 — НЕ додані, щоб не
+     *     плодити дублі у випадачці; чекають підтвердження власника
+     *     (див. КРОМКИ_ЗВІРКА_20-08.md);
+     *   · припуск усім 2.5 (стандарт крайки з CUTTING_RULES), техфасці 0;
+     *     власник коригує в налаштуваннях профілів;
+     *   · послуга поки що загальне профільне фрезерування
+     *     (EDGE_PROFILE_MILL); парні форми — ×2, як у наявних в/н. Коди 1С
+     *     на акрилові форми підв'яжуться, коли цех дасть номенклатуру.
+     */
+    { id: 'tech_chamfer', label: 'Технічна фаска (<1×1)', shortLabel: 'Техфаска', description: 'Керамограніт і кварцит; захисна мікрофаска, каталог 17.09.25', allowance: 0, operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'zr_12', label: 'Крайка ZR12 (R2 верх)', shortLabel: 'ZR12', description: 'Каталог 17.09.25; форма = R2 зверху, серія 12', allowance: 2.5, materialGroup: 'Керамограніт', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+
+    // Кварцит — серії 20 і 40 з каталогу
+    { id: 'l_20', label: 'Крайка L20 (увігнутий R10)', shortLabel: 'L20', description: 'Каталог 17.09.25; увігнутий радіус R10 зверху', allowance: 2.5, materialGroup: 'Кварцит', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'lv_40', label: 'Крайка LV40', shortLabel: 'LV40', description: 'Каталог 17.09.25; профіль на борті 40 мм', allowance: 2.5, materialGroup: 'Кварцит', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'lv_40_inv', label: 'Крайка LV40 перевернутий', shortLabel: 'LV40 пер.', description: 'Каталог 17.09.25; той самий профіль дзеркально', allowance: 2.5, materialGroup: 'Кварцит', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'o_40', label: 'Крайка O40', shortLabel: 'O40', description: 'Каталог 17.09.25; профіль на борті 40 мм', allowance: 2.5, materialGroup: 'Кварцит', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'u_40', label: 'Крайка U40', shortLabel: 'U40', description: 'Каталог 17.09.25; профіль на борті 40 мм', allowance: 2.5, materialGroup: 'Кварцит', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+
+    // Акрил — уперше в довіднику: досі жодного акрилового профілю не було
+    { id: 'acr_r3', label: 'R3 верх (акрил)', shortLabel: 'R3', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_r6', label: 'R6 верх (акрил)', shortLabel: 'R6', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_r8', label: 'R8 верх (акрил)', shortLabel: 'R8', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_r10', label: 'R10 верх (акрил)', shortLabel: 'R10', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_r12', label: 'R12 верх (акрил)', shortLabel: 'R12', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_r20', label: 'R20 верх (акрил)', shortLabel: 'R20', description: 'Каталог 17.09.25; лише на борті з фанерою', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_r3_3', label: 'R3+R3 верх/низ (акрил)', shortLabel: 'R3 в/н', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 2 }] },
+    { id: 'acr_r6_6', label: 'R6+R6 верх/низ (акрил)', shortLabel: 'R6 в/н', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 2 }] },
+    { id: 'acr_r8_8', label: 'R8+R8 верх/низ (акрил)', shortLabel: 'R8 в/н', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 2 }] },
+    { id: 'acr_bullnose_r10', label: 'R10+R10 BullNose (акрил)', shortLabel: 'BullNose R10', description: 'Каталог 17.09.25; повний заокруглений торець', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 2 }] },
+    { id: 'acr_bullnose_r12', label: 'R12+R12 BullNose (акрил)', shortLabel: 'BullNose R12', description: 'Каталог 17.09.25; повний заокруглений торець', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 2 }] },
+    { id: 'acr_ch_5x5', label: 'Фаска 5×5 (акрил)', shortLabel: '5×5', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_ch_10x10', label: 'Фаска 10×10 (акрил)', shortLabel: '10×10', description: 'Каталог 17.09.25; лише на борті з фанерою', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_ch_5x5_5x5', label: 'Фаска 5×5+5×5 в/н (акрил)', shortLabel: '5×5 в/н', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 2 }] },
+    { id: 'acr_ch_10x10_10x10', label: 'Фаска 10×10+10×10 в/н (акрил)', shortLabel: '10×10 в/н', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 2 }] },
+    { id: 'acr_cove_r6', label: 'R6 профіль увігнутий (акрил)', shortLabel: 'R6 увігн.', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_cove_r6_6', label: 'R6+R6 профіль увігнутий в/н (акрил)', shortLabel: 'R6 увігн. в/н', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 2 }] },
+    { id: 'acr_fillet_r10r12', label: 'Галтель R10+R12 (акрил, плінтус)', shortLabel: 'Галтель', description: 'Каталог 17.09.25; перехід плінтуса в стільницю', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark45_r0', label: 'SharkNose 45° R0 (акрил)', shortLabel: 'Shark 45°', description: 'Каталог 17.09.25; зріз під 45°, верх прямий', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark45_r3', label: 'SharkNose 45° R3 (акрил)', shortLabel: 'Shark 45° R3', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark45_r6', label: 'SharkNose 45° R6 (акрил)', shortLabel: 'Shark 45° R6', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark55_r0', label: 'SharkNose 55° R0 (акрил)', shortLabel: 'Shark 55°', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark55_r2', label: 'SharkNose 55° R2 (акрил)', shortLabel: 'Shark 55° R2', description: 'Каталог 17.09.25; тонкі стільниці 10–12 мм', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark55_r3', label: 'SharkNose 55° R3 (акрил)', shortLabel: 'Shark 55° R3', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark55_r6', label: 'SharkNose 55° R6 (акрил)', shortLabel: 'Shark 55° R6', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark225_r0', label: 'SharkNose 22.5° R0 (акрил)', shortLabel: 'Shark 22.5°', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark225_r3', label: 'SharkNose 22.5° R3 (акрил)', shortLabel: 'Shark 22.5° R3', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_shark225_r6', label: 'SharkNose 22.5° R6 (акрил)', shortLabel: 'Shark 22.5° R6', description: 'Каталог 17.09.25', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_modern', label: 'Кромка «Модерн» (акрил)', shortLabel: 'Модерн', description: 'Каталог 17.09.25; тонкий верх R2 з підклейкою', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_spill_stop', label: 'Кромка «Непроливайка» (акрил)', shortLabel: 'Непролив.', description: 'Каталог 17.09.25; бортик R12/R12+R3 проти стікання', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_classic1', label: 'Кромка «Классік-1» (акрил)', shortLabel: 'Классік-1', description: 'Каталог 17.09.25; R12 із полицею 2 мм зверху', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
+    { id: 'acr_classic2', label: 'Кромка «Классік-2» (акрил)', shortLabel: 'Классік-2', description: 'Каталог 17.09.25; R12 із полицями 2 мм зверху і знизу', allowance: 2.5, materialGroup: 'Акрил', operations: [{ serviceId: 'EDGE_PROFILE_MILL', multiplier: 1 }] },
   ],
 };
 
@@ -122,6 +204,7 @@ export const defaultCommercialQuoteSettings: CommercialQuoteSettings = {
 export function createEmptyProject(): Project {
   return {
     id: uid('project'),
+    formatVersion: CURRENT_PROJECT_FORMAT_VERSION,
     orderNumber: '',
     customer: '',
     uiLanguage: 'uk',

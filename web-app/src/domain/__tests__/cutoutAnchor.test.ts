@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { cutoutBox, cornerAnchor, cutoutCenter, toCenterCutouts } from '../cutoutAnchor';
+import { anchorContextFor } from '../elementToDetail';
 import type { SurfaceCutout } from '../types';
 
 /**
@@ -130,5 +131,58 @@ describe('toCenterCutouts — шлюз у рушій', () => {
     const anchor = cornerAnchor(lShape, 'A');
     expect(anchor?.x).toBe(2000);
     expect(anchor?.dirX).toBe(-1);
+  });
+});
+
+describe('габарит контексту прив\'язки', () => {
+  // Контур деталі, точки кутів (jointAnchorPoints) і контекст прив'язки
+  // МУСЯТЬ брати габарит з тих самих полів. Розбіжність тут не зсуває виріз
+  // на кілька міліметрів — вона перевертає напрямок «усередину деталі»,
+  // і виріз від нижнього кута виїжджає за контур.
+  const draft = (patch: Record<string, unknown>) => ({
+    kind: 'rect', width: 1200, height: 600,
+    outerWidth: 1200, outerHeight: 900,      // сміття з createDraft: сенс лише для Г-форми
+    innerHorizontal: 500, innerVertical: 400,
+    diameter: 800, ellipseWidth: 1200, ellipseHeight: 600,
+    ...patch,
+  } as never);
+
+  it('прямокутник бере власні width/height, а не outerWidth/outerHeight', () => {
+    const ctx = anchorContextFor(draft({ width: 1800, height: 450 }));
+    expect(ctx.width).toBe(1800);
+    expect(ctx.height).toBe(450);
+  });
+
+  it('низька деталь: від нижнього кута виріз іде ВГОРУ, а не за контур', () => {
+    // Обшивка подіуму 1800×450 із заповненим outerHeight=900: раніше
+    // 450 <= 900/2 давало напрямок «вниз» і виріз опинявся під деталлю.
+    const panel = draft({ width: 1800, height: 450 });
+    const anchor = cornerAnchor(anchorContextFor(panel), 'CD');
+    expect(anchor?.y).toBe(450);
+    expect(anchor?.dirY).toBe(-1);
+
+    const slot: SurfaceCutout = {
+      id: 'v', shape: 'rect', type: 'custom', bindCorner: 'CD',
+      x: 20, y: 100, width: 1760, height: 12,
+    };
+    const { cy } = cutoutCenter(slot, anchorContextFor(panel));
+    expect(cy).toBe(450 - 106);
+    expect(cy).toBeGreaterThan(0);
+    expect(cy).toBeLessThan(450);
+  });
+
+  it('Г-подібна далі бере outerWidth/outerHeight — там це і є габарит', () => {
+    const ctx = anchorContextFor(draft({ kind: 'l', outerWidth: 2400, outerHeight: 1800 }));
+    expect(ctx.width).toBe(2400);
+    expect(ctx.height).toBe(1800);
+  });
+
+  it('коло і еліпс беруть свої габарити', () => {
+    const circle = anchorContextFor(draft({ kind: 'circle', diameter: 900 }));
+    expect(circle.width).toBe(900);
+    expect(circle.height).toBe(900);
+    const ellipse = anchorContextFor(draft({ kind: 'ellipse', ellipseWidth: 1400, ellipseHeight: 700 }));
+    expect(ellipse.width).toBe(1400);
+    expect(ellipse.height).toBe(700);
   });
 });

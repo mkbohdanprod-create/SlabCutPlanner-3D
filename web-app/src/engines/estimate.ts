@@ -35,12 +35,27 @@ import {
   type ProductionFactKind,
 } from './productionFacts';
 
+/**
+ * Звідки взялась ціна рядка кошторису:
+ *   erp    — порахувала 1С за кодом номенклатури (externalId);
+ *   manual — ціна з каталогу налаштувань: так живуть послуги, які
+ *            керівник завів руками і яких в обліку ще немає;
+ *   none   — ціни немає: або в операції не заповнений код 1С, або 1С за
+ *            цим кодом нічого не повернула.
+ *
+ * Вбудований каталог увесь нульовий (domain/services.ts), тому 'manual'
+ * тут — це завжди свідомо вписана людиною ціна, а не забутий хардкод.
+ */
+export type EstimatePriceSource = 'erp' | 'manual' | 'none';
+
 export interface EstimateLine {
   serviceId: string;
   name: string;
   unit: ServiceUnit;
   quantity: number;
   unitPrice: number;
+  /** Звідки взялась ціна рядка — див. EstimatePriceSource */
+  priceSource: EstimatePriceSource;
   total: number;
   category: ServiceCategory;
   /** Код в обліковій системі, якщо керівник його заповнив */
@@ -79,8 +94,16 @@ export interface EstimateOptions {
   details?: Detail[];
   /** Ефективні правила прив'язки. За замовчуванням — вбудовані. */
   rules?: MappingRule[];
-  /** Каталог послуг із цінами. За замовчуванням — вбудований. */
+  /** Каталог послуг. За замовчуванням — вбудований (увесь без цін). */
   catalog?: Record<string, ServiceDefinition>;
+  /**
+   * Ціни від 1С: код номенклатури (externalId) → грн за одиницю.
+   * Порожньо — кошторис рахує кількості, а гроші лишаються нульові й
+   * позначені як 'none'. Джерело те саме, що й у «Прорахунку»
+   * (components/ui/usePrices1c.ts), тому за один код обидва документи
+   * показують одне число.
+   */
+  erpPrices?: Record<string, number>;
 }
 
 export const CATEGORY_LABELS: Record<ServiceCategory, string> = {
@@ -96,6 +119,58 @@ function round2(value: number) {
   return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
 }
 
+/**
+ * Що спитати в 1С під цей кошторис: код номенклатури і сумарна кількість.
+ *
+ * Кількості за однаковим кодом складаються: 195304 приходить і з
+ * криволінійної порізки, і з периметра вирізів — для 1С це одна позиція,
+ * і питати її двічі різними числами означало б отримати дві різні знижки.
+ * Рядки без коду сюди не потрапляють: питати за ними нема за чим.
+ */
+export function estimatePriceRequests(lines: EstimateLine[]): Array<{ code: string; qty: number }> {
+  const byCode = new Map<string, number>();
+  lines.forEach((line) => {
+    if (!line.externalId) return;
+    byCode.set(line.externalId, (byCode.get(line.externalId) ?? 0) + line.quantity);
+  });
+  return [...byCode].map(([code, qty]) => ({ code, qty: Math.round(qty * 1000) / 1000 }));
+}
+
+/**
+ * Один рядок кошторису. Гроші тут і тільки тут: обидва подання
+ * (проєкт і деталь) мають рахувати ціну однаково, інакше паспорт деталі
+ * і кошторис проєкту розійдуться на тому самому коді.
+ */
+function buildLine(
+  service: ServiceDefinition,
+  entry: { quantity: number; ruleIds: string[]; factKinds: ProductionFactKind[]; refs: FactRef[] },
+  erpPrices: Record<string, number>,
+): EstimateLine {
+  const quantity = Math.round(entry.quantity * 1000) / 1000;
+  const erpPrice = service.externalId ? erpPrices[service.externalId] : undefined;
+  // Ціна з каталогу підхоплюється тільки там, де 1С мовчить, і тільки
+  // якщо її справді вписали: нуль означає «не задано», а не «безкоштовно».
+  const manualPrice = service.price > 0 ? service.price : undefined;
+  const unitPrice = erpPrice ?? manualPrice ?? 0;
+  const priceSource: EstimatePriceSource = erpPrice !== undefined ? 'erp'
+    : manualPrice !== undefined ? 'manual' : 'none';
+  return {
+    serviceId: service.id,
+    name: service.name,
+    unit: service.unit,
+    quantity,
+    unitPrice,
+    priceSource,
+    total: round2(quantity * unitPrice),
+    category: service.category,
+    externalId: service.externalId,
+    ruleIds: entry.ruleIds,
+    factKinds: entry.factKinds,
+    detailIds: [...new Set(entry.refs.map((ref) => ref.detailId).filter(Boolean) as string[])],
+    refs: entry.refs,
+  };
+}
+
 export function computeEstimate(
   project: Project,
   parts: DetailPart[],
@@ -103,6 +178,7 @@ export function computeEstimate(
 ): EstimateResult {
   const catalog = options.catalog ?? DEFAULT_SERVICE_CATALOG;
   const rules = options.rules ?? DEFAULT_MAPPING_RULES;
+  const erpPrices = options.erpPrices ?? {};
   const material = project.projectMaterial as MaterialType | undefined;
 
   const facts = extractProductionFacts(project, parts, { details: options.details });
@@ -119,21 +195,7 @@ export function computeEstimate(
       missingServiceIds.push(entry.serviceId);
       return;
     }
-    const quantity = Math.round(entry.quantity * 1000) / 1000;
-    lines.push({
-      serviceId: service.id,
-      name: service.name,
-      unit: service.unit,
-      quantity,
-      unitPrice: service.price,
-      total: round2(quantity * service.price),
-      category: service.category,
-      externalId: service.externalId,
-      ruleIds: entry.ruleIds,
-      factKinds: entry.factKinds,
-      detailIds: [...new Set(entry.refs.map((ref) => ref.detailId).filter(Boolean) as string[])],
-      refs: entry.refs,
-    });
+    lines.push(buildLine(service, entry, erpPrices));
   });
 
   lines.sort((a, b) => {
@@ -211,6 +273,7 @@ export function computeDetailEstimate(
 ): DetailEstimate {
   const catalog = options.catalog ?? DEFAULT_SERVICE_CATALOG;
   const rules = options.rules ?? DEFAULT_MAPPING_RULES;
+  const erpPrices = options.erpPrices ?? {};
   const material = project.projectMaterial as MaterialType | undefined;
 
   const allFacts = extractProductionFacts(project, parts, { details: options.details });
@@ -226,21 +289,7 @@ export function computeDetailEstimate(
       missingServiceIds.push(entry.serviceId);
       return;
     }
-    const quantity = Math.round(entry.quantity * 1000) / 1000;
-    lines.push({
-      serviceId: service.id,
-      name: service.name,
-      unit: service.unit,
-      quantity,
-      unitPrice: service.price,
-      total: round2(quantity * service.price),
-      category: service.category,
-      externalId: service.externalId,
-      ruleIds: entry.ruleIds,
-      factKinds: entry.factKinds,
-      detailIds: [...new Set(entry.refs.map((ref) => ref.detailId).filter(Boolean) as string[])],
-      refs: entry.refs,
-    });
+    lines.push(buildLine(service, entry, erpPrices));
   });
 
   lines.sort((a, b) => a.name.localeCompare(b.name, 'uk'));

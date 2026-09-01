@@ -182,7 +182,9 @@ export function exportStamp(project: Project) {
 }
 
 export function projectBaseName(project: Project) {
-  return `${safeFilePart(project.orderNumber, 'без номера')}_${safeFilePart(project.customer, 'без контрагента')}_${exportStamp(project)}`;
+  // Контрагента могли заповнити лише в прорахунку — шапка не обов'язкова
+  const customer = project.customer || project.quoteCalc?.contragent;
+  return `${safeFilePart(project.orderNumber, 'без номера')}_${safeFilePart(customer, 'без контрагента')}_${exportStamp(project)}`;
 }
 
 export function downloadBytes(filename: string, bytes: Uint8Array, type: string) {

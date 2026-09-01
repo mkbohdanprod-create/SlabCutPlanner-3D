@@ -53,8 +53,30 @@ const project = (overrides: Record<string, unknown> = {}): Project => ({
   ...overrides,
 } as unknown as Project);
 
+/**
+ * Каталог із цінами для тестів.
+ *
+ * Вбудований каталог застосунку цін не має: гроші дає 1С за кодом
+ * номенклатури (domain/services.ts). Але математику КІЛЬКОСТЕЙ зручно
+ * перевіряти саме через суму, тому потрібні числа задаються тут явно —
+ * і заразом це перевіряє шлях 'manual' (ціна з каталогу, коли 1С мовчить).
+ */
+const withPrices = (prices: Record<string, number>) => {
+  const catalog = { ...DEFAULT_SERVICE_CATALOG };
+  Object.entries(prices).forEach(([id, price]) => {
+    catalog[id] = { ...catalog[id], price };
+  });
+  return catalog;
+};
+
+const TEST_CATALOG = withPrices({
+  CUT_STRAIGHT: 200,
+  EDGE_ROUND: 500,
+  MATERIAL_CERAMIC: 6000,
+});
+
 describe('computeEstimate', () => {
-  const result = computeEstimate(project(), [part()], { details, catalog: DEFAULT_SERVICE_CATALOG });
+  const result = computeEstimate(project(), [part()], { details, catalog: TEST_CATALOG });
 
   it('прямий різ береться з периметра, а не з габаритів', () => {
     // 2*(1000+600) = 3200 мм = 3.2 м × 200 ₴ = 640 ₴
@@ -68,10 +90,11 @@ describe('computeEstimate', () => {
   });
 
   it('торець рахується по реальній стороні', () => {
-    // B — нижня сторона, 1000 мм = 1 м; профіль r2_top → EDGE_ROUND 500 ₴
+    // Єдина угода (хвиля 3): B — праве ребро, 600 мм = 0.6 м;
+    // профіль r2_top → EDGE_ROUND 500 ₴/м.
     const line = result.lines.find((l) => l.serviceId === 'EDGE_ROUND');
-    expect(line?.quantity).toBe(1);
-    expect(line?.total).toBe(500);
+    expect(line?.quantity).toBe(0.6);
+    expect(line?.total).toBe(300);
   });
 
   it('матеріал рахується за площею деталей, без коефіцієнта 1.2', () => {

@@ -32,8 +32,8 @@ const SLAB: SlabInstance = {
 function tableWithFolds(): Product {
   const fold = (side: string, width: number) => ({
     id: `prod_x/element:fold_${side}`,
-    type: 'Підворот' as const,
-    baseDefinition: { type: 'Підворот', kind: 'rect', quantity: 1, thickness: 20, width, height: 100 } as any,
+    type: 'Потовщення' as const,
+    baseDefinition: { type: 'Потовщення', kind: 'rect', quantity: 1, thickness: 20, width, height: 100 } as any,
     joints: [],
     additions: [],
   });

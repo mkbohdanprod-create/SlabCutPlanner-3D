@@ -1,5 +1,5 @@
 import type { DetailPart, Placement, Point, Project, Rotation, TextureLayout, TextureFrame } from '../../domain/types';
-import { rotatedLocalPoints, rotatedPoints, rotatedSize } from '../../lib/project';
+import { mirroredLocalPoints, rotatedLocalPoints, rotatedPoints, rotatedSize } from '../../lib/project';
 import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
 import type { TextureItem } from './pdfTypes';
 import { outwardNormal } from '../../engines/geometryUtils';
@@ -13,12 +13,18 @@ export function pathFromPolygons(polygons: Point[][], scale = 1, offsetX = 0, of
     .join(' ');
 }
 
-export function localHoles(part: DetailPart, rotation: Rotation) {
-  return (part.holes ?? []).map((hole) => rotatedLocalPoints(hole, rotation, part.width, part.height, part.points));
+export function localHoles(part: DetailPart, rotation: Rotation, mirror = false) {
+  // Крок 3.4: отвори дзеркаляться разом із контуром, інакше мийка поїде
+  // на протилежний бік деталі.
+  const reference = mirror ? mirroredLocalPoints(part.points, part.width) : part.points;
+  return (part.holes ?? []).map((hole) => rotatedLocalPoints(
+    mirror ? mirroredLocalPoints(hole, part.width) : hole,
+    rotation, part.width, part.height, reference,
+  ));
 }
 
 export function placementHoles(part: DetailPart, placement: Placement) {
-  return localHoles(part, placement.rotation).map((hole) => hole.map((point) => ({
+  return localHoles(part, placement.rotation, Boolean(placement.mirror)).map((hole) => hole.map((point) => ({
     x: point.x + placement.x,
     y: point.y + placement.y,
   })));
@@ -213,4 +219,4 @@ export function resolveTextureOverlaps(items: TextureItem[]) {
     const shift = shifts.get(`${item.part.detailId}:${item.part.parentLabel}`) ?? { x: 0, y: 0 };
     return shift.x || shift.y ? { ...item, displayX: item.displayX + shift.x, displayY: item.displayY + shift.y } : item;
   });
-}
+}

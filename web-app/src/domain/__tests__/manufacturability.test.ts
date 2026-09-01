@@ -197,8 +197,18 @@ describe('кути', () => {
     expect(issue?.message).toContain(String(RADIUS_LIMITS.outerMin));
   });
 
-  it('радіус 60 мм проходить', () => {
-    expect(codes(checkManufacturability(productWith({ A: { type: 'radius', radius: 60 } }), []))).toEqual([]);
+  it('радіус 60 мм проходить, але просить узгодити з технологом', () => {
+    // Поріг «зробити не можна» лишився на 60 мм. Понад нього, до 100 мм,
+    // з'явилось окреме попередження (рішення Богдана, 19.08): сама деталь
+    // нормальна, питання виникає до ГНУТОЇ смуги на такому радіусі —
+    // чи вдасться її зігнути, залежить від матеріалу, товщини й вильоту.
+    const issues = checkManufacturability(productWith({ A: { type: 'radius', radius: 60 } }), []);
+    expect(codes(issues)).toEqual(['radius_needs_technologist']);
+    expect(issues.every((issue) => issue.severity === 'guarantee')).toBe(true);
+  });
+
+  it('радіус 100 мм не викликає жодного зауваження', () => {
+    expect(codes(checkManufacturability(productWith({ A: { type: 'radius', radius: 100 } }), []))).toEqual([]);
   });
 
   it('внутрішній радіус із крайкою менший за 15 мм — зробити не можна', () => {

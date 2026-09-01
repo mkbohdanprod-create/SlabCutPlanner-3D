@@ -12,7 +12,7 @@ import {
   type MappingProblem,
   type MappingRule,
 } from '../domain/serviceMapping';
-import { mergeQuotePriceBook, type QuotePriceBook } from '../domain/quoteCalc';
+import { mergeQuotePriceBook, stripQuotePrices, type QuotePriceBook } from '../domain/quoteCalc';
 
 /**
  * Налаштування прайсу й прив'язок послуг до обробок.
@@ -30,7 +30,7 @@ import { mergeQuotePriceBook, type QuotePriceBook } from '../domain/quoteCalc';
  *   · `customRules` — правила, дописані керівником. Живуть самі по собі.
  */
 
-const SETTINGS_VERSION = 4;
+const SETTINGS_VERSION = 6;
 
 /** PIN супер-адміна за замовчуванням — змінюється після першого входу */
 export const DEFAULT_ADMIN_PIN = '1111';
@@ -42,11 +42,29 @@ interface SettingsState {
   /** Прайс і коди 1С вкладки «Прорахунок» — редагують старші менеджери */
   quotePriceBook: QuotePriceBook;
   /**
+   * Режим калібрування цін (рішення 25.08.2026). ВИМКНЕНО за умовчанням.
+   *
+   * Вимкнено — ручні ціни прорахунку рушій НЕ бачить взагалі: ціна або
+   * від 1С за кодом номенклатури, або її немає. Це головний запобіжник: навіть
+   * якщо в localStorage лежить стара ціна, вона не потрапить у КП.
+   *
+   * Увімкнено — керівник свідомо перекриває ціну руками, щоб зібрати
+   * статистику розходжень на 10–20 проектах і потім виправити прайс у
+   * 1С. Кожен такий рядок помічений як ручний, а поряд лишається
+   * ціна, яку дала 1С — інакше нема з чим порівнювати.
+   */
+  quoteManualPricing: boolean;
+  /**
    * PIN супер-адміна: за ним ховаються адмінські меню (налаштування
    * прайсів і прив'язок). Це НЕ безпека, а запобіжник від випадкових
    * рук: PIN лежить у localStorage відкрито, як і самі налаштування.
    */
   adminPin: string;
+  /**
+   * Поріг попередження про коротку сторону деталі, мм — за матеріалом (FG-10).
+   * Порожньо = DEFAULT_MIN_SIDE_MM (150). Нуль = перевірку вимкнено.
+   */
+  minSideMm: Record<string, number>;
 
   // ── каталог послуг ─────────────────────────────────────────────────
   updateService: (id: string, updates: Partial<ServiceDefinition>) => void;
@@ -74,7 +92,9 @@ interface SettingsState {
   /** Код 1С за ключем (fab:…, measure:…, svc:… — див. QuotePriceBook.codes1c) */
   setQuoteCode1c: (key: string, code: string) => void;
   resetQuotePriceBook: () => void;
+  setQuoteManualPricing: (enabled: boolean) => void;
   setAdminPin: (pin: string) => void;
+  setMinSideMm: (material: string, mm: number | undefined) => void;
 
   // ── читання ────────────────────────────────────────────────────────
   getRules: () => MappingRule[];
@@ -102,7 +122,9 @@ export const useSettingsStore = create<SettingsState>()(
       mappingOverrides: {},
       customRules: [],
       quotePriceBook: mergeQuotePriceBook(),
+      quoteManualPricing: false,
       adminPin: DEFAULT_ADMIN_PIN,
+      minSideMm: {},
 
       updateService: (id, updates) => set((state) => {
         if (!state.serviceCatalog[id]) return state;
@@ -234,7 +256,21 @@ export const useSettingsStore = create<SettingsState>()(
 
       resetQuotePriceBook: () => set({ quotePriceBook: mergeQuotePriceBook() }),
 
+      setQuoteManualPricing: (enabled) => set({ quoteManualPricing: enabled }),
+
       setAdminPin: (pin) => set({ adminPin: pin.trim() || DEFAULT_ADMIN_PIN }),
+
+      /**
+       * Порожнє поле в налаштуваннях = «як за замовчуванням», тому запис
+       * прибирається зовсім, а не зберігається нулем: нуль тут має власне
+       * значення — «перевірку вимкнено».
+       */
+      setMinSideMm: (material, mm) => set((state) => {
+        const next = { ...state.minSideMm };
+        if (mm === undefined || Number.isNaN(mm)) delete next[material];
+        else next[material] = Math.max(0, mm);
+        return { minSideMm: next };
+      }),
 
       getRules: () => {
         const state = get();
@@ -250,6 +286,8 @@ export const useSettingsStore = create<SettingsState>()(
         mappingOverrides: get().mappingOverrides,
         customRules: get().customRules,
         quotePriceBook: get().quotePriceBook,
+        quoteManualPricing: get().quoteManualPricing,
+        minSideMm: get().minSideMm,
       }, null, 2),
 
       importSettings: (json) => {
@@ -260,7 +298,14 @@ export const useSettingsStore = create<SettingsState>()(
             serviceCatalog: mergeBuiltinServices(parsed.serviceCatalog),
             mappingOverrides: parsed.mappingOverrides ?? {},
             customRules: Array.isArray(parsed.customRules) ? parsed.customRules : [],
-            quotePriceBook: mergeQuotePriceBook(parsed.quotePriceBook),
+            // Файл налаштувань міг бути знятий до 25.08.2026, коли ціни
+            // ще заводились руками, — чистимо їх і на імпорті теж.
+            quotePriceBook: stripQuotePrices(mergeQuotePriceBook(parsed.quotePriceBook)),
+            // Режим калібрування навмисно НЕ переїжджає з файлом: його
+            // вмикають свідомо на конкретній машині, а не «поїхало разом
+            // із налаштуваннями і ніхто не помітив».
+            quoteManualPricing: false,
+            minSideMm: parsed.minSideMm ?? {},
           });
           return { ok: true };
         } catch (error) {
@@ -283,8 +328,18 @@ export const useSettingsStore = create<SettingsState>()(
           serviceCatalog: mergeBuiltinServices(state.serviceCatalog),
           mappingOverrides: state.mappingOverrides ?? {},
           customRules: Array.isArray(state.customRules) ? state.customRules : [],
-          quotePriceBook: mergeQuotePriceBook(state.quotePriceBook),
+          // v6: ручні ціни прорахунку почищені (рішення 25.08.2026). Самого
+          // видалення дефолтів мало: у того, хто вже відкривав додаток,
+          // сім радіусних цін лежать у localStorage — і без цієї чистки
+          // вони пережили б оновлення і мовчки перекрили б відповідь 1С.
+          // Коди 1С лишаються: саме за ними питається ціна.
+          quotePriceBook: stripQuotePrices(mergeQuotePriceBook(state.quotePriceBook)),
+          // Режим калібрування після оновлення завжди вимкнений.
+          quoteManualPricing: false,
           adminPin: typeof state.adminPin === 'string' && state.adminPin ? state.adminPin : DEFAULT_ADMIN_PIN,
+          // v5 (FG-10): поріг короткої сторони за матеріалом. У тих, хто вже
+          // щось зберіг, поля немає — і це коректно означає «як було, 150».
+          minSideMm: state.minSideMm ?? {},
         } as SettingsState;
       },
     },

@@ -5,8 +5,8 @@ import JSZip from 'jszip';
 import { useProjectStore } from '../../store/useProjectStore';
 import { ticketStore } from '../../utils/bugTickets';
 import type { BugTicket } from '../../utils/bugTickets';
-import rrwebPlayer from 'rrweb-player';
-import 'rrweb-player/dist/style.css';
+// rrweb-player підвантажується динамічно (див. ефект нижче) — з тієї ж причини,
+// що й rrweb у App.tsx: блокувальники реклами ріжуть файли з «rrweb» у назві.
 
 type ServiceSection = 'main' | 'math' | 'render' | 'bugs' | 'tickets' | 'player';
 
@@ -123,25 +123,36 @@ export function ServiceDialog() {
   React.useEffect(() => {
     if (activeSection === 'player' && uploadedReport?.recording && playerRef.current) {
       if (rrwebInstanceRef.current) return; // already initialized
-      
-      try {
-        const PlayerClass = (rrwebPlayer as any).default || rrwebPlayer;
-        console.log('Init rrweb player with events:', uploadedReport.recording.length, 'PlayerClass:', PlayerClass);
-        if (uploadedReport.recording.length < 2) {
-           console.warn('Not enough events to play');
-        }
-        rrwebInstanceRef.current = new PlayerClass({
-          target: playerRef.current,
-          props: {
-            events: uploadedReport.recording,
-            autoPlay: false,
-            width: 800,
-            height: 450, // 16:9 ratio
-          },
+
+      const target = playerRef.current;
+      const events = uploadedReport.recording;
+      Promise.all([
+        import('rrweb-player'),
+        import('rrweb-player/dist/style.css'),
+      ])
+        .then(([mod]) => {
+          if (rrwebInstanceRef.current) return;
+          const PlayerClass = (mod as any).default || mod;
+          if (events.length < 2) {
+            console.warn('Not enough events to play');
+          }
+          rrwebInstanceRef.current = new PlayerClass({
+            target,
+            props: {
+              events,
+              autoPlay: false,
+              width: 800,
+              height: 450, // 16:9 ratio
+            },
+          });
+        })
+        .catch((err) => {
+          console.error('rrweb player init failed:', err);
+          if (target) {
+            target.textContent =
+              'Плеєр запису не завантажився. Найчастіша причина — блокувальник реклами: вимкніть його для цього сайту.';
+          }
         });
-      } catch (err) {
-        console.error('rrweb player init failed:', err);
-      }
     }
     
     // Cleanup player when closing or changing reports

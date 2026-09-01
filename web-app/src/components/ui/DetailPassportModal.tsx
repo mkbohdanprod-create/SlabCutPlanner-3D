@@ -1,7 +1,8 @@
 import  { useState, useMemo } from 'react';
 import { X, FileText, Settings, Plus, Trash2 } from 'lucide-react';
 import type { Detail, Project, CustomService } from '../../domain/types';
-import { computeDetailEstimate } from '../../engines/estimate';
+import { computeDetailEstimate, estimatePriceRequests } from '../../engines/estimate';
+import { usePrices1c } from './usePrices1c';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { translateStaticUiText } from '../../i18n';
@@ -50,7 +51,10 @@ export function DetailPassportModal({
   // Розріз по одній деталі: спершу відсіюються факти, і вже вони
   // перекладаються в послуги. Фільтрувати готові рядки кошторису не можна —
   // у них кількість зібрана з усього проєкту.
-  const detailEstimate = useMemo(() => {
+  // Ціни — з 1С за кодами номенклатури, як і в кошторисі: два кроки,
+  // спершу кількості, потім гроші (див. EstimatePanel). Без цього паспорт
+  // показував би нулі там, де кошторис показує суму.
+  const draftEstimate = useMemo(() => {
     if (!project || !details) return null;
     return computeDetailEstimate(project, parts, detailId, {
       details,
@@ -59,6 +63,23 @@ export function DetailPassportModal({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, parts, details, detailId, serviceCatalog, mappingOverrides, customRules]);
+
+  const priceItems = useMemo(
+    () => estimatePriceRequests(draftEstimate?.lines ?? []),
+    [draftEstimate],
+  );
+  const erp = usePrices1c(priceItems, project?.quoteCalc?.contragentId);
+
+  const detailEstimate = useMemo(() => {
+    if (!project || !details) return null;
+    return computeDetailEstimate(project, parts, detailId, {
+      details,
+      catalog: serviceCatalog,
+      rules: getRules(),
+      erpPrices: erp.unitPrices,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, parts, details, detailId, serviceCatalog, mappingOverrides, customRules, erp.unitPrices]);
 
   const calculatedServices = detailEstimate?.lines ?? [];
   const detailFacts = detailEstimate?.facts ?? [];

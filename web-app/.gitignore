@@ -31,7 +31,13 @@ old_*.tsx
 *_test.png
 compile_errors.txt
 
-# Environment secrets
-.env
+# Локальний dev-оверрайд (публікує порт api для vite-проксі) — не для коміту
+docker-compose.dev-override.yml
 
-.vercel
+# Секрети — НІКОЛИ не комітити.
+# 10.08.2026 закомічений .env із живими секретами коштував ротації всіх
+# ключів. Копія .env.example → .env лежить рівно тут, у папці репозиторію,
+# і без цього рядка git закомітить її мовчки.
+.env
+.env.*
+!.env.example

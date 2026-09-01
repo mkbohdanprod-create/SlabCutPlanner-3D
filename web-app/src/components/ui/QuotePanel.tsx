@@ -1,13 +1,19 @@
 import { Suspense, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Calculator, Plus, Trash2, AlertTriangle, Download, RefreshCw, FileDown, Loader2, Settings, X } from 'lucide-react';
+import { Calculator, Plus, Trash2, AlertTriangle, Download, RefreshCw, FileDown, Loader2, Settings, X, ChevronDown } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useUIStore } from '../../store/useStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
 import { exportQuotePdf, DEFAULT_QUOTE_PDF_OPTIONS, type QuotePdfOptions } from '../../utils/export/quotePdf';
 import { QuoteSettingsModal } from './QuoteSettingsModal';
+import { OrganizationSearchInput } from './OrganizationSearchInput';
+import { BranchSelect } from './BranchSelect';
+import { usePrices1c } from './usePrices1c';
+import { QuoteOrderCard } from './QuoteOrderCard';
+import type { Branch, CustomerContact, CustomerOrganization } from '../../lib/api';
 import { Viewer3D } from '../3d/Viewer3DLazy';
+import type { ProductSnapshots } from '../3d/Viewer3D';
 import {
   autoQuoteServices,
   mergeQuoteServices,
@@ -28,13 +34,16 @@ import {
   QUOTE_JOINT_ORIENTATIONS,
   QUOTE_MATERIAL_TYPES,
   QUOTE_METHODS,
+  QUOTE_PAYMENT_TYPES,
   QUOTE_PRODUCT_TYPES,
   QUOTE_SERVICES,
   QUOTE_SHAPES,
   createQuoteCalcDoc,
   quoteProductType,
+  quoteMaterialFromSlab,
   type QuoteCalcDoc,
   type QuoteItem,
+  type QuoteMaterialLine,
 } from '../../domain/quoteCalc';
 
 /**
@@ -45,12 +54,71 @@ import {
  * кромок. Зберігається в проєкті (project.quoteCalc), тому їде разом
  * зі збереженням і синхронізується між вікнами.
  *
- * Ціни: прайс за замовчуванням порожній — менеджер вписує ціну прямо
- * в рядок розрахунку (зберігається в документі як priceOverrides).
- * Редактор прайсу для старших менеджерів — наступний крок.
+ * Ціни рахує 1С (метод getDiscountPrice) за кодами номенклатур 1С:
+ * він знає прайс-категорію контрагента, знижки й акції. Локального прайсу
+ * як фолбеку більше немає (рішення 25.08.2026): рядок без коду або без
+ * відповіді сервісу лишається нулем — мовчазна підміна ціни колись уже
+ * приховала непрацюючу інтеграцію.
+ *
+ * Виняток один — режим калібрування (QuoteSettingsModal): керівник
+ * свідомо перекриває ціну руками, щоб зібрати статистику розходжень.
+ * Тоді рядок помічений «РУЧНА», а PDF виходить блідо-червоною чернеткою
+ * з написом «клієнту не передавати».
  */
 
 const inputCls = 'border border-slate-300 rounded px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-[#0084ff]';
+
+/**
+ * Прелоадер на місці числа.
+ *
+ * Саме сіра смужка розміром із майбутнє число, а не спінер: таблиця не
+ * стрибає, поки 1С рахує, і одразу видно, ЯКІ рядки ще без ціни.
+ */
+function PricePlaceholder({ className = '' }: { className?: string }) {
+  return <span className={`inline-block rounded bg-slate-200 animate-pulse align-middle ${className}`} />;
+}
+
+/**
+ * Згортана секція прорахунку (26.08, прохання власника).
+ *
+ * Прорахунок виріс у довгий сувій, а працюють зазвичай з однією секцією.
+ * Клік по заголовку згортає картку до одного рядка: назва + коротка
+ * вижимка (контрагент, кількість виробів, сума…) — важливе видно й у
+ * згорнутому вигляді.
+ *
+ * Стан живе в React, не в localStorage: збережений стан згортання
+ * пережив би зміну замовлення і ховав би секції, які саме зараз важливі.
+ * Кожне відкриття прорахунку починається з розгорнутих секцій.
+ */
+function QuoteSection({ title, summary, headerRight, defaultOpen = true, children }: {
+  title: string;
+  /** Вижимка для згорнутого стану — саме те, що треба бачити без розгортання */
+  summary?: React.ReactNode;
+  /** Кнопки праворуч у заголовку — видно лише в розгорнутому стані */
+  headerRight?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+      <div
+        className={`px-6 py-3 flex items-center gap-3 cursor-pointer select-none hover:bg-slate-50/70 ${open ? 'border-b border-slate-100' : ''}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <h3 className="text-sm font-bold text-slate-700 uppercase shrink-0">{title}</h3>
+        {!open && summary && (
+          <span className="text-sm text-slate-500 truncate">{summary}</span>
+        )}
+        {open && headerRight && (
+          <div className="ml-auto flex gap-2" onClick={(event) => event.stopPropagation()}>{headerRight}</div>
+        )}
+      </div>
+      {open && <div className="p-6 pt-4 flex flex-col gap-3">{children}</div>}
+    </div>
+  );
+}
 
 function Field({ label, children, style }: { label: string; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
@@ -71,17 +139,42 @@ let itemSeq = 0;
 export function QuotePanel() {
   const project = useProjectStore((s) => s.project);
   const parts = useProjectStore((s) => s.parts);
+  // id проєкту в нашій базі — він їде в замовлення як project_id, за ним
+  // замовлення в ERP зводиться назад із проєктом застосунку.
+  const dbProjectId = useProjectStore((s) => s.currentDbProjectId);
   const updateProject = useProjectStore((s) => s.updateProject);
   const priceBook = useSettingsStore((s) => s.quotePriceBook);
+  const manualPricing = useSettingsStore((s) => s.quoteManualPricing);
   const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  /**
+   * Контрагент прорахунку живе ТІЛЬКИ в документі.
+   *
+   * Раніше порожнє поле показувало контрагента з шапки проєкту, а вибір у
+   * довіднику писав ще й у шапку. Через це поле не стиралось: щойно його
+   * очищали, назад приїжджало значення з шапки. Тепер це два незалежні
+   * поля — у шапці менеджер пише руками, тут бере з довідника, а документи
+   * і так уміють брати те, що заповнене (див. utils/export).
+   */
   const doc: QuoteCalcDoc = useMemo(
     () => ({ ...createQuoteCalcDoc(), ...(project.quoteCalc ?? {}) }),
     [project.quoteCalc],
   );
 
   const patch = (partial: Partial<QuoteCalcDoc>) => updateProject({ quoteCalc: { ...doc, ...partial } });
+
+  /**
+   * Вибір організації в довіднику заповнює лише документ прорахунку —
+   * шапку проєкту він більше не чіпає. id організації лишається в
+   * документі: ним 1С рахує ціни за прайсом контрагента.
+   */
+  const pickOrganization = (organization: CustomerOrganization, contact: CustomerContact | null) => patch({
+    contragent: organization.title,
+    contragentId: organization.id,
+    contactName: contact?.name ?? '',
+    contactPhone: contact?.phone ?? '',
+  });
   const patchItem = (id: string, partial: Partial<QuoteItem>) => patch({
     items: doc.items.map((item) => (item.id === id ? { ...item, ...partial } : item)),
   });
@@ -113,16 +206,107 @@ export function QuotePanel() {
   // в площині, підбір текстури). Ручне значення в документі перемагає
   // авто; порожнє поле повертає авто.
   const autoServices = useMemo(
-    () => autoQuoteServices(project, getAllProjectDetails(project)),
-    [project],
+    () => autoQuoteServices(project, getAllProjectDetails(project), parts),
+    [project, parts],
   );
+  /**
+   * Матеріал прорахунку — зі СЛЕБІВ проєкту, по рядку на артикул.
+   *
+   * Слеб узятий із каталогу вже несе артикул, матеріал, декор і товщину,
+   * тож заводити те саме в прорахунку вдруге не треба: кількість — це
+   * скільки листів цього артикулу додано, ціну за артикулом дає 1С,
+   * точно як за послуги.
+   *
+   * Рахуємо тут, а не зберігаємо в документі: джерело істини — список
+   * слебів. Копія в документі розійшлася б із ним при першому ж
+   * видаленні слеба.
+   */
+  const slabMaterials = useMemo(() => {
+    const byArticle = new Map<string, QuoteMaterialLine>();
+    project.slabs.forEach((slab) => {
+      // Матеріал замовника в прорахунок не йде: він не наш, ми його не
+      // продаємо і ціни за нього не питаємо.
+      if (slab.customerOwn) return;
+      // Слеби без артикулу (старі проєкти) групуються за своїм набором
+      // ознак — інакше різні декори злиплись би в один рядок.
+      const key = slab.article || `no-article:${slab.material}|${slab.decor}|${slab.thickness}`;
+      // Півлиста важить 0.5: артикула на нього не існує, тому це наша
+      // математика, а не окрема номенклатура.
+      const weight = slab.halfSheet ? 0.5 : 1;
+      const line = byArticle.get(key);
+      if (line) { line.qty += weight; return; }
+      byArticle.set(key, {
+        article: slab.article ?? '',
+        key,
+        material: slab.material,
+        decor: slab.decor,
+        thickness: slab.thickness,
+        qty: weight,
+      });
+    });
+    return [...byArticle.values()];
+  }, [project.slabs]);
+
+  /**
+   * Матеріал і виробник ЗАМКНУТІ на слеби (рішення 25.08.2026).
+   *
+   * У проєкт можна взяти лише один тип матеріалу й одного виробника —
+   * решта слебів відрізняється тільки декором, товщиною і габаритом.
+   * Тому в прорахунку ці два поля не обираються: щойно з'явився перший
+   * слеб, вони приходять із нього.
+   *
+   * Обмеженням замість купи правил: інакше довелось би вирішувати, що
+   * робити з прорахунком, у якому кераміка Laminam і кварцит Avant
+   * одночасно — а такого замовлення в житті не буває.
+   *
+   * `undefined` (Компакт-плита, пари в прорахунку немає) лишає те, що
+   * було в документі, — див. quoteMaterialFromSlab.
+   */
+  const lockedMaterial = useMemo(
+    () => (project.slabs[0] ? quoteMaterialFromSlab(project.slabs[0].material) : undefined),
+    [project.slabs],
+  );
+  const lockedManufacturer = project.slabs[0]?.manufacturer || '';
+  const materialType = lockedMaterial ?? doc.materialType;
+  const manufacturerName = lockedManufacturer || doc.manufacturer;
+
   const effectiveDoc = useMemo(
-    () => ({ ...doc, services: mergeQuoteServices(autoServices, doc.services) }),
-    [doc, autoServices],
+    () => ({
+      ...doc,
+      materialType,
+      manufacturer: manufacturerName,
+      services: mergeQuoteServices(autoServices, doc.services),
+      materials: slabMaterials,
+    }),
+    [doc, autoServices, slabMaterials, materialType, manufacturerName],
   );
 
-  const result = useMemo(() => computeQuoteCalc(effectiveDoc, priceBook), [effectiveDoc, priceBook]);
+  // Два проходи движка: перший дає коди й кількості рядків (кількість від
+  // ціни не залежить), за ними питаємо ціни, другий рахує вже з ними.
+  const bookResult = useMemo(() => computeQuoteCalc(effectiveDoc, priceBook), [effectiveDoc, priceBook]);
+  /**
+   * Що питаємо в 1С.
+   *
+   * Для МАТЕРІАЛУ кількість завжди 1 — питаємо ціну за ОДИН лист і
+   * множимо самі (рішення 26.08.2026). Артикула на півлиста в 1С не
+   * існує, і запит на «3.5 листа» база не зрозуміє. Для решти рядків
+   * кількість іде як є.
+   */
+  const priceItems = useMemo(
+    () => bookResult.lines.flatMap((line) => (
+      line.code ? [{ code: line.code, qty: line.group === 'material' ? 1 : line.qty }] : []
+    )),
+    [bookResult],
+  );
+  const erp = usePrices1c(priceItems, doc.contragentId);
+  const result = useMemo(
+    () => computeQuoteCalc(effectiveDoc, priceBook, erp.unitPrices, manualPricing),
+    [effectiveDoc, priceBook, erp.unitPrices, manualPricing],
+  );
   const [pdfBusy, setPdfBusy] = useState(false);
+  /* Розрахунок згортається як і решта секцій; у згорнутому рядку видно
+     загальну суму — це головне число, і воно не має ховатись. */
+  const [calcOpen, setCalcOpen] = useState(true);
 
   // Діалог складу PDF: що включати в документ. Знімки 3D робить прихований
   // в'ювер у режимі showcase (білий фон, 3 ракурси) — той самий механізм,
@@ -136,8 +320,14 @@ export function QuotePanel() {
   });
   const [capturing3d, setCapturing3d] = useState(false);
 
-  const runPdfExport = async (snapshots: string[]) => {
+  const runPdfExport = async (snapshots: string[], productSnapshots?: ProductSnapshots[]) => {
     setCapturing3d(false);
+    // FG-08/SC-36: якщо знімок 3D не вдався (WebGL-контекст був втрачений),
+    // раніше PDF мовчки виходив із порожньою рамкою замість фото виробу.
+    // Кажемо про це прямо, а не ховаємо за порожньою сторінкою.
+    if (pdfOptions.includeViz && snapshots.length === 0) {
+      alert('Не вдалося зробити знімок 3D для прорахунку (WebGL-контекст був недоступний). PDF сформується без фото виробу — спробуйте ще раз за кілька секунд.');
+    }
     setPdfBusy(true);
     try {
       const options: QuotePdfOptions = {
@@ -145,7 +335,12 @@ export function QuotePanel() {
         includeCalc: pdfOptions.includeCalc,
         includeDetailsList: pdfOptions.includeDetailsList,
         includeDrawings: pdfOptions.includeDrawings,
+        // Документ у режимі калібрування виходить блідо-червоним і з
+        // попередженням: ручна ціна не має вийти з дому як комерційна.
+        calibration: manualPricing,
         snapshots,
+        // Кілька виробів → окремий бланк візуалізації на кожен.
+        productSnapshots,
       };
       await exportQuotePdf(project, effectiveDoc, result, options, parts, getAllProjectDetails(project));
       setPdfDialogOpen(false);
@@ -161,16 +356,9 @@ export function QuotePanel() {
 
   const isMeasure = doc.method === 'measure_install';
   const isSinkOnly = doc.method === 'sink_only';
-  const isAcrylic = doc.materialType === 'Акриловий камінь';
-  const manufacturers = DEFAULT_MANUFACTURERS[doc.materialType] ?? [];
+  const isAcrylic = materialType === 'Акриловий камінь';
+  const manufacturers = DEFAULT_MANUFACTURERS[materialType] ?? [];
   const availableTypes = QUOTE_PRODUCT_TYPES.filter((type) => (isSinkOnly ? type.sinkFlow : true));
-
-  const setOverride = (lineId: string, raw: string) => {
-    const next = { ...doc.priceOverrides };
-    if (raw.trim() === '') delete next[lineId];
-    else next[lineId] = num(raw);
-    patch({ priceOverrides: next });
-  };
 
   const exportJson = () => {
     const blob = new Blob([JSON.stringify({ doc, result }, null, 2)], { type: 'application/json' });
@@ -184,6 +372,62 @@ export function QuotePanel() {
     URL.revokeObjectURL(url);
   };
 
+  /**
+   * Звідки ціни: контрагент вмикає його прайс-категорію, без нього сервіс
+   * рахує за загальним прайсом.
+   *
+   * Підпис і час — окремими вузлами, бо перекладач інтерфейсу міняє текст
+   * вузла ЦІЛКОМ за збігом зі словником: приліплений час зробив би рядок
+   * неперекладним.
+   */
+  const priceStatus = useMemo(() => {
+    const time = erp.updatedAt
+      ? new Date(erp.updatedAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })
+      : '';
+    if (erp.state === 'waiting') return { label: 'Виберіть контрагента — без нього ціни не рахуються', time: '' };
+    if (erp.state === 'loading') return { label: 'Рахую ціни в 1С…', time: '' };
+    if (erp.state === 'error' || erp.state === 'off') return { label: erp.error, time: '' };
+    if (erp.state === 'ready') {
+      return {
+        label: doc.contragentId
+          ? 'Ціни від 1С за прайсом контрагента'
+          : 'Ціни від 1С за загальним прайсом',
+        time,
+      };
+    }
+    return { label: 'Ціни рахує 1С за кодами номенклатур', time: '' };
+  }, [erp.state, erp.error, erp.updatedAt, doc.contragentId]);
+
+  /**
+   * Клієнтський PDF — лише з контрагентом із довідника (рішення 26.08.2026).
+   *
+   * Компроміс між двома правильними речами. ІТ на мейні блокували все:
+   * без контрагента 1С віддає ЗАГАЛЬНИЙ прайс, і менеджер прийняв би його
+   * за ціну свого клієнта. Але повне блокування замикає й роботу — без
+   * живого довідника контрагентів не порахувати нічого взагалі.
+   *
+   * Тому ділимо: числа в таблиці показуємо завжди (менеджер бачить підпис
+   * «за загальним прайсом» і розуміє, що це прикидка), а документ, який
+   * поїде клієнту, без контрагента не робимо — саме він і є те місце, де
+   * чужа ціна стає обіцянкою.
+   *
+   * Прив'язка саме до contragentId, а не до тексту в полі: щоб знайти
+   * контрагента в ERP, потрібен id організації з довідника, а вписана
+   * руками назва («новий клієнт», «ТОВ …») його не дає.
+   */
+  const pdfBlocked = !doc.contragentId;
+  /**
+   * Прелоадер замість чисел.
+   *
+   * Показуємо його лише там, де ціни ще НЕМАЄ з 1С: інакше таблиця
+   * блимала б цілком на кожну правку документа, хоч більшість рядків уже
+   * порахована.
+   */
+  const pricesLoading = erp.state === 'loading';
+  const totalPending = pricesLoading && result.lines.some((line) => line.source === 'none');
+  /** Ціни є, але за загальним прайсом — це треба бачити, а не здогадуватись */
+  const generalPrices = erp.state === 'ready' && !doc.contragentId;
+
   const grouped = useMemo(() => {
     const map = new Map<QuoteCalcLine['group'], QuoteCalcLine[]>();
     result.lines.forEach((line) => map.set(line.group, [...(map.get(line.group) ?? []), line]));
@@ -191,11 +435,11 @@ export function QuotePanel() {
   }, [result]);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50 p-6 overflow-auto custom-scrollbar">
+    <div className="quote-panel flex-1 flex flex-col h-full bg-slate-50 p-6 overflow-auto custom-scrollbar">
       <div className="max-w-5xl mx-auto w-full flex flex-col gap-4">
 
         {/* Заголовок */}
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 flex items-center justify-between gap-4">
+        <div className="quote-head bg-white rounded-lg shadow-sm border border-slate-200 p-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-[#0084ff]/10 text-[#0084ff] rounded-md flex items-center justify-center">
               <Calculator className="w-5 h-5" />
@@ -208,9 +452,11 @@ export function QuotePanel() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setPdfDialogOpen(true)}
-              disabled={result.lines.length === 0}
+              disabled={result.lines.length === 0 || pdfBlocked}
               className="flex items-center gap-2 px-4 py-2 bg-[#0084ff] text-white rounded-md text-sm font-bold hover:bg-[#006bce] transition-colors disabled:bg-slate-300 disabled:cursor-default"
-              title="Фірмовий PDF прорахунку для клієнта — з вибором складу документа"
+              title={pdfBlocked
+                ? 'Виберіть контрагента — без нього прорахунок не має цін'
+                : 'Фірмовий PDF прорахунку для клієнта — з вибором складу документа'}
             >
               <FileDown className="w-4 h-4" /> PDF для клієнта
             </button>
@@ -232,8 +478,11 @@ export function QuotePanel() {
         </div>
 
         {/* Замовлення */}
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 flex flex-col gap-4">
-          <h3 className="text-sm font-bold text-slate-700 uppercase">Замовлення</h3>
+        <QuoteSection
+          title="Замовлення"
+          summary={[doc.contragent || 'без контрагента', doc.branch, QUOTE_METHODS.find((m) => m.id === doc.method)?.label]
+            .filter(Boolean).join(' · ')}
+        >
 
           <div className="flex gap-2 flex-wrap">
             {QUOTE_METHODS.map((method) => (
@@ -253,16 +502,47 @@ export function QuotePanel() {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Field label="Філія">
-              <input className={inputCls} value={doc.branch} onChange={(e) => patch({ branch: e.target.value })} placeholder="Філія менеджера" />
+              <BranchSelect
+                value={doc.branch}
+                // Правка руками — уже інша філія, ніж вибрана в довіднику
+                onChange={(branch) => patch({ branch, branchId: '' })}
+                onPick={(branch: Branch) => patch({ branch: branch.title, branchId: branch.id })}
+                inputClassName={`${inputCls} w-full`}
+                placeholder="Філія менеджера"
+              />
             </Field>
             <Field label="Контрагент">
-              <input className={inputCls} value={doc.contragent} onChange={(e) => patch({ contragent: e.target.value })} placeholder="З довідника" />
+              <OrganizationSearchInput
+                value={doc.contragent}
+                // Правка руками — це вже інший контрагент, ніж вибраний у
+                // довіднику: id знімаємо, інакше ціни й далі рахувались би
+                // за прайсом того, кого в полі вже немає.
+                onChange={(contragent) => patch({ contragent, contragentId: '' })}
+                onPick={pickOrganization}
+                inputClassName={`${inputCls} w-full`}
+                placeholder="З довідника"
+              />
             </Field>
             <Field label="Контактна особа">
               <input className={inputCls} value={doc.contactName} onChange={(e) => patch({ contactName: e.target.value })} placeholder="Ім'я" />
             </Field>
             <Field label="Телефон">
               <input className={inputCls} value={doc.contactPhone} onChange={(e) => patch({ contactPhone: e.target.value })} placeholder="+380…" />
+            </Field>
+            {/* Вид оплати — обов'язковий для рахунку в ERP: 1С не виписує
+                рахунок без нього, тому поле стоїть у шапці замовлення, а
+                не серед додаткових. Значення їде в payment_type як є. */}
+            <Field label="Метод оплати">
+              <select
+                className={inputCls}
+                value={doc.paymentType ?? ''}
+                onChange={(e) => patch({ paymentType: e.target.value as QuoteCalcDoc['paymentType'] })}
+              >
+                <option value="">— не вибрано —</option>
+                {QUOTE_PAYMENT_TYPES.map((type) => (
+                  <option key={type.id} value={type.id}>{type.label}</option>
+                ))}
+              </select>
             </Field>
           </div>
 
@@ -282,21 +562,34 @@ export function QuotePanel() {
           )}
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {/* Матеріал і виробник приходять зі слебів і руками не
+                обираються: у проєкті один матеріал і один виробник.
+                Поле «Декор (код із сайту)» прибране — декор приходить
+                разом зі слебом, дублювати його не треба. */}
             <Field label="Тип матеріалу">
-              <select className={inputCls} value={doc.materialType} onChange={(e) => patch({ materialType: e.target.value as QuoteCalcDoc['materialType'], manufacturer: '' })}>
-                {QUOTE_MATERIAL_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
-              </select>
+              {project.slabs.length ? (
+                <div className={`${inputCls} bg-slate-50 text-slate-700 cursor-default`} title="Зі слебів проєкту">
+                  {materialType}
+                </div>
+              ) : (
+                <select className={inputCls} value={doc.materialType} onChange={(e) => patch({ materialType: e.target.value as QuoteCalcDoc['materialType'], manufacturer: '' })}>
+                  {QUOTE_MATERIAL_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              )}
             </Field>
             <Field label="Виробник">
-              <>
-                <input className={inputCls} list="quote-manufacturers" value={doc.manufacturer} onChange={(e) => patch({ manufacturer: e.target.value })} placeholder="Оберіть чи впишіть" />
-                <datalist id="quote-manufacturers">
-                  {manufacturers.map((name) => <option key={name} value={name} />)}
-                </datalist>
-              </>
-            </Field>
-            <Field label="Декор (код із сайту)">
-              <input className={inputCls} value={doc.decorCode} onChange={(e) => patch({ decorCode: e.target.value })} placeholder="Код декору" />
+              {project.slabs.length ? (
+                <div className={`${inputCls} bg-slate-50 text-slate-700 cursor-default truncate`} title="Зі слебів проєкту">
+                  {manufacturerName || '—'}
+                </div>
+              ) : (
+                <>
+                  <input className={inputCls} list="quote-manufacturers" value={doc.manufacturer} onChange={(e) => patch({ manufacturer: e.target.value })} placeholder="Оберіть чи впишіть" />
+                  <datalist id="quote-manufacturers">
+                    {manufacturers.map((name) => <option key={name} value={name} />)}
+                  </datalist>
+                </>
+              )}
             </Field>
             {isAcrylic && !isSinkOnly && (
               <Field label="Тип поверхні (акрил)">
@@ -311,12 +604,15 @@ export function QuotePanel() {
           <Field label="Коментар">
             <textarea className={`${inputCls} resize-y`} rows={2} value={doc.comment} onChange={(e) => patch({ comment: e.target.value })} placeholder="Вільне поле" />
           </Field>
-        </div>
+        </QuoteSection>
 
         {/* Вироби */}
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h3 className="text-sm font-bold text-slate-700 uppercase">Вироби</h3>
+        <QuoteSection
+          title="Вироби"
+          summary={doc.items.length
+            ? `${doc.items.length} шт · ${doc.items.reduce((sum, item) => sum + (item.area || 0) * (item.quantity || 1), 0).toFixed(2)} м²`
+            : 'порожньо'}
+          headerRight={(
             <div className="flex gap-2">
               {!isSinkOnly && (
                 <button
@@ -331,7 +627,8 @@ export function QuotePanel() {
                 <Plus className="w-4 h-4" /> Додати виріб
               </button>
             </div>
-          </div>
+          )}
+        >
 
           {doc.items.length === 0 && (
             <p className="text-sm text-slate-500 py-2">
@@ -468,12 +765,18 @@ export function QuotePanel() {
               </div>
             );
           })}
-        </div>
+        </QuoteSection>
 
         {/* Додаткові послуги */}
         {!isSinkOnly && (
-          <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 flex flex-col gap-3">
-            <h3 className="text-sm font-bold text-slate-700 uppercase">Додаткові послуги</h3>
+          <QuoteSection
+            title="Додаткові послуги"
+            summary={(() => {
+              const active = QUOTE_SERVICES.filter((service) =>
+                (doc.services[service.id] > 0) || (autoServices[service.id] ?? 0) > 0).length;
+              return active ? `активних: ${active}` : 'немає';
+            })()}
+          >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
               {QUOTE_SERVICES.map((service) => {
                 // Ручне значення рахується лише коли воно > 0: збережений
@@ -513,11 +816,17 @@ export function QuotePanel() {
                 );
               })}
             </div>
-          </div>
+          </QuoteSection>
         )}
 
         {/* Пакування і матеріал */}
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 flex flex-wrap gap-6">
+        <QuoteSection
+          title="Пакування і матеріал"
+          summary={slabMaterials.length
+            ? `${slabMaterials.length} арт. · ${slabMaterials.reduce((sum, line) => sum + line.qty, 0)} лист.`
+            : (doc.materialSheets > 0 ? `${doc.materialSheets} лист.` : 'матеріалу немає')}
+        >
+        <div className="flex flex-wrap gap-6">
           {doc.method === 'drawing' && (
             <div className="flex flex-col gap-2">
               <h3 className="text-sm font-bold text-slate-700 uppercase">Пакування</h3>
@@ -539,15 +848,76 @@ export function QuotePanel() {
           )}
           <div className="flex flex-col gap-2">
             <h3 className="text-sm font-bold text-slate-700 uppercase">Матеріал</h3>
+            {/* Матеріал приходить зі СЛЕБІВ проєкту — по рядку на артикул
+                (рішення 25.08.2026). Заводити його тут удруге не треба:
+                слеб із каталогу вже несе артикул, декор і товщину.
+                Ручне поле нижче лишається тільки для проєктів БЕЗ слебів. */}
+            {slabMaterials.length > 0 ? (
+              <div className="rounded-md border border-slate-200 bg-white overflow-hidden">
+                {slabMaterials.map((line) => (
+                  <div key={line.key} className="flex items-center gap-3 px-3 py-2 border-b border-slate-100 last:border-0">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-slate-800 truncate">
+                        {line.decor || line.material}
+                        <span className="text-slate-400"> · {line.material}{line.thickness ? `, ${line.thickness} мм` : ''}</span>
+                      </div>
+                      <div className={`text-xs ${line.article ? 'text-slate-500' : 'text-amber-700'}`}>
+                        {line.article
+                          ? <>Артикул <span className="font-mono">{line.article}</span></>
+                          : 'Артикул не заданий — ціни за цим рядком не буде'}
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-700 tabular-nums shrink-0">
+                      {line.qty} <span className="text-xs font-normal text-slate-500">лист</span>
+                    </div>
+                  </div>
+                ))}
+                <div className="px-3 py-1.5 bg-slate-50 text-[11px] text-slate-500">
+                  Зі слебів проєкту. Щоб змінити — додайте або видаліть слеб
+                  у вкладці «Слеби».
+                </div>
+              </div>
+            ) : (
             <Field label="Листів на замовлення (крок 0.5)" style={{ width: 190 }}>
-              <input className={inputCls} type="number" min={0} step={0.5} value={doc.materialSheets || ''} onChange={(e) => patch({ materialSheets: num(e.target.value) })} placeholder="лист / півлиста" />
+              <div className="flex items-center gap-2">
+                <input
+                  className={inputCls + (doc.items.length > 0 && !(doc.materialSheets > 0) ? ' !border-red-400 !bg-red-50' : '')}
+                  type="number" min={0} step={0.5}
+                  value={doc.materialSheets || ''}
+                  onChange={(e) => patch({ materialSheets: num(e.target.value) })}
+                  placeholder="лист / півлиста"
+                />
+                {(() => {
+                  const usedSlabIds = new Set((project.placements ?? []).map((p) => p.slabId).filter(Boolean));
+                  const fromNesting = usedSlabIds.size || project.slabs.length;
+                  if (!fromNesting || fromNesting === doc.materialSheets) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => patch({ materialSheets: fromNesting })}
+                      className="shrink-0 px-2 py-1 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors whitespace-nowrap"
+                      title="Підставити кількість слябів, задіяних у розкрої"
+                    >
+                      З розкрою: {fromNesting}
+                    </button>
+                  );
+                })()}
+              </div>
             </Field>
+            )}
           </div>
         </div>
+        </QuoteSection>
 
         {/* Попередження */}
-        {result.warnings.length > 0 && (
+        {(result.warnings.length > 0 || (doc.items.length > 0 && !slabMaterials.length && !(doc.materialSheets > 0))) && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-col gap-1.5">
+            {doc.items.length > 0 && !slabMaterials.length && !(doc.materialSheets > 0) && (
+              <div className="flex items-start gap-2 text-sm text-amber-800">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>Поле «Листів на замовлення» порожнє — у КП не буде матеріалу. Кількість слябів із розкрою видно в рядку статусу внизу.</span>
+              </div>
+            )}
             {result.warnings.map((warning, index) => (
               <div key={index} className="flex items-start gap-2 text-sm text-amber-800">
                 <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -559,10 +929,47 @@ export function QuotePanel() {
 
         {/* Розрахунок */}
         <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200">
-            <h3 className="text-sm font-bold text-slate-700 uppercase">Розрахунок</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Ціну можна вписати прямо в рядок — вона збережеться в документі й перекриє прайс</p>
+          <div
+            className="px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-4 cursor-pointer select-none hover:bg-slate-50/70"
+            onClick={() => setCalcOpen((value) => !value)}
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${calcOpen ? '' : '-rotate-90'}`} />
+                <h3 className="text-sm font-bold text-slate-700 uppercase">Розрахунок</h3>
+                {!calcOpen && (
+                  <span className="text-sm font-bold text-[#0084ff]">{result.total.toFixed(2)} ₴</span>
+                )}
+              </div>
+              <p className={`text-xs mt-0.5 flex items-center gap-1.5 ${erp.state === 'error' || generalPrices ? 'text-amber-600' : 'text-slate-500'}`}>
+                {pricesLoading && <Loader2 className="w-3 h-3 animate-spin shrink-0" />}
+                <span>{priceStatus.label}</span>
+                {priceStatus.time && <span className="text-slate-400"> · {priceStatus.time}</span>}
+                {erp.missing.length > 0 && erp.state === 'ready' && (
+                  <>{' · '}<span className="text-amber-600">{`без ціни: ${erp.missing.length}`}</span></>
+                )}
+              </p>
+            </div>
+            <button
+              onClick={(event) => { event.stopPropagation(); erp.refresh(); }}
+              disabled={pricesLoading || priceItems.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-300 rounded text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 shrink-0"
+              title="Перерахувати ціни в 1С"
+            >
+              {pricesLoading
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <RefreshCw className="w-3.5 h-3.5" />}
+              Оновити ціни
+            </button>
           </div>
+          {calcOpen && (<>
+          {manualPricing && (
+            <div className="px-6 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800">
+              <b>Режим калібрування ввімкнено.</b> Рядки з позначкою «РУЧНА» рахуються
+              за ціною, вписаною в налаштуваннях прорахунку, а не за ціною компанії.
+              Режим для збору статистики розходжень — вимкніть його перед звичайною роботою.
+            </div>
+          )}
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-slate-500 bg-slate-50 uppercase font-bold">
               <tr>
@@ -578,19 +985,41 @@ export function QuotePanel() {
                 <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">Додайте вироби з розмірами — розрахунок з'явиться тут.</td></tr>
               )}
               {[...grouped.entries()].map(([group, lines]) => (
-                <FragmentGroup key={group} label={QUOTE_GROUP_LABELS[group]} lines={lines} onPrice={setOverride} />
+                <FragmentGroup key={group} label={QUOTE_GROUP_LABELS[group]} lines={lines} loading={pricesLoading} />
               ))}
             </tbody>
             {result.lines.length > 0 && (
               <tfoot>
                 <tr className="bg-slate-50 border-t-2 border-slate-300">
                   <td className="px-6 py-4 font-bold text-slate-800" colSpan={4}>Загальна вартість</td>
-                  <td className="px-6 py-4 text-right font-bold text-lg text-[#0084ff]">{result.total.toFixed(2)} ₴</td>
+                  <td className="px-6 py-4 text-right font-bold text-lg text-[#0084ff]">
+                    {totalPending
+                      ? <PricePlaceholder className="w-28 h-5 ml-auto" />
+                      : `${result.total.toFixed(2)} ₴`}
+                  </td>
                 </tr>
               </tfoot>
             )}
           </table>
+          </>)}
         </div>
+        {/* Замовлення: підтверджений прорахунок → Orders Service */}
+        <QuoteOrderCard
+          doc={effectiveDoc}
+          lines={result.lines}
+          total={result.total}
+          project={{
+            id: dbProjectId || project.id,
+            name: project.orderNumber || project.customer || 'Проєкт SlabCutPlanner',
+            orderNumber: project.orderNumber,
+          }}
+          pricesLoading={pricesLoading}
+          // Попередній номер не затирається: в ERP те замовлення живе далі
+          onCreated={(order) => patch({
+            order,
+            orderHistory: [...(doc.orderHistory ?? []), ...(doc.order ? [doc.order] : [])],
+          })}
+        />
       </div>
 
       <QuoteSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
@@ -599,7 +1028,7 @@ export function QuotePanel() {
       {capturing3d && createPortal(
         <div className="fixed top-0 left-0 w-[1200px] h-[800px] z-[-10] pointer-events-none" style={{ opacity: 0.01 }}>
           <Suspense fallback={null}>
-            <Viewer3D isCaptureMode capturePreset="showcase" onCaptureReady={(snaps) => void runPdfExport(snaps)} />
+            <Viewer3D isCaptureMode capturePreset="showcase" onCaptureReady={(snaps, perProduct) => void runPdfExport(snaps, perProduct)} />
           </Suspense>
         </div>,
         document.body,
@@ -621,7 +1050,7 @@ export function QuotePanel() {
               <p className="text-sm text-slate-600">Що включити в документ:</p>
               {([
                 ['includeCalc', 'КП — розрахунок вартості', 'Шапка замовлення, вироби, розрахунок'],
-                ['includeViz', '3D візуалізації', '2–3 ракурси виробу на білому фоні'],
+                ['includeViz', '3D візуалізації', 'Окремий аркуш на кожен виріб, 3 ракурси на білому фоні'],
                 ['includeDrawings', 'Бланк погодження', 'Контури виробів з розмірами, обробки, підпис замовника'],
                 ['includeDetailsList', 'Список деталей', 'Таблиця з габаритами і площами'],
               ] as const).map(([key, label, hint]) => (
@@ -656,39 +1085,52 @@ export function QuotePanel() {
   );
 }
 
-function FragmentGroup({ label, lines, onPrice }: {
+function FragmentGroup({ label, lines, loading }: {
   label: string;
   lines: QuoteCalcLine[];
-  onPrice: (lineId: string, raw: string) => void;
+  /** 1С ще рахує — рядки без її ціни показують прелоадер, а не старе число */
+  loading: boolean;
 }) {
   return (
     <>
       <tr className="bg-slate-50/70">
         <td colSpan={5} className="px-6 py-2 text-xs font-bold text-slate-500 uppercase">{label}</td>
       </tr>
-      {lines.map((line) => (
-        <tr key={line.id} className="hover:bg-slate-50/50">
-          <td className="px-6 py-2.5 font-medium text-slate-800">
-            {line.code && <span className="font-mono text-xs text-slate-400 mr-2">{line.code}</span>}
-            {line.label}
-          </td>
-          <td className="px-4 py-2.5 text-right text-slate-700">{line.qty}</td>
-          <td className="px-4 py-2.5 text-center text-slate-500">{quoteUnitLabel(line.unit)}</td>
-          <td className="px-4 py-2.5 text-right">
-            <input
-              className={`border rounded px-2 py-1 text-sm text-right ${line.overridden ? 'border-amber-400 bg-amber-50' : 'border-slate-200'}`}
-              style={{ width: 90 }}
-              type="number"
-              min={0}
-              value={line.unitPrice || ''}
-              placeholder="0"
-              onChange={(e) => onPrice(line.id, e.target.value)}
-              title={line.overridden ? 'Ручна ціна (перекриває прайс)' : 'Ціна з прайсу — можна перекрити'}
-            />
-          </td>
-          <td className="px-6 py-2.5 text-right font-bold text-slate-800">{line.sum.toFixed(2)}</td>
-        </tr>
-      ))}
+      {lines.map((line) => {
+        // Ціна цього рядка ще не з 1С, а запит триває — показуємо прелоадер.
+        // Рядки, які ERP уже порахувала, лишаються на місці: інакше таблиця
+        // блимала б цілком на кожну правку документа.
+        // Ручна ціна калібрування прелоадером НЕ підміняється: вона не
+        // залежить від відповіді 1С і має бути видима завжди.
+        const pending = loading && line.source !== 'erp' && line.source !== 'manual';
+        return (
+          <tr key={line.id} className="hover:bg-slate-50/50">
+            <td className="px-6 py-2.5 font-medium text-slate-800">
+              {line.code && <span className="font-mono text-xs text-slate-400 mr-2">{line.code}</span>}
+              {line.label}
+            </td>
+            <td className="px-4 py-2.5 text-right text-slate-700">{line.qty}</td>
+            <td className="px-4 py-2.5 text-center text-slate-500">{quoteUnitLabel(line.unit)}</td>
+            <td
+              className={`px-4 py-2.5 text-right tabular-nums ${line.unitPrice ? 'text-slate-700' : 'text-slate-300'}`}
+              title={line.source === 'erp' ? 'Ціна від 1С'
+                : line.source === 'manual'
+                  ? `Ручна ціна (режим калібрування)${line.erpUnitPrice !== undefined ? `. 1С дала ${line.erpUnitPrice.toFixed(2)}` : '. 1С ціни не дала'}`
+                  : 'Ціни немає — 1С її не повернула'}
+            >
+              {pending ? <PricePlaceholder className="w-14 h-3.5" /> : line.unitPrice.toFixed(2)}
+              {line.source === 'manual' && (
+                <span className="ml-1.5 align-middle text-[10px] font-bold text-amber-700 bg-amber-100 border border-amber-300 rounded px-1 py-px">
+                  РУЧНА
+                </span>
+              )}
+            </td>
+            <td className="px-6 py-2.5 text-right font-bold text-slate-800">
+              {pending ? <PricePlaceholder className="w-20 h-3.5" /> : line.sum.toFixed(2)}
+            </td>
+          </tr>
+        );
+      })}
     </>
   );
 }

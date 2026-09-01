@@ -1,5 +1,5 @@
 import { referenceData } from '../../../domain/defaults';
-import type { Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, Point } from '../../../domain/types';
+import type { Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, MaterialType, Point, ShapeKind } from '../../../domain/types';
 
 export type { ShapeKind, CircleSizeMode } from '../../../domain/types';
 export type DetailDraft = import('../../../domain/types').ElementDefinition;
@@ -9,6 +9,19 @@ export interface ProductEditorSession {
   subDetails: Record<string, DetailDraft>;
   activeDetailId: 'main' | string | null;
   editingProductId?: string;
+  /**
+   * Матеріал виробу (01.09): обраний у модалці «Новий виріб» або взятий
+   * з `Product.material` при редагуванні. Порожньо — старий виріб без
+   * матеріалу, тоді редактор бере матеріал проєкту.
+   */
+  material?: MaterialType;
+  /**
+   * Місце виробу в приміщенні (01.09): мм по підлозі + поворот. Береться з
+   * `Product.scenePlacement` при редагуванні, змінюється кнопкою «Поставити
+   * на площину» в 3D-прев'ю і повертається у виріб при збереженні — інакше
+   * кожне редагування скидало б виріб із його місця в кімнаті.
+   */
+  scenePlacement?: { x: number; z: number; rotationYDeg: number };
 }
 
 export const detailTypes = referenceData.detailTypes as DetailType[];
@@ -25,8 +38,8 @@ export const SHAPE_CIRCLE = referenceData.detailShapes[3] as DetailShape;
 export const SHAPE_ELLIPSE = referenceData.detailShapes[4] as DetailShape;
 export const baseDesigns: Array<{ kind: ShapeKind; label: string; shape: DetailShape }> = [
   { kind: 'rect', label: 'Прямокутна', shape: SHAPE_RECT },
-  { kind: 'circle', label: 'Коло', shape: SHAPE_CIRCLE },
-  { kind: 'ellipse', label: 'Еліпс', shape: SHAPE_ELLIPSE },
+  { kind: 'circle', label: 'Кругла', shape: SHAPE_CIRCLE },
+  { kind: 'ellipse', label: 'Овальна', shape: SHAPE_ELLIPSE },
   { kind: 'l', label: 'Г-подібна', shape: SHAPE_L },
   { kind: 'u', label: 'П-подібна', shape: SHAPE_U },
 ];
@@ -47,6 +60,26 @@ export const metalDesigns: Array<{ kind: ShapeKind; label: string; shape: Detail
  */
 export function visibleDetailTypes(isAdminUnlocked: boolean, current?: DetailType): DetailType[] {
   return detailTypes.filter((type) => type !== TYPE_METAL || isAdminUnlocked || type === current);
+}
+
+/**
+ * Форми, які показуємо лише супер-адміну.
+ *
+ * 10.08 тут були коло й еліпс («цех поки не бере в роботу»). 01.09
+ * власник повернув їх усім: «Добав круглу та овальну стільницю». Список
+ * лишено порожнім, а не видалено — механізм ще знадобиться.
+ */
+const ADMIN_ONLY_KINDS: ShapeKind[] = [];
+
+/**
+ * Базові форми, видимі користувачу. Якщо деталь УЖЕ адмінської форми
+ * (створена адміном чи прийшла зі старого проєкту), опція лишається,
+ * інакше редагування такої деталі скидало б її форму на прямокутник.
+ */
+export function visibleBaseDesigns(isAdminUnlocked: boolean, current?: ShapeKind) {
+  return baseDesigns.filter((design) => (
+    !ADMIN_ONLY_KINDS.includes(design.kind) || isAdminUnlocked || design.kind === current
+  ));
 }
 
 export const allSides = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -141,6 +174,7 @@ export function draftFromDetail(source: Detail): DetailDraft {
     outerHeight: geometry.outerHeight ?? draft.outerHeight,
     innerHorizontal: geometry.innerHorizontal ?? draft.innerHorizontal,
     innerVertical: geometry.innerVertical ?? draft.innerVertical,
+    mirrorL: geometry.cornerOrientation === 'BL' || draft.mirrorL,
     wholeDetail: geometry.wholeDetail ?? draft.wholeDetail,
     innerCutWidth: geometry.innerCutWidth ?? draft.innerCutWidth,
     innerCutDepth: geometry.innerCutDepth ?? draft.innerCutDepth,
@@ -160,6 +194,122 @@ export function draftFromDetail(source: Detail): DetailDraft {
   };
 }
 
+/**
+ * ЗАПИС РОЗМІРУ СТОРОНИ — дзеркало `getSideSize`, і живе поруч із ним
+ * навмисно: читання і запис однієї угоди мусять бути в одному файлі,
+ * інакше вони розходяться (так уже сталося з B/D на Г-формі, журнал №14).
+ *
+ * ГОЛОВНЕ ПРАВИЛО (цехове, від власника 10.08): **глибина стільниці не
+ * пливе**. У Г-подібної глибини — це E (плече вздовж F) і B (плече вздовж A);
+ * вони змінюються ТІЛЬКИ прямим редагуванням. Коли міняють габарит, поїхати
+ * має внутрішній розмір вирізу, а не глибина:
+ *
+ *     A = C + E   (по горизонталі)      F = B + D   (по вертикалі)
+ *
+ *   · міняють A або C → рухається інший з пари, E стоїть;
+ *   · міняють F       → рухається D, B стоїть  ← було навпаки, це й муляло;
+ *   · міняють D       → рухається F, B стоїть;
+ *   · міняють B або E → це і є зміна глибини, рухається D або C відповідно,
+ *                       габарит (F / A) лишається — кімната ж не гумова.
+ *
+ * П-подібна цього правила вже дотримується: там усі зміни висот тримають
+ * глибину верхньої перекладини (`topBarHeight`) і рухають виріз.
+ *
+ * Повертає ПАТЧ (лише змінені поля), а не мутує чернетку.
+ */
+export function applySideEdit(draft: DetailDraft, side: string, rawValue: number): Partial<DetailDraft> {
+  const val = Math.max(1, Math.round(rawValue));
+
+  if (draft.kind === 'rect' || draft.kind === 'sink_rect' || draft.kind === 'sink_slot') {
+    if (side === 'A' || side === 'C') return { width: val };
+    if (side === 'B' || side === 'D') return { height: val };
+    return {};
+  }
+
+  if (draft.kind === 'l') {
+    const { outerWidth = 1200, outerHeight = 1200, innerHorizontal = 600, innerVertical = 600 } = draft;
+    // Поточні глибини, які треба зберегти
+    const depthB = Math.max(1, outerHeight - innerVertical);
+
+    switch (side) {
+      case 'A':
+        // Габарит по X: глибина E стоїть, плече C стає коротшим/довшим
+        return { outerWidth: Math.max(innerHorizontal + 1, val) };
+      case 'C':
+        return { outerWidth: val + innerHorizontal };
+      case 'E':
+        // Пряма зміна глибини: габарит A лишається, C їде
+        return { innerHorizontal: Math.min(val, outerWidth - 1) };
+      case 'F': {
+        // ЛІВА Г: F — коротка сторона (глибина), редагується як B у правої
+        if (draft.mirrorL) return { innerVertical: Math.max(1, outerHeight - val) };
+        // Габарит по Y: глибина B стоїть, виріз D підлаштовується.
+        // Якщо новий габарит менший за саму глибину — фізично неможливо,
+        // тому лишаємо мінімальний виріз 1 мм (глибина мусить поступитись).
+        const nextInner = Math.max(1, val - depthB);
+        return { outerHeight: Math.max(nextInner + 1, val), innerVertical: nextInner };
+      }
+      case 'D':
+        // Внутрішня вертикаль: глибина B стоїть, габарит F росте/меншає
+        return { innerVertical: val, outerHeight: depthB + val };
+      case 'B': {
+        // ЛІВА Г: B — повна висота (як F у правої)
+        if (draft.mirrorL) {
+          const nextInner = Math.max(1, val - depthB);
+          return { outerHeight: Math.max(nextInner + 1, val), innerVertical: nextInner };
+        }
+        // Пряма зміна глибини: габарит F лишається, виріз D підлаштовується
+        return { innerVertical: Math.max(1, outerHeight - val) };
+      }
+      default:
+        return {};
+    }
+  }
+
+  if (draft.kind === 'u') {
+    let w = draft.width || 2400;
+    let leftH = draft.leftLegHeight ?? (draft.height || 1200);
+    let rightH = draft.rightLegHeight ?? (draft.height || 1200);
+    let maxH = Math.max(leftH, rightH);
+    let cutW = draft.innerCutWidth || 1200;
+    let cutD = draft.innerCutDepth || 600;
+    let cutOff = draft.innerCutOffset || 600;
+    // Глибина верхньої перекладини — те, що тут не має пливти
+    const topBarHeight = Math.max(0, maxH - cutD);
+
+    const setHeights = (nextLeft: number, nextRight: number) => {
+      leftH = Math.max(1, nextLeft);
+      rightH = Math.max(1, nextRight);
+      maxH = Math.max(leftH, rightH);
+      cutD = Math.max(0, maxH - topBarHeight);
+    };
+    const setWidths = (nextOff: number, nextCut: number, nextC: number) => {
+      cutOff = Math.max(0, nextOff);
+      cutW = Math.max(1, nextCut);
+      w = cutOff + cutW + Math.max(0, nextC);
+    };
+    const c = w - cutOff - cutW;
+
+    switch (side) {
+      case 'A': w = val; break;
+      case 'B': setHeights(leftH, val); break;
+      case 'C': setWidths(cutOff, cutW, val); break;
+      case 'D': setHeights(leftH, topBarHeight + val); break;
+      case 'E': setWidths(cutOff, val, c); break;
+      case 'F': setHeights(topBarHeight + val, rightH); break;
+      case 'G': setWidths(val, cutW, c); break;
+      case 'H': setHeights(val, rightH); break;
+      default: return {};
+    }
+    return {
+      width: w, height: maxH, leftLegHeight: leftH, rightLegHeight: rightH,
+      innerCutWidth: cutW, innerCutDepth: cutD, innerCutOffset: cutOff,
+    };
+  }
+
+  return {};
+}
+
 export function getSideSize(draft: DetailDraft, side: string): number {
   if (draft.kind === 'rect' || draft.kind === 'sink_rect' || draft.kind === 'sink_slot') {
     if (side === 'A' || side === 'C') return draft.width;
@@ -175,6 +325,19 @@ export function getSideSize(draft: DetailDraft, side: string): number {
     // кресленням, розкроєм і 3D. Не «виправляй» назад за інтуїцією —
     // звіряй із контуром; тест sideNames.test.ts тримає відповідність.
     const { outerWidth = 1200, outerHeight = 1200, innerHorizontal = 600, innerVertical = 600 } = draft;
+    /* ЛІВА Г (mirrorL): літери йдуть за обходом контуру, тому при
+       дзеркаленні B і F міняються ролями — B стає повною правою стороною,
+       F — короткою лівою. Решта сторін симетрична. */
+    if (draft.mirrorL) {
+      switch (side) {
+        case 'A': return outerWidth;
+        case 'B': return outerHeight;
+        case 'C': return Math.max(1, outerWidth - innerHorizontal);
+        case 'D': return innerVertical;
+        case 'E': return innerHorizontal;
+        case 'F': return Math.max(1, outerHeight - innerVertical);
+      }
+    }
     switch (side) {
       case 'A': return outerWidth;
       case 'B': return Math.max(1, outerHeight - innerVertical);
@@ -205,6 +368,21 @@ export function getSideSize(draft: DetailDraft, side: string): number {
       case 'G': return cutOff;
       case 'H': return leftH;
     }
+  }
+
+  // Коло й овал (01.09): сторона — квадрант, її «розмір» — довжина дуги
+  // чверті. Овал — за наближенням Рамануджана для периметра еліпса
+  // (похибка < 0.05 % для наших пропорцій), як і метраж крайки в розкрої.
+  if (draft.kind === 'circle') {
+    const d = Math.max(1, draft.diameter || 800);
+    return Math.round((Math.PI * d) / 4);
+  }
+  if (draft.kind === 'ellipse') {
+    const a = Math.max(1, draft.ellipseWidth || 1200) / 2;
+    const b = Math.max(1, draft.ellipseHeight || 600) / 2;
+    const h = ((a - b) ** 2) / ((a + b) ** 2);
+    const perimeter = Math.PI * (a + b) * (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h)));
+    return Math.round(perimeter / 4);
   }
   return 0;
 }

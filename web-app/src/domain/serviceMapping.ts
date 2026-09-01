@@ -178,6 +178,59 @@ export const DEFAULT_MAPPING_RULES: MappingRule[] = [
     note: 'Пропил для стику від 500 мм, ×2 на стик',
   },
 
+  // ── Торець на дугах, фасках і вирізах (FG-22) ──────────────────────
+  //  У вікні кута і вікні вирізу вибір фрезерування поки один — «Стандарт».
+  //  Мапимо його в загальне профільне фрезерування; коли з'являться
+  //  профілі — додадуться свої правила, як у крайки сторін.
+  {
+    id: 'edge:Стандарт→EDGE_PROFILE_MILL', factKind: 'edge', variant: 'Стандарт', serviceId: 'EDGE_PROFILE_MILL', multiplier: 1,
+    enabled: true, source: 'builtin',
+    note: 'Обробка торця на радіусі, фасці або вирізі',
+  },
+
+  /*
+   * ── Радіусні (гнуті) елементи ──────────────────────────────────────
+   *
+   * Послуга — ЗА ШТУКУ на кожен елемент; категорію рахує
+   * `domain/radiusElement.classifyRadiusService` і кладе у variant.
+   * Матеріал розводить прайс: одна операція має свій код на кожен камінь.
+   * Матеріал самої деталі сюди НЕ входить — він уже порахований по
+   * прямокутнику в розкрої разом з усіма іншими партами.
+   */
+  { id: 'radius:ceramic:countertop_le80', factKind: 'radius_element', variant: 'countertop_le80', material: 'Керамограніт', serviceId: 'RADIUS_CT80_CERAMIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:ceramic:countertop_80_200', factKind: 'radius_element', variant: 'countertop_80_200', material: 'Керамограніт', serviceId: 'RADIUS_CT200_CERAMIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:ceramic:leg_le900', factKind: 'radius_element', variant: 'leg_le900', material: 'Керамограніт', serviceId: 'RADIUS_LEG900_CERAMIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:ceramic:leg_gt900', factKind: 'radius_element', variant: 'leg_gt900', material: 'Керамограніт', serviceId: 'RADIUS_LEGTALL_CERAMIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:ceramic:complex', factKind: 'radius_element', variant: 'complex', material: 'Керамограніт', serviceId: 'RADIUS_COMPLEX_CERAMIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:stone:countertop_le80', factKind: 'radius_element', variant: 'countertop_le80', material: 'Натуральний камінь', serviceId: 'RADIUS_CT80_STONE', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:stone:countertop_80_200', factKind: 'radius_element', variant: 'countertop_80_200', material: 'Натуральний камінь', serviceId: 'RADIUS_CT200_STONE', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:stone:leg_le900', factKind: 'radius_element', variant: 'leg_le900', material: 'Натуральний камінь', serviceId: 'RADIUS_LEG900_STONE', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:stone:leg_gt900', factKind: 'radius_element', variant: 'leg_gt900', material: 'Натуральний камінь', serviceId: 'RADIUS_LEGTALL_STONE', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:stone:complex', factKind: 'radius_element', variant: 'complex', material: 'Натуральний камінь', serviceId: 'RADIUS_COMPLEX_STONE', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:quartz:countertop_le80', factKind: 'radius_element', variant: 'countertop_le80', material: 'Кварцит', serviceId: 'RADIUS_CT80_QUARTZ', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:quartz:countertop_80_200', factKind: 'radius_element', variant: 'countertop_80_200', material: 'Кварцит', serviceId: 'RADIUS_CT200_QUARTZ', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:quartz:leg_le900', factKind: 'radius_element', variant: 'leg_le900', material: 'Кварцит', serviceId: 'RADIUS_LEG900_QUARTZ', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:quartz:leg_gt900', factKind: 'radius_element', variant: 'leg_gt900', material: 'Кварцит', serviceId: 'RADIUS_LEGTALL_QUARTZ', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:quartz:complex', factKind: 'radius_element', variant: 'complex', material: 'Кварцит', serviceId: 'RADIUS_COMPLEX_QUARTZ', multiplier: 1, enabled: true, source: 'builtin' },
+
+  /*
+   * Акрил: у прайсі поки ОДНА позиція на гнуття і ОДНА на матрицю, тому всі
+   * три категорії ТЗ ведуть на ті самі коди. Класифікація в моделі вже є —
+   * коли Viyar заведе окремі номенклатури, міняти треба лише ці рядки.
+   */
+  { id: 'radius:acrylic:bend_le600', factKind: 'radius_element', variant: 'bend_le600', material: 'Акрил', serviceId: 'RADIUS_BEND_ACRYLIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:acrylic:bend_gt600', factKind: 'radius_element', variant: 'bend_gt600', material: 'Акрил', serviceId: 'RADIUS_BEND_ACRYLIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:acrylic:complex', factKind: 'radius_element', variant: 'complex', material: 'Акрил', serviceId: 'RADIUS_BEND_ACRYLIC', multiplier: 1, enabled: true, source: 'builtin' },
+
+  /*
+   * Матриця рахується не за кількістю радіусів, а за кількістю УНІКАЛЬНИХ
+   * геометрій (ТЗ, п. 3.4) — дедуплікацію робить рушій фактів, сюди
+   * приходить уже готова кількість.
+   */
+  { id: 'radius:acrylic:matrix_le600', factKind: 'radius_matrix', variant: 'matrix_le600', material: 'Акрил', serviceId: 'RADIUS_MATRIX_ACRYLIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:acrylic:matrix_gt600', factKind: 'radius_matrix', variant: 'matrix_gt600', material: 'Акрил', serviceId: 'RADIUS_MATRIX_ACRYLIC', multiplier: 1, enabled: true, source: 'builtin' },
+  { id: 'radius:acrylic:matrix_complex', factKind: 'radius_matrix', variant: 'matrix_complex', material: 'Акрил', serviceId: 'RADIUS_MATRIX_ACRYLIC', multiplier: 1, enabled: true, source: 'builtin' },
+
   // ── Кути ───────────────────────────────────────────────────────────
   { id: 'corner:radius→CORNER_RADIUS', factKind: 'corner', variant: 'radius', serviceId: 'CORNER_RADIUS', multiplier: 1, enabled: true, source: 'builtin' },
   { id: 'corner:chamfer→CORNER_CHAMFER', factKind: 'corner', variant: 'chamfer', serviceId: 'CORNER_CHAMFER', multiplier: 1, enabled: true, source: 'builtin' },
@@ -320,6 +373,8 @@ const FACT_UNIT_BY_KIND: Record<ProductionFactKind, FactUnit> = {
   slabs_used: 'pcs',
   slab_area: 'm2',
   waste_area: 'm2',
+  radius_element: 'pcs',
+  radius_matrix: 'pcs',
 };
 
 /** Чи сумісна одиниця факту з одиницею послуги */
@@ -400,4 +455,6 @@ export const FACT_KIND_LABELS: Record<ProductionFactKind, string> = {
   slabs_used: 'Задіяні сляби',
   slab_area: 'Площа слябів',
   waste_area: 'Відхід',
+  radius_element: 'Радіусний елемент (штука)',
+  radius_matrix: 'Матриця для гнуття (штука)',
 };

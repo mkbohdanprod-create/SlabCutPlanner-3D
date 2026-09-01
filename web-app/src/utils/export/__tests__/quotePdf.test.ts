@@ -37,9 +37,16 @@ const doc = (overrides: Partial<QuoteCalcDoc> = {}): QuoteCalcDoc => ({
     item({ dims: { w: 2000, h: 600 }, sourceLabel: 'Стільниця 2', sourceRef: 'd1', areaM2: 1.528 }),
     item({ productTypeId: 'wall_panel_ge12', dims: { w: 1100, h: 600 }, areaM2: 1.834, sourceRef: 'd2', sourceLabel: 'Стінова панель 1' }),
   ],
-  priceOverrides: { 'fab:countertop_plain': 2500 },
   ...overrides,
 });
+
+/**
+ * Ціни в рядки приходять від сервісу вартості за кодом 1С — локального
+ * прайсу як джерела більше немає (рішення 25.08.2026). '292336' —
+ * «Виготовлення стільниці без потовщень (керамограніт Laminam)», тобто
+ * номенклатура саме цього тестового проекту.
+ */
+const erpPrices = (countertopPrice: number) => ({ '292336': countertopPrice });
 
 describe('PDF прорахунку', () => {
   it('шапка — фірмова: логотип, номер замовлення, плашка бренду', () => {
@@ -68,10 +75,10 @@ describe('PDF прорахунку', () => {
 
   it('кожен виріб несе ціну виготовлення за своєю номенклатурою', () => {
     const order = doc();
-    const [page] = renderQuotePdfSvgPages(project, order, computeQuoteCalc(order));
+    const [page] = renderQuotePdfSvgPages(project, order, computeQuoteCalc(order, undefined, erpPrices(2500)));
     const normalized = page.replace(/[  ]/g, ' ');
     expect(page).toContain('Вартість, грн');
-    // стільниця: 1.528 м² × 2500 (ручна ціна) = 3820.00
+    // стільниця: 1.528 м² × 2500 = 3820.00
     expect(normalized).toContain('3 820,00');
   });
 
@@ -81,9 +88,8 @@ describe('PDF прорахунку', () => {
         item({ dims: { w: 2000, h: 600 }, areaM2: 1.2, sourceRef: 'd1', sourceLabel: 'Стільниця' }),
         item({ productTypeId: 'leg', areaM2: 0.45, dims: { w: 900 }, sourceRef: 'd2', sourceLabel: 'Опора (B)' }),
       ],
-      priceOverrides: { 'fab:countertop_plain': 2000 },
     });
-    const [page] = renderQuotePdfSvgPages(project, order, computeQuoteCalc(order));
+    const [page] = renderQuotePdfSvgPages(project, order, computeQuoteCalc(order, undefined, erpPrices(2000)));
     // 0.45 × 2000 = 900.00 — частка ноги за ставкою стільниці
     expect(page).toContain('900,00');
     expect(page).toContain('у складі стільниці');
@@ -91,11 +97,11 @@ describe('PDF прорахунку', () => {
 
   it('розрахунок — з цінами і загальною сумою', () => {
     const order = doc();
-    const result = computeQuoteCalc(order);
+    const result = computeQuoteCalc(order, undefined, erpPrices(2500));
     const [page] = renderQuotePdfSvgPages(project, order, result);
     expect(page).toContain('РОЗРАХУНОК ВАРТОСТІ');
     expect(page).toContain('ЗАГАЛЬНА ВАРТІСТЬ');
-    // 1.528 × 2500 = 3820.00 — ручна ціна з документа
+    // 1.528 × 2500 = 3820.00 — ставка стільниці
     expect(result.total).toBeCloseTo(3820, 2);
     expect(page.replace(/ | /g, ' ')).toContain('3 820,00');
   });
@@ -151,7 +157,8 @@ describe('PDF прорахунку', () => {
   });
 
   it('бланк погодження: шапка, контур із літерами сторін, специфікація, підпис', () => {
-    // Стільниця 1000×600 з крайкою R2 по C і підворотом по C (продукт)
+    // Стільниця 1000×600 з крайкою R2 по C і заусовкою 45° по C (слот fold_C —
+    // цех називає це «Потовщення», див. EDGE_KIND_LABEL)
     const projectFull = {
       orderNumber: '81-1343265',
       referenceData: { edgeProfiles: [{ id: 'r2_top', label: 'Крайка R2', shortLabel: 'R2', allowance: 2.5 }] },
@@ -191,9 +198,11 @@ describe('PDF прорахунку', () => {
     expect(all).toContain('БЛАНК ПОГОДЖЕННЯ ВИРОБУ');
     expect(all).toContain('ЛИТВИНЧУК АНДРІЙ');
     expect(all).toContain('Виріб №1 — Стільниця кухня (0.600 м.кв)');
-    expect(all).toContain('B=1000 мм');       // літера сторони з довжиною
-    expect(all).toContain('C=600 мм');
-    expect(all).toContain('підворот');         // позначка всередині контуру
+    // Єдина угода (хвиля 3): A — перше ребро контуру (верх, 1000 мм),
+    // B — наступне за обходом (право, 600 мм).
+    expect(all).toContain('A=1000 мм');       // літера сторони з довжиною
+    expect(all).toContain('B=600 мм');
+    expect(all).toContain('потовщення');       // позначка всередині контуру
     expect(all).toContain('Крайка — Крайка R2');
     expect(all).toContain('Тип елементу виробу');
     // Радіус кута і вирізи з розмірами — у специфікації

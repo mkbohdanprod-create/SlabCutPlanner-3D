@@ -1,5 +1,5 @@
 import type { CutAllowances, DetailPart, Placement, Point, SlabInstance } from '../../domain/types';
-import { normalizeRotation, placementPolygon, polygonBounds, rotatedLocalPoints, rotatedPoints, rotatedSize, translatePoints } from '../../lib/project';
+import { mirroredLocalPoints, normalizeRotation, placementPolygon, polygonBounds, rotatedLocalPoints, rotatedPoints, rotatedSize, translatePoints } from '../../lib/project';
 
 // ── Geometry helpers ────────────────────────────────
 
@@ -25,7 +25,12 @@ export function polygonInsideRect(points: Array<{ x: number; y: number }>, rect:
 }
 
 export function pointsForPlacement(part: DetailPart, placement: Placement, points = part.points) {
-  return translatePoints(rotatedLocalPoints(points, placement.rotation, part.width, part.height, part.points), placement.x, placement.y);
+  // Крок 3.4: дзеркалення в локальних координатах — ДО повороту, як у рушії
+  // розкрою. Габарит від цього не міняється, тож усе, що зверху рахує
+  // прямокутник, лишається чинним.
+  const source = placement.mirror ? mirroredLocalPoints(points, part.width) : points;
+  const reference = placement.mirror ? mirroredLocalPoints(part.points, part.width) : part.points;
+  return translatePoints(rotatedLocalPoints(source, placement.rotation, part.width, part.height, reference), placement.x, placement.y);
 }
 
 export function closestPointOnSegment(point: Point, start: Point, end: Point): Point {
@@ -317,7 +322,7 @@ export function rigidRotatePlacementMove(part: DetailPart, placement: Placement,
 }
 
 export type CanvasDrag = 
-  | { type: 'placement'; id: string; clientX: number; clientY: number; offsetX: number; offsetY: number; rotation: number; groupIds?: string[]; groupStart?: Record<string, import('../../domain/types').Placement>; ghostClientX?: number; ghostClientY?: number; ghostX?: number; ghostY?: number; ghostSlabId?: string; angleSnap?: AngleSnapCandidate; }
+  | { type: 'placement'; id: string; clientX: number; clientY: number; offsetX: number; offsetY: number; rotation: number; mirror?: boolean; groupIds?: string[]; groupStart?: Record<string, import('../../domain/types').Placement>; ghostClientX?: number; ghostClientY?: number; ghostX?: number; ghostY?: number; ghostSlabId?: string; angleSnap?: AngleSnapCandidate; }
   | { type: 'pan'; clientX: number; clientY: number; startScrollX: number; startScrollY: number; }
   | { type: 'selection'; clientX: number; clientY: number; originX: number; originY: number; };
 
@@ -344,12 +349,20 @@ export interface AngleEditorState {
   initialRotation: number;
 }
 
+/**
+ * Що менеджер може змінити в уже доданому слебі.
+ *
+ * Габарит, товщина, матеріал і декор сюди НЕ входять (з 25.08.2026):
+ * вони приходять із картки каталогу разом з артикулом, і правка їх
+ * руками робила б слеб таким, якого в довіднику немає — а ціна на
+ * нього питається саме за артикулом.
+ *
+ * Лишається те, що справді наше: серійний номер (наша нумерація в
+ * межах проєкту), мінімальний технологічний відступ і вільна нотатка.
+ */
 export interface SlabEditorDraft {
-  width: number;
-  height: number;
-  thickness: number;
-  material: import('../../domain/types').MaterialType;
-  decor: string;
+  /** Половина листа — важить 0.5 у прорахунку (артикула на неї немає) */
+  halfSheet: boolean;
   comment: string;
   minMargin: number;
   serialNumber: string;

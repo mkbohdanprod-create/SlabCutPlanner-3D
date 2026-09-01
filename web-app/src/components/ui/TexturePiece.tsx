@@ -69,7 +69,14 @@ export function TexturePiece({
           {edgeMarkers.map((marker) => (
             <g key={`${marker.side}-${marker.profiles}`}>
               <line x1={marker.start.x * scale} y1={marker.start.y * scale} x2={marker.end.x * scale} y2={marker.end.y * scale} />
-              <text x={marker.labelPoint.x * scale} y={marker.labelPoint.y * scale - 3} textAnchor="middle">{getShortLabel(marker.profiles)}</text>
+              {/* Підпис усередині деталі (28.08) — та сама угода, що на
+                  дошці розкрою і в бланку: зсув по внутрішній нормалі. */}
+              <text
+                x={(marker.labelPoint.x + marker.labelInward.x * 26) * scale}
+                y={(marker.labelPoint.y + marker.labelInward.y * 26) * scale}
+                textAnchor="middle"
+                dominantBaseline="middle"
+              >{getShortLabel(marker.profiles)}</text>
             </g>
           ))}
         </g>

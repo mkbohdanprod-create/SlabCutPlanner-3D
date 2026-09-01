@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { DraggableDialog } from './DraggableDialog';
-import { PRODUCT_TEMPLATES } from '../forms/utils/productTemplates';
-import type { ProductTemplate, TemplateValues, TemplateNumberParam, TemplateChoiceParam } from '../forms/utils/productTemplates';
+import { PRODUCT_TEMPLATES, FIREPLACE_ZONES } from '../forms/utils/productTemplates';
+import type { ProductTemplate, TemplateValues, TemplateNumberParam, TemplateChoiceParam, TemplateToggleParam } from '../forms/utils/productTemplates';
 import type { ProductEditorSession } from '../forms/utils/draftHelpers';
 import { SvgInput, ArrowDefs } from '../forms/shapes/SvgComponents';
 
@@ -24,7 +23,9 @@ type SketchApi = {
   num: (key: string) => number;
   /** Рядковий вибір параметра: введений або дефолт */
   str: (key: string) => string;
-  set: (key: string, value: number | string) => void;
+  /** Вмикач: увімкнений або дефолт */
+  bool: (key: string) => boolean;
+  set: (key: string, value: number | string | boolean) => void;
 };
 
 /** Штрихування стіни над горизонтальним ребром (стіна зверху). */
@@ -179,6 +180,125 @@ function FireplaceSketch({ num, set }: SketchApi) {
   );
 }
 
+function FireplaceModernSketch({ num, str, set }: SketchApi) {
+  // Схема малюється в пропорціях, близьких до заданих, щоб виступ було видно
+  // як виступ. Підписи розмірів винесені за контур: усередині вони затуляли
+  // саме те, що показують.
+  const boxW = Math.max(1, num('boxWidth'));
+  const oL = num('overhangLeft');
+  const oR = num('overhangRight');
+  const total = boxW + oL + oR;
+  const px = 380 / total;
+  const boxPx = boxW * px;
+  const x0 = 150;
+  const boxX = x0 + oL * px;
+  const podiumTop = 356;
+  const podiumBottom = 400;
+  const boxTop = 96;
+  const boxPxH = podiumTop - boxTop;
+
+  const vents = Math.min(10, Math.max(1, Math.round(num('podiumFront_count'))));
+  const zone = (key: string) => str(`${key}_kind`);
+
+  // Вікно топки на схемі — у тих самих пропорціях, що й у виробі
+  const fbW = Math.min(boxPx - 16, num('fireboxWidth') * px);
+  const hpx = boxPxH / Math.max(1, num('boxHeight'));
+  const fbH = Math.min(boxPxH - 30, num('fireboxHeight') * hpx);
+  const fbUp = num('fireboxUp') * hpx;
+  const fbBottom = podiumTop - fbUp;
+  const fbTop = fbBottom - fbH;
+
+  /** Отвір зони: ряд прорізів або одна ніша — те саме, що збереться у виробі */
+  const zoneMarks = (key: string, left: number, right: number, bottomY: number, availH: number, id: string) => {
+    const kind = zone(key);
+    if (kind === 'niche') {
+      const nh = Math.min(availH - 8, Math.max(8, num('podiumFront_nicheH') * (availH / 500)));
+      const nw = Math.max(10, right - left - 8);
+      return (
+        <rect
+          key={id}
+          className="scheme-part inner"
+          x={(left + right) / 2 - nw / 2}
+          y={bottomY - nh}
+          width={nw}
+          height={nh}
+        />
+      );
+    }
+    if (kind !== 'vent') return null;
+    return (
+      <g key={id}>
+        {Array.from({ length: vents }).map((_, i) => (
+          <line key={i} className="scheme-dim" x1={left} y1={bottomY - i * 3.2} x2={right} y2={bottomY - i * 3.2} />
+        ))}
+      </g>
+    );
+  };
+
+  return (
+    <>
+      <text className="scheme-caption centered" x={x0 + (total * px) / 2} y={28}>Вид спереду</text>
+      <rect className="scheme-part" x={boxX} y={boxTop} width={boxPx} height={boxPxH} />
+      <rect className="scheme-part" x={x0} y={podiumTop} width={total * px} height={podiumBottom - podiumTop} />
+      <line className="scheme-dash" x1={x0 - 30} y1={podiumBottom} x2={x0 + total * px + 30} y2={podiumBottom} />
+
+      {/* вікно топки */}
+      <rect className="scheme-part inner" x={boxX + (boxPx - fbW) / 2} y={fbTop} width={fbW} height={fbH} />
+      {zoneMarks('boxFront', boxX + 14, boxX + boxPx - 14, fbTop - 22, 60, 'zbf')}
+      {zoneMarks('podiumFront', x0 + 12, x0 + total * px - 12, podiumBottom - 10, 34, 'zpf')}
+
+      {/* розміри: короб і виступи — підписи за контуром */}
+      <line className="scheme-arrow" x1={boxX} y1={72} x2={boxX + boxPx} y2={72} />
+      <SvgInput x={boxX + boxPx / 2 - 34} y={40} value={boxW} onChange={(v) => set('boxWidth', v)} />
+      <line className="scheme-arrow" x1={x0} y1={422} x2={boxX} y2={422} />
+      <SvgInput x={x0 + (boxX - x0) / 2 - 34} y={430} value={oL} onChange={(v) => set('overhangLeft', v)} width={60} />
+      <line className="scheme-arrow" x1={boxX + boxPx} y1={422} x2={x0 + total * px} y2={422} />
+      <SvgInput x={(boxX + boxPx + x0 + total * px) / 2 - 34} y={430} value={oR} onChange={(v) => set('overhangRight', v)} width={60} />
+      <line className="scheme-arrow" x1={x0 - 34} y1={boxTop} x2={x0 - 34} y2={podiumTop} />
+      <SvgInput x={x0 - 120} y={boxTop + boxPxH / 2 - 20} value={num('boxHeight')} onChange={(v) => set('boxHeight', v)} />
+      <line className="scheme-arrow" x1={x0 + total * px + 34} y1={podiumTop} x2={x0 + total * px + 34} y2={podiumBottom} />
+      <SvgInput x={x0 + total * px + 44} y={podiumTop + 2} value={num('podiumHeight')} onChange={(v) => set('podiumHeight', v)} />
+
+      {/* розміри вікна топки: ширина, висота, поріг над подіумом */}
+      <line className="scheme-arrow" x1={boxX + (boxPx - fbW) / 2} y1={fbTop - 8} x2={boxX + (boxPx + fbW) / 2} y2={fbTop - 8} />
+      <SvgInput x={boxX + boxPx / 2 - 34} y={fbTop - 46} value={num('fireboxWidth')} onChange={(v) => set('fireboxWidth', v)} />
+      <text className="scheme-caption centered" x={boxX + boxPx / 2} y={fbTop - 56}>вікно топки</text>
+      <line className="scheme-arrow" x1={boxX + (boxPx + fbW) / 2 + 10} y1={fbTop} x2={boxX + (boxPx + fbW) / 2 + 10} y2={fbBottom} />
+      <SvgInput x={boxX + (boxPx + fbW) / 2 + 18} y={fbTop + fbH / 2 - 20} value={num('fireboxHeight')} onChange={(v) => set('fireboxHeight', v)} />
+      <line className="scheme-arrow" x1={boxX + boxPx / 2} y1={fbBottom} x2={boxX + boxPx / 2} y2={podiumTop} />
+      <SvgInput x={boxX + boxPx / 2 - 34} y={fbBottom + 2} value={num('fireboxUp')} onChange={(v) => set('fireboxUp', v)} />
+
+      {/* ── види справа і зліва: виступ уперед і своя зона ── */}
+      {[
+        { label: 'Вид справа', x: 700, zoneBox: 'boxRight', zonePodium: 'podiumRight', mirrored: false },
+        { label: 'Вид зліва', x: 900, zoneBox: 'boxLeft', zonePodium: 'podiumLeft', mirrored: true },
+      ].map((view) => {
+        const d = Math.max(1, num('boxDepth'));
+        const f = num('overhangFront');
+        const dpx = 120 / (d + f);
+        const boxDpx = d * dpx;
+        const frontPx = f * dpx;
+        const bx = view.mirrored ? view.x + frontPx : view.x;
+        return (
+          <g key={view.zoneBox}>
+            <text className="scheme-caption centered" x={view.x + (boxDpx + frontPx) / 2} y={28}>{view.label}</text>
+            <rect className="scheme-part" x={bx} y={boxTop} width={boxDpx} height={boxPxH} />
+            <rect className="scheme-part" x={view.x} y={podiumTop} width={boxDpx + frontPx} height={podiumBottom - podiumTop} />
+            <line className="scheme-dash" x1={view.x - 20} y1={podiumBottom} x2={view.x + boxDpx + frontPx + 20} y2={podiumBottom} />
+            {zoneMarks(view.zoneBox, bx + 8, bx + boxDpx - 8, boxTop + boxPxH * 0.24, 70, `${view.zoneBox}-m`)}
+            {zoneMarks(view.zonePodium, view.x + 8, view.x + boxDpx + frontPx - 8, podiumBottom - 10, 34, `${view.zonePodium}-m`)}
+            <line className="scheme-arrow" x1={bx} y1={72} x2={bx + boxDpx} y2={72} />
+            <SvgInput x={bx + boxDpx / 2 - 34} y={40} value={d} onChange={(v) => set('boxDepth', v)} />
+            <line className="scheme-arrow" x1={view.x} y1={422} x2={view.x + boxDpx + frontPx} y2={422} />
+            <SvgInput x={view.x + (boxDpx + frontPx) / 2 - 34} y={430} value={f} onChange={(v) => set('overhangFront', v)} />
+          </g>
+        );
+      })}
+      <text className="scheme-caption centered" x={800} y={470}>виступ подіуму вперед</text>
+    </>
+  );
+}
+
 function WindowSillSketch({ num, set }: SketchApi) {
   return (
     <>
@@ -193,24 +313,38 @@ function WindowSillSketch({ num, set }: SketchApi) {
   );
 }
 
+/** Ширші схеми (кілька видів) просять свій viewBox */
+const ZONE_KIND_LABEL: Record<string, string> = { none: 'немає', vent: 'решітка', niche: 'ніша' };
+
+const SKETCH_VIEWBOX: Record<string, string> = {
+  fireplace_modern: '0 0 1060 490',
+};
+
 const SKETCHES: Record<string, (api: SketchApi) => ReactNode> = {
   straight_top: (api) => <StraightTopSketch {...api} />,
   l_top: (api) => <LTopSketch {...api} />,
   island_leg: (api) => <IslandSketch {...api} />,
   portal_panels: (api) => <PortalSketch {...api} />,
   fireplace_surround: (api) => <FireplaceSketch {...api} />,
+  fireplace_modern: (api) => <FireplaceModernSketch {...api} />,
   window_sill: (api) => <WindowSillSketch {...api} />,
 };
 
 export function ProductTemplateModal({
   onClose,
   onCreate,
+  initialTemplateId,
+  initialValues,
 }: {
   onClose: () => void;
-  onCreate: (session: ProductEditorSession) => void;
+  /** Друга віддача — самі значення, щоб їх можна було відкрити повторно */
+  onCreate: (session: ProductEditorSession, state: { templateId: string; values: TemplateValues }) => void;
+  initialTemplateId?: string;
+  initialValues?: TemplateValues;
 }) {
-  const [selectedId, setSelectedId] = useState(PRODUCT_TEMPLATES[0].id);
-  const [values, setValues] = useState<TemplateValues>({});
+  const [selectedId, setSelectedId] = useState(initialTemplateId ?? PRODUCT_TEMPLATES[0].id);
+  const [values, setValues] = useState<TemplateValues>(initialValues ?? {});
+  const [zoneKey, setZoneKey] = useState<string>('');
 
   const template: ProductTemplate = PRODUCT_TEMPLATES.find((t) => t.id === selectedId) ?? PRODUCT_TEMPLATES[0];
 
@@ -229,6 +363,12 @@ export function ProductTemplateModal({
       const def = template.params.find((p): p is TemplateChoiceParam => p.kind === 'choice' && p.key === key);
       return def ? def.default : '';
     },
+    bool: (key) => {
+      const stored = values[valueKey(key)];
+      if (typeof stored === 'boolean') return stored;
+      const def = template.params.find((p): p is TemplateToggleParam => p.kind === 'toggle' && p.key === key);
+      return def ? def.default : false;
+    },
     set: (key, value) => setValues({ ...values, [valueKey(key)]: value }),
   };
 
@@ -242,52 +382,163 @@ export function ProductTemplateModal({
   };
 
   const sketch = SKETCHES[template.id];
+  // Опції (вмикачі решіток і їхні налаштування) живуть збоку, а не на схемі:
+  // на кресленні їм нема де стояти, а тумблер на розмірній лінії не читається.
+  const options = template.params.filter((p) => p.group === 'options');
+  // Зони — унікальні ключі серед опційних параметрів, у порядку оголошення
+  const zoneOptions = FIREPLACE_ZONES.filter((z) => options.some((p) => p.zone === z.key));
+  const activeZone = zoneOptions.some((z) => z.key === zoneKey) ? zoneKey : zoneOptions[0]?.key ?? '';
+  // Параметри ніші показуємо лише коли в зоні саме ніша, і навпаки —
+  // інакше половина полів у списку нічого не робить.
+  const zoneKindNow = activeZone ? api.str(`${activeZone}_kind`) : '';
+  const shownOptions = options.filter((p) => {
+    if (!p.zone) return true;
+    if (p.zone !== activeZone) return false;
+    if (p.key.endsWith('_kind')) return true;
+    const isNicheParam = p.key.includes('_niche');
+    if (zoneKindNow === 'niche') return isNicheParam || p.key.includes('_margin');
+    if (zoneKindNow === 'vent') return !isNicheParam;
+    return false;
+  });
+
+  const numberField = (p: TemplateNumberParam) => (
+    <div key={p.key} className="flex items-center justify-between gap-3">
+      <label className="text-sm text-slate-600">{p.label}</label>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <input
+          type="number"
+          min={p.min}
+          max={p.max}
+          value={api.num(p.key)}
+          onChange={(e) => api.set(p.key, e.target.value === '' ? p.default : Number(e.target.value))}
+          className="w-20 bg-white border border-transparent focus:border-[#2489d8] rounded-sm px-2 py-1.5 text-sm outline-none shadow-sm text-right"
+        />
+        <span className="text-xs text-slate-500 w-6">{p.unit}</span>
+      </div>
+    </div>
+  );
 
   return (
-    <DraggableDialog title="Шаблони виробів" onClose={onClose} width={940} z={300} className="bg-[#dcebf5]">
-      <div className="flex" style={{ minHeight: 520 }}>
-        {/* Список шаблонів */}
-        <div className="w-[220px] border-r border-[#b8d4ee] py-2 flex flex-col shrink-0">
-          {PRODUCT_TEMPLATES.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setSelectedId(t.id)}
-              className={`text-left px-4 py-3 transition-colors ${
-                t.id === selectedId ? 'bg-[#2489d8]/15 border-l-2 border-[#2489d8]' : 'hover:bg-white/60 border-l-2 border-transparent'
-              }`}
-            >
-              <div className="text-[15px] font-bold text-slate-700">{t.name}</div>
-            </button>
-          ))}
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/40 p-3" role="presentation">
+      <div
+        className="w-full h-full bg-[#dcebf5] rounded-sm shadow-2xl flex flex-col overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Шаблони виробів"
+      >
+        {/* Шапка */}
+        <div className="bg-[#2489d8] text-white px-5 py-3 flex items-center justify-between shrink-0">
+          <h2 className="text-lg font-bold">Шаблони виробів</h2>
+          <button onClick={onClose} className="hover:bg-white/20 p-1.5 rounded-full transition-colors" aria-label="Закрити">
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
 
-        {/* Ескіз вибраного шаблону — стиль конструктора мийок */}
-        <div className="flex-1 p-4 flex flex-col gap-3 min-w-0">
-          <p className="text-sm text-slate-600 leading-snug">{template.description}</p>
-
-          <div className="schema reference-schema flex-1 rounded-sm overflow-hidden">
-            <svg viewBox="0 0 660 470" className="designer-scheme-svg" style={{ width: '96%' }}>
-              <ArrowDefs />
-              {sketch ? sketch(api) : null}
-            </svg>
+        <div className="flex flex-1 min-h-0">
+          {/* Список шаблонів */}
+          <div className="w-[240px] border-r border-[#b8d4ee] py-2 flex flex-col shrink-0 overflow-y-auto">
+            {PRODUCT_TEMPLATES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setSelectedId(t.id)}
+                className={`text-left px-4 py-3 transition-colors ${
+                  t.id === selectedId ? 'bg-[#2489d8]/15 border-l-2 border-[#2489d8]' : 'hover:bg-white/60 border-l-2 border-transparent'
+                }`}
+              >
+                <div className="text-[15px] font-bold text-slate-700">{t.name}</div>
+              </button>
+            ))}
           </div>
 
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={onClose}
-              className="px-4 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
-            >
-              Скасувати
-            </button>
-            <button
-              onClick={() => onCreate(template.build(collectValues()))}
-              className="px-5 py-1.5 border border-[#2489d8] text-[#2489d8] text-sm font-bold rounded-sm hover:bg-[#2489d8] hover:text-white transition-colors"
-            >
-              Створити
-            </button>
+          {/* Ескіз — стиль конструктора мийок: розміри редагуються на схемі */}
+          <div className="flex-1 p-4 flex flex-col gap-3 min-w-0">
+            <p className="text-sm text-slate-600 leading-snug">{template.description}</p>
+            <div className="schema reference-schema flex-1 rounded-sm overflow-hidden min-h-0">
+              <svg
+                viewBox={SKETCH_VIEWBOX[template.id] ?? '0 0 660 470'}
+                className="designer-scheme-svg"
+                style={{ width: '98%', maxHeight: '100%' }}
+              >
+                <ArrowDefs />
+                {sketch ? sketch(api) : null}
+              </svg>
+            </div>
           </div>
+
+          {/* Опції. Якщо параметри розкладені по зонах — показуємо по одній
+              деталі: шість наборів одразу читати неможливо. */}
+          {options.length > 0 && (
+            <div className="w-[340px] border-l border-[#b8d4ee] p-4 flex flex-col gap-3 shrink-0 overflow-y-auto">
+              <div className="text-sm font-bold text-slate-700">Опції</div>
+
+              {zoneOptions.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-500">Деталь</label>
+                  <select
+                    value={activeZone}
+                    onChange={(e) => setZoneKey(e.target.value)}
+                    className="w-full bg-white border border-transparent focus:border-[#2489d8] rounded-sm px-2 py-2 text-sm outline-none shadow-sm cursor-pointer"
+                  >
+                    {zoneOptions.map((z) => (
+                      <option key={z.key} value={z.key}>
+                        {z.label} — {ZONE_KIND_LABEL[api.str(`${z.key}_kind`)] ?? ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {shownOptions.map((p) =>
+                p.kind === 'toggle' ? (
+                  <label key={p.key} className="flex items-center gap-2.5 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={api.bool(p.key)}
+                      onChange={(e) => api.set(p.key, e.target.checked)}
+                      className="w-4 h-4 accent-[#2489d8] cursor-pointer"
+                    />
+                    <span className="text-sm text-slate-700 group-hover:text-slate-900">{p.label}</span>
+                  </label>
+                ) : p.kind === 'number' ? (
+                  numberField(p)
+                ) : (
+                  <div key={p.key} className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-slate-500">{p.label}</label>
+                    <div className="flex rounded-sm overflow-hidden border border-[#2489d8]">
+                      {p.options.map((o) => (
+                        <button
+                          key={o.value}
+                          onClick={() => api.set(p.key, o.value)}
+                          className={`flex-1 px-2 py-1.5 text-sm font-medium transition-colors ${
+                            api.str(p.key) === o.value ? 'bg-[#2489d8] text-white' : 'bg-white text-[#2489d8] hover:bg-[#2489d8]/10'
+                          }`}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ),
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Підвал */}
+        <div className="px-5 py-3 border-t border-[#b8d4ee] flex justify-end gap-3 shrink-0">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors">
+            Скасувати
+          </button>
+          <button
+            onClick={() => onCreate(template.build(collectValues()), { templateId: template.id, values })}
+            className="px-6 py-2 border border-[#2489d8] text-[#2489d8] text-sm font-bold rounded-sm hover:bg-[#2489d8] hover:text-white transition-colors"
+          >
+            Створити
+          </button>
         </div>
       </div>
-    </DraggableDialog>
+    </div>
   );
 }

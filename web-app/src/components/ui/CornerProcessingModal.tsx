@@ -20,6 +20,7 @@ export function CornerProcessingModal({ cornerId, initialData, onSave, onClose, 
   const [radius, setRadius] = React.useState<number>(initialData?.radius || 10);
   const [sizeB, setSizeB] = React.useState<number>(initialData?.sizeB || 10);
   const [sizeC, setSizeC] = React.useState<number>(initialData?.sizeC || 10);
+  const [complexRadius, setComplexRadius] = React.useState<boolean>(!!initialData?.complexRadius);
   const [edgeProcessing, setEdgeProcessing] = React.useState<string>(initialData?.edgeProcessing || 'Без фрезерування');
   const [isEdgeProcessingEnabled, setIsEdgeProcessingEnabled] = React.useState<boolean>(!!initialData?.edgeProcessing);
 
@@ -29,6 +30,7 @@ export function CornerProcessingModal({ cornerId, initialData, onSave, onClose, 
       radius: type === 'radius' ? radius : undefined,
       sizeB: type !== 'radius' ? sizeB : undefined,
       sizeC: type !== 'radius' ? sizeC : undefined,
+      complexRadius: type === 'radius' && complexRadius ? true : undefined,
       edgeProcessing: isEdgeProcessingEnabled ? edgeProcessing : undefined,
     });
   };
@@ -68,6 +70,31 @@ export function CornerProcessingModal({ cornerId, initialData, onSave, onClose, 
                 />
                 <span className="absolute left-[125px] top-1/2 -translate-y-1/2 text-slate-500 font-medium">ММ.</span>
               </div>
+              {radius > 0 && radius < 100 && (
+                <div className="mt-1 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5">
+                  Радіус менший за 100 мм — узгодьте з технологом можливість обробки.
+                  Прорахунок і розкрій це не блокує.
+                </div>
+              )}
+              {/*
+                ТЗ 19.08, п. 4.8: нестандартну геометрію людина позначає САМА.
+                Автомат класифікує за товщиною і висотою, але «складний» —
+                це судження конструктора, і воно сильніше за автомат.
+              */}
+              <label className="mt-2 flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={complexRadius}
+                  onChange={(e) => setComplexRadius(e.target.checked)}
+                  className="mt-0.5 accent-[#1f93ef]"
+                />
+                <span className="text-slate-700">
+                  {ui('Складний радіус')}
+                  <span className="block text-[11px] text-slate-500 leading-snug">
+                    Нестандартна геометрія — піде в прорахунок окремою позицією
+                  </span>
+                </span>
+              </label>
             </div>
           )}
 

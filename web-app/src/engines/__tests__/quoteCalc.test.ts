@@ -35,6 +35,18 @@ function doc(overrides: Partial<QuoteCalcDoc> = {}): QuoteCalcDoc {
 }
 
 const book = () => JSON.parse(JSON.stringify(DEFAULT_QUOTE_PRICE_BOOK));
+
+/**
+ * Розрахунок у режимі калібрування — тільки в ньому ціни прайсу взагалі
+ * доходять до рядків. У звичайному режимі (за умовчанням) єдине джерело
+ * ціни — сервіс вартості, тож перевірки арифметики за прайсом мають
+ * вмикати режим явно.
+ */
+const calcManual = (
+  order: QuoteCalcDoc,
+  priceBook?: ReturnType<typeof book>,
+  erpPrices?: Record<string, number>,
+) => computeQuoteCalc(order, priceBook, erpPrices, true);
 const line = (result: ReturnType<typeof computeQuoteCalc>, id: string) =>
   result.lines.find((entry) => entry.id === id);
 
@@ -76,7 +88,7 @@ describe('виготовлення', () => {
     prices.fabrication.countertop_plain = 1000;
     prices.fabricationByManufacturer.countertop_plain = { Laminam: 1500 };
     const order = doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 1000 } })] });
-    expect(line(computeQuoteCalc(order, prices), 'fab:countertop_plain')!.sum).toBe(1500);
+    expect(line(calcManual(order, prices), 'fab:countertop_plain')!.sum).toBe(1500);
   });
 
   it('нога вливається у стільницю з потовщенням, а не в окремий рядок (Логіка §4)', () => {
@@ -176,7 +188,7 @@ describe('замір, монтаж, виїзд', () => {
 
     const prices = book();
     prices.deliveryZones = [0, 100, 200, 300, 400, 500];
-    const result = computeQuoteCalc(measured({ deliveryZone: 3 }), prices);
+    const result = calcManual(measured({ deliveryZone: 3 }), prices);
     expect(line(result, 'delivery')!.sum).toBe(300);
     expect(line(result, 'delivery')!.label).toContain('зона 3');
   });
@@ -211,7 +223,7 @@ describe('пакування', () => {
   it('короб — у м² додатково до піраміди', () => {
     const prices = book();
     prices.boxPerM2 = 50;
-    const result = computeQuoteCalc(doc({
+    const result = calcManual(doc({
       items: [item({ dims: { w: 1000, h: 600 } })],
       packaging: { pyramidLength: 0, pyramidQty: 0, boxM2: 1.2 },
     }), prices);
@@ -223,37 +235,106 @@ describe('послуги, ціни, підсумок', () => {
   it('додаткова послуга з кількістю потрапляє в розрахунок', () => {
     const prices = book();
     prices.services.hob_cutout = 400;
-    const result = computeQuoteCalc(doc({
+    const result = calcManual(doc({
       items: [item({ dims: { w: 1000, h: 600 } })],
       services: { hob_cutout: 2 },
     }), prices);
     expect(line(result, 'svc:hob_cutout')!.sum).toBe(800);
   });
 
-  it('ручна ціна рядка перекриває прайс і позначається', () => {
+
+  it('ціна від сервісу вартості перекриває локальний прайс', () => {
     const prices = book();
     prices.fabrication.countertop_plain = 1000;
-    const result = computeQuoteCalc(doc({
-      items: [item({ dims: { w: 1000, h: 1000 } })],
-      priceOverrides: { 'fab:countertop_plain': 2500 },
-    }), prices);
+    // Код номенклатури «Виготовлення стільниці без потовщень (керамограніт Laminam)»
+    const result = computeQuoteCalc(
+      doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 1000 } })] }),
+      prices,
+      { '292336': 1800 },
+    );
     const fab = line(result, 'fab:countertop_plain')!;
-    expect(fab.sum).toBe(2500);
-    expect(fab.overridden).toBe(true);
+    expect(fab.code).toBe('292336');
+    expect(fab.unitPrice).toBe(1800);
+    expect(fab.source).toBe('erp');
+  });
+
+  it('ціна від сервісу перекриває прайс і тоді, коли в прайсі є своя', () => {
+    const prices = book();
+    prices.fabrication.countertop_plain = 1000;
+    const result = computeQuoteCalc(
+      doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 1000 } })] }),
+      prices,
+      { '292336': 1800 },
+    );
+    expect(line(result, 'fab:countertop_plain')!.sum).toBe(1800);
+  });
+
+  it('коду немає у відповіді сервісу — рядок лишається без ціни, а не падає на прайс', () => {
+    // Головна вимога 25.08.2026: мовчання сервісу має бути видно нулем.
+    // Ручна ціна в прайсі при вимкненому калібруванні його не підміняє.
+    const prices = book();
+    prices.fabrication.countertop_plain = 1000;
+    const result = computeQuoteCalc(
+      doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 1000 } })] }),
+      prices,
+      { '999999': 5 },
+    );
+    const fab = line(result, 'fab:countertop_plain')!;
+    expect(fab.unitPrice).toBe(0);
+    expect(fab.source).toBe('none');
+    expect(result.warnings.some((warning) => warning.includes('Без ціни'))).toBe(true);
+  });
+
+  it('стара ціна в прайсі при вимкненому калібруванні не впливає ні на що', () => {
+    const prices = book();
+    prices.fabrication.countertop_plain = 1000;
+    const result = computeQuoteCalc(doc({ items: [item({ dims: { w: 1000, h: 1000 } })] }), prices);
+    expect(line(result, 'fab:countertop_plain')!.unitPrice).toBe(0);
+    expect(line(result, 'fab:countertop_plain')!.source).toBe('none');
+    expect(result.total).toBe(0);
+  });
+
+  it('калібрування ввімкнене — ручна ціна перекриває ціну сервісу і помічена як ручна', () => {
+    const prices = book();
+    prices.fabrication.countertop_plain = 1000;
+    const result = calcManual(
+      doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 1000 } })] }),
+      prices,
+      { '292336': 1800 },
+    );
+    const fab = line(result, 'fab:countertop_plain')!;
+    expect(fab.unitPrice).toBe(1000);
+    expect(fab.source).toBe('manual');
+    // Ціна сервісу зберігається поряд — інакше нема з чим зводити аналітику
+    expect(fab.erpUnitPrice).toBe(1800);
+    expect(result.warnings.some((warning) => warning.includes('калібрування'))).toBe(true);
+  });
+
+  it('калібрування ввімкнене, але ціну не вписали — працює ціна сервісу', () => {
+    // Нуль у прайсі означає «не задано», а не «безкоштовно»:
+    // інакше порожній прайс обнуляв би все, що дав сервіс.
+    const result = calcManual(
+      doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 1000 } })] }),
+      book(),
+      { '292336': 1800 },
+    );
+    const fab = line(result, 'fab:countertop_plain')!;
+    expect(fab.unitPrice).toBe(1800);
+    expect(fab.source).toBe('erp');
   });
 
   it('підсумок — сума всіх рядків', () => {
     const prices = book();
     prices.fabrication.countertop_plain = 1000;
     prices.pyramid[1200] = 700;
-    const result = computeQuoteCalc(doc({ items: [item({ dims: { w: 1000, h: 1000 } })] }), prices);
+    const result = calcManual(doc({ items: [item({ dims: { w: 1000, h: 1000 } })] }), prices);
     expect(result.total).toBe(1700);
   });
 
   it('матеріал — півлиста теж валідна кількість', () => {
     const prices = book();
     prices.sheet = 18000;
-    const result = computeQuoteCalc(doc({
+    const result = calcManual(doc({
       items: [item({ dims: { w: 1000, h: 600 } })],
       materialSheets: 1.5,
     }), prices);
@@ -375,7 +456,7 @@ describe('коди 1С', () => {
       'Під проект': 2000,
       'Штучний кварцит:Під проект': 3000,
     };
-    const result = computeQuoteCalc(doc({
+    const result = calcManual(doc({
       materialType: 'Штучний кварцит',
       manufacturer: 'Під проект',
       items: [item({ dims: { w: 1000, h: 1000 } })],
@@ -386,10 +467,10 @@ describe('коди 1С', () => {
   it('код виробника перемагає базовий код типу — це різні номенклатури', () => {
     const prices = book();
     prices.codes1c = { 'fab:countertop_plain': '100001', 'fab:countertop_plain:Laminam': '100777' };
-    const generic = computeQuoteCalc(doc({ items: [item({ dims: { w: 1000, h: 600 } })] }), prices);
+    const generic = calcManual(doc({ items: [item({ dims: { w: 1000, h: 600 } })] }), prices);
     expect(line(generic, 'fab:countertop_plain')!.code).toBe('100001');
 
-    const laminam = computeQuoteCalc(doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 600 } })] }), prices);
+    const laminam = calcManual(doc({ manufacturer: 'Laminam', items: [item({ dims: { w: 1000, h: 600 } })] }), prices);
     expect(line(laminam, 'fab:countertop_plain')!.code).toBe('100777');
   });
 
@@ -430,7 +511,12 @@ describe('злиття прайсу (mergeQuotePriceBook)', () => {
     const merged = mergeQuotePriceBook(undefined);
     expect(merged.montage.countertop_plain).toBe(0);
     expect(merged.deliveryZones).toHaveLength(6);
-    expect(merged.codes1c).toEqual({});
+    // Коди 1С радіусних послуг лишаються в замовчуваннях: саме за ними
+    // питається ціна. А самих цін у замовчуваннях більше немає —
+    // прибрані 25.08.2026, щоб застарілий прайс не поїхав у продакшн.
+    expect(merged.codes1c['svc:radius_ct80']).toBe('298634');
+    expect(merged.services.radius_bend).toBeUndefined();
+    expect(Object.keys(merged.services)).toHaveLength(0);
   });
 
   it('виставлені ціни й коди не перетираються, нові поля доїжджають', () => {
@@ -539,7 +625,7 @@ describe('підтягування виробів із розкрою', () => {
 
   const details = [
     detail('prod_1/element:main/detail:main', 'Стільниця'),
-    detail('prod_1/element:fold_C/detail:main', 'Підворот'),
+    detail('prod_1/element:fold_C/detail:main', 'Потовщення'),
     detail('prod_1/element:leg_A/detail:main', 'Опора'),
     detail('prod_1/element:wall_panel_F/detail:main', 'Стінова панель'),
     detail('det_dxf_1', 'Стільниця', { label: 'DXF стільниця' }),
@@ -593,5 +679,174 @@ describe('підтягування виробів із розкрою', () => {
     const items = quoteItemsFromProject(legacyDetails, legacyParts, 20);
     expect(items[0].productTypeId).toBe('countertop_thick');
     expect(items[0].areaM2).toBe(0.95); // площа деталі З опуском
+  });
+});
+
+/**
+ * Радіусні (гнуті) елементи в Прорахунку — ТЗ 19.08.
+ *
+ * Кошторис (виробничий BOM) їх уже рахує; але прорахунок для клієнта —
+ * ОКРЕМИЙ документ зі своїми рядками, і саме там Богдан їх не побачив.
+ * Тест тримає міст: позначка на деталі розкрою → рядок «Додаткових послуг»
+ * з роздрібною ціною з номенклатури.
+ */
+describe('радіусні елементи в додаткових послугах', () => {
+  const partWith = (mark: Partial<import('../../domain/types').RadiusElementMark>, type = 'Потовщення') => ({
+    id: `p-${mark.cornerId}`,
+    detailId: `d-${mark.cornerId}`,
+    type,
+    width: 306,
+    height: 100,
+    isMain: false,
+    points: [],
+    radiusElement: {
+      radiusMm: 150,
+      arcLengthMm: 235.6,
+      cornerId: 'AB',
+      arcAngleDeg: 90,
+      bandSizeMm: 100,
+      method: 'segments' as const,
+      role: 'countertop' as const,
+      ...mark,
+    },
+  }) as unknown as import('../../domain/types').DetailPart;
+
+  const project = (material?: string) => ({
+    ...({} as import('../../domain/types').Project),
+    projectMaterial: material,
+    products: [],
+    details: [],
+    textureSelectionEnabled: false,
+  }) as unknown as import('../../domain/types').Project;
+
+  it('камінь: край 100 мм падає в рядок «80–200» з ціною 15 872,15', () => {
+    const auto = autoQuoteServices(project('Керамограніт'), [], [partWith({ cornerId: 'a' })]);
+    expect(auto.radius_ct200).toBe(1);
+    expect(auto.radius_matrix).toBeUndefined();
+
+    const doc = { ...createQuoteCalcDoc(), services: auto, materialSheets: 1, items: [] };
+    // Ціну на цю номенклатуру дає сервіс вартості за кодом 1С; локального
+    // прайсу більше немає, тому в тесті сервіс імітуємо явно.
+    const result = computeQuoteCalc(doc as never, DEFAULT_QUOTE_PRICE_BOOK, { '298635': 15872.15 });
+    const line = result.lines.find((l) => l.id === 'svc:radius_ct200');
+    expect(line).toBeDefined();
+    expect(line!.code).toBe('298635');
+    expect(line!.source).toBe('erp');
+    expect(line!.sum).toBeCloseTo(15872.15, 2);
+  });
+
+  it('акрил: два однакові радіуси — два гнуття і ОДНА матриця', () => {
+    const marks = [
+      partWith({ cornerId: 'a', method: 'bending' }),
+      partWith({ cornerId: 'b', method: 'bending' }),
+    ];
+    const auto = autoQuoteServices(project('Акрил'), [], marks);
+    expect(auto.radius_bend).toBe(2);
+    expect(auto.radius_matrix).toBe(1);
+  });
+
+  it('акрил: інша геометрія — друга матриця', () => {
+    const marks = [
+      partWith({ cornerId: 'a', method: 'bending', bandSizeMm: 100 }),
+      partWith({ cornerId: 'b', method: 'bending', bandSizeMm: 40 }),
+    ];
+    const auto = autoQuoteServices(project('Акрил'), [], marks);
+    expect(auto.radius_bend).toBe(2);
+    expect(auto.radius_matrix).toBe(2);
+  });
+
+  it('опора вище 900 мм іде дорожчою категорією', () => {
+    const auto = autoQuoteServices(project('Кварцит'), [], [
+      partWith({ cornerId: 'a', role: 'leg', bandSizeMm: 1100 }, 'Опора'),
+    ]);
+    expect(auto.radius_leg_tall).toBe(1);
+  });
+
+  it('без партів радіусних рядків немає — і нічого не падає', () => {
+    const auto = autoQuoteServices(project('Керамограніт'), []);
+    expect(Object.keys(auto).some((key) => key.startsWith('radius_'))).toBe(false);
+  });
+});
+
+/*
+ * Стик ноги: розбір слота замість префікса (виправлення 26.08).
+ * Продажі помітили завищену кількість: опуски САМОЇ НОГИ (слот
+ * leg_B_fold_C → стик joint_leg_B_fold_C) підпадали під префікс
+ * joint_leg_ і роздували «стикування ноги з виробом».
+ */
+describe('joint_leg: тільки стики самої ноги', () => {
+  const project = (joints: Array<{ id: string; len: number }>) => ({
+    products: [{
+      id: 'prod_1',
+      name: 'Тест',
+      elements: [{
+        id: 'el_1',
+        joints: joints.map(({ id, len }) => ({
+          id,
+          a: { from: 0, to: len },
+          b: { from: 0, to: len },
+        })),
+        additions: [],
+      }],
+    }],
+  } as never);
+
+  it('стик ноги зі стільницею рахується', () => {
+    const auto = autoQuoteServices(project([{ id: 'joint_leg_B', len: 600 }]), []);
+    expect(auto.joint_leg).toBe(0.6);
+  });
+
+  it('склейка ОПУСКА НА НОЗІ не рахується — саме вона роздувала кількість', () => {
+    const auto = autoQuoteServices(project([
+      { id: 'joint_leg_B', len: 600 },
+      { id: 'joint_leg_B_fold_C', len: 900 },
+      { id: 'joint_leg_B_thickening_A', len: 700 },
+    ]), []);
+    expect(auto.joint_leg).toBe(0.6);
+  });
+
+  it('нога на СТІНОВІЙ ПАНЕЛІ рахується — префікс її не бачив', () => {
+    const auto = autoQuoteServices(project([{ id: 'joint_wall_panel_B_leg_C', len: 450 }]), []);
+    expect(auto.joint_leg).toBe(0.45);
+  });
+
+  it('підворот стільниці не рахується як нога', () => {
+    const auto = autoQuoteServices(project([{ id: 'joint_fold_E', len: 1200 }]), []);
+    expect(auto.joint_leg).toBeUndefined();
+  });
+});
+
+/*
+ * Бортик у прорахунку — стінова панель (рішення продажів 26.08).
+ * Раніше гілки не було, і бортик мовчки випадав з КП.
+ */
+describe('бортик тарифікується як стінова панель', () => {
+  const detail = (over: Record<string, unknown>) => ({
+    id: 'prod_1/el_skirt',
+    type: 'Бортик',
+    shape: 'Прямокутна',
+    quantity: 1,
+    geometry: { width: 1200, height: 100 },
+    thickness: 20,
+    ...over,
+  } as never);
+  const part = {
+    id: 'p1', detailId: 'prod_1/el_skirt', name: 'Бортик', type: 'Стільниця',
+    shape: 'Прямокутна', width: 1200, height: 100, rotation: 0,
+    area: 0.12, points: [{ x: 0, y: 0 }, { x: 1200, y: 0 }, { x: 1200, y: 100 }, { x: 0, y: 100 }],
+    isMain: true, parentLabel: '', dimsLabel: '',
+  } as never;
+
+  it('бортик 20 мм → стінова панель ≥12', () => {
+    const items = quoteItemsFromProject([detail({})], [part]);
+    const skirt = items.find((item) => item.sourceRef === 'prod_1/el_skirt');
+    expect(skirt?.productTypeId).toBe('wall_panel_ge12');
+    expect(skirt?.areaM2).toBeCloseTo(0.12, 3);
+  });
+
+  it('бортик 6 мм → стінова панель <12', () => {
+    const items = quoteItemsFromProject([detail({ thickness: 6 })], [part]);
+    const skirt = items.find((item) => item.sourceRef === 'prod_1/el_skirt');
+    expect(skirt?.productTypeId).toBe('wall_panel_lt12');
   });
 });

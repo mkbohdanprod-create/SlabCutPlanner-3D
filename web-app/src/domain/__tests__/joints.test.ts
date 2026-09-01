@@ -44,13 +44,47 @@ describe('сторони і стики', () => {
 
   it('відступ від кута перетворюється на абсолютну позицію', () => {
     const anchors = jointAnchorPoints('Прямокутна', { width: 2400, height: 600 });
+    // Відступ — ВІДСТАНЬ усередину деталі. Від дальнього кута (x = 2400)
+    // 900 мм дають 1500: раніше сюди треба було подавати −900, і саме через
+    // це стик від дальнього кута опинявся за контуром — поле в інтерфейсі
+    // від'ємних не дає.
     const { requested, snapped } = manualJointPosition(anchors, {}, {
       axis: 'vertical',
-      anchorCorner: 'AB', // x = 2400
-      offset: -900,
+      anchorCorner: 'AB',
+      offset: 900,
     });
     expect(requested).toBe(1500);
     expect(snapped).toBe(1500);
+  });
+
+  it('відступ від ближнього кута лишається як був', () => {
+    const anchors = jointAnchorPoints('Прямокутна', { width: 2400, height: 600 });
+    const { requested } = manualJointPosition(anchors, {}, {
+      axis: 'vertical', anchorCorner: 'DA', offset: 900,
+    });
+    expect(requested).toBe(900);
+  });
+
+  it('Г-подібна: відступ від нижнього кута не виносить стик за деталь', () => {
+    // Кут E лежить на y = outerHeight; раніше «+ offset» давало 1200 + 400,
+    // тобто позицію поза контуром — у 3D лінія зникала.
+    const anchors = jointAnchorPoints('Г-подібна', {
+      outerWidth: 1200, outerHeight: 1200, innerHorizontal: 600, innerVertical: 600,
+    });
+    expect(anchors?.E).toEqual({ x: 0, y: 1200 });
+    const { requested } = manualJointPosition(anchors, {}, {
+      axis: 'horizontal', anchorCorner: 'E', offset: 400,
+    });
+    expect(requested).toBe(800);
+    expect(requested).toBeLessThan(1200);
+  });
+
+  it('старі вироби з від\'ємним відступом читаються так само', () => {
+    const anchors = jointAnchorPoints('Прямокутна', { width: 2400, height: 600 });
+    const { requested } = manualJointPosition(anchors, {}, {
+      axis: 'vertical', anchorCorner: 'AB', offset: -900,
+    });
+    expect(requested).toBe(1500);
   });
 
   it('стик, що потрапив на дугу, відсувається до її межі', () => {

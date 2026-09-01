@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Plus, Trash2, RefreshCw, Download, Upload, AlertTriangle, Link2, Info, BookMarked } from 'lucide-react';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useProjectStore } from '../../store/useProjectStore';
-import { uid } from '../../domain/defaults';
+import { uid, MATERIALS_IN_USE } from '../../domain/defaults';
 import { VIYAR_SERVICE_COUNT } from '../../domain/viyarServiceCatalog';
 import { VIYAR_UNMAPPED_FACTS } from '../../domain/viyarMapping';
 import {
@@ -22,7 +22,8 @@ import type { MaterialType } from '../../domain/types';
  * бути видимою, а не захованою серед двадцяти полів.
  */
 
-const MATERIALS: MaterialType[] = ['Керамограніт', 'Кварцит', 'Натуральний камінь', 'Акрил', 'Компакт-плита'];
+// Компакт-плити в переліку немає — вона виведена з програми 26.08.2026
+const MATERIALS = MATERIALS_IN_USE as MaterialType[];
 
 const FACT_KINDS: ProductionFactKind[] = [
   'saw_cut', 'waterjet_cut', 'cutout_perimeter', 'hole_small', 'hole_large',

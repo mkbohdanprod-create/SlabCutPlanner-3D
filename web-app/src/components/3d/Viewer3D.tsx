@@ -1,6 +1,10 @@
 import React, { Suspense, useMemo, useState, useEffect,  useRef } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { OrbitControls,   Center,  TransformControls , useTexture, Edges, Line,  Html } from '@react-three/drei';
+import { OrbitControls,   Center,  TransformControls , useTexture, Edges, Line,  Html, Grid } from '@react-three/drei';
+import { SafeEnvironment } from './SafeEnvironment';
+import { Blocks, Group, Frame, Lightbulb, BookOpen, Clapperboard, RotateCcw, Smartphone, DraftingCompass, Loader2 as ArSpinner, Home } from 'lucide-react';
+import { exportForAr, arFileName } from '../../engines/arExport';
+import { collidingSceneProducts, defaultSceneLayout } from '../../engines/sceneLayout';
 import type { Placement, DetailPart, SlabInstance, Detail } from '../../domain/types';
 import * as THREE from 'three';
 import { Evaluator, Brush, SUBTRACTION } from 'three-bvh-csg';
@@ -8,11 +12,21 @@ import {  Vector3 } from 'three';
 import { SIDE_SEGMENT_INDEXES } from '../../domain/constants';
 import { buildAssemblyGroups } from '../../engines/grouping3d';
 import { getSinkPartTransform } from '../../engines/sinkAssembly';
+import { buildEdgeCutters } from '../../engines/edgeCutters';
+import { buildGrooveCutters } from '../../engines/surfaceGrooves';
+import { RoomSolids } from '../room/RoomSolids';
 import { useProjectStore } from '../../store/useProjectStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
 import { useUIStore } from '../../store/useStore';
 import { ProductElement3DNode } from './ProductElement3DNode';
+import { EdgesVisibility } from '../ui/Detail3DPreview';
+import { attachContextLossRecovery, waitForLiveContext } from '../../utils/webglContextRecovery';
 
+
+/** <Center> за умовою: для одного виробу — як завжди, для кількох — вимкнено. */
+function MaybeCenter({ enabled, children }: { enabled: boolean; children: React.ReactNode }) {
+  return enabled ? <Center disableY>{children}</Center> : <>{children}</>;
+}
 
 function ProductAssemblyWrapper({ 
   product, 
@@ -22,14 +36,17 @@ function ProductAssemblyWrapper({
   textureLayouts, 
   selectedId, 
   onSelect, 
-  setIsDragging 
+  setIsDragging,
+  /* Крок 5.1: дефолтне місце в ряду (мм), перетин габаритів, Shift-вільно. */
+  defaultSlot,
+  colliding,
+  snapFree,
 }: any) {
+  const assemblyShowEdges = useUIStore((st) => st.showEdges);
   const [group, setGroup] = React.useState<THREE.Group | null>(null);
   const transformMode = useUIStore(s => s.transformMode);
   const is3dAssemblyMode = useUIStore(s => s.is3dAssemblyMode);
   const isBacklightMode = useUIStore(s => s.isBacklightMode);
-  const updatePlacement3dTransform = useProjectStore(s => s.updatePlacement3dTransform);
-
   // Усі шляхи елементів цього виробу (включно з доповненнями, рекурсивно).
   // Порівнювати з product.id напряму НЕ можна: buildElementPath додає власний префікс
   // 'prod_', тому detailId має вигляд 'prod_<productId>/element:...' і startsWith(product.id)
@@ -225,56 +242,117 @@ function ProductAssemblyWrapper({
   const initialY = thickness / 2;
   const initialZ = (baseY + (mainPart?.height || 600) / 2) * s - 0.8;
 
+  /*
+   * КРОК 5.1 — джерело правди про місце виробу, за пріоритетом:
+   *   1. `product.scenePlacement` — мм по підлозі + поворот; живе на виробі,
+   *      переживає будь-які перерахунки розкрою;
+   *   2. легасі `placement.transform3d` — стара збірка цієї сесії; читаємо,
+   *      щоб не смикнути картинку, але перше ж переміщення переписує все
+   *      в scenePlacement;
+   *   3. детермінований дефолтний ряд (`engines/sceneLayout`) — раніше тут
+   *      були координати деталі НА СЛЯБІ, і вироби злипались у центрі.
+   */
+  const scenePlacement = product.scenePlacement;
   const savedTransform = mainPlacement?.transform3d ?? mainPlacement?.assemblyTransform;
-  const position = savedTransform ? [savedTransform.x, savedTransform.y, savedTransform.z] : [initialX, initialY, initialZ];
-  const rotation = savedTransform ? [savedTransform.rx, savedTransform.ry, savedTransform.rz] : [0, 0, 0];
+  const position = scenePlacement
+    ? [scenePlacement.x * s, initialY, scenePlacement.z * s]
+    : savedTransform
+      ? [savedTransform.x, savedTransform.y, savedTransform.z]
+      : defaultSlot
+        ? [defaultSlot.x * s, initialY, defaultSlot.z * s]
+        : [initialX, initialY, initialZ];
+  const rotation = scenePlacement
+    ? [0, THREE.MathUtils.degToRad(scenePlacement.rotationYDeg), 0]
+    : savedTransform ? [savedTransform.rx, savedTransform.ry, savedTransform.rz] : [0, 0, 0];
   
-  const isSelected = mainPlacement && selectedId === mainPlacement.id;
+  /*
+   * Виділення — по ВИРОБУ, а не по його розміщенню на слябі. Раніше
+   * без mainPlacement (деталь не розмістилась — конфлікт розкрою) виріб
+   * неможливо було ні виділити, ні посунути: гізмо просто не з'являлось.
+   */
+  const selectedProductId = useUIStore(st => st.selectedProductId3d);
+  const setSelectedProductId = useUIStore(st => st.setSelectedProductId3d);
+  const isSelected = selectedProductId === product.id
+    || (mainPlacement && selectedId === mainPlacement.id);
   
+  const updateProductScenePlacement = useProjectStore(st => st.updateProductScenePlacement);
   const handleDragEnd = () => {
-    if (!group || !mainPlacement) return;
-    const pos = group.position;
-    const rot = group.rotation;
-    updatePlacement3dTransform(mainPlacement.id, { x: pos.x, y: pos.y, z: pos.z, rx: rot.x, ry: rot.y, rz: rot.z });
+    if (!group) return;
+    // Пишемо У ВИРІБ: висота лишається на підлозі, поворот — лише навколо
+    // вертикалі. Це і є «розміщення зберігається разом із проєктом».
+    updateProductScenePlacement(product.id, {
+      x: Math.round(group.position.x / s),
+      z: Math.round(group.position.z / s),
+      rotationYDeg: Math.round(THREE.MathUtils.radToDeg(group.rotation.y)) % 360,
+    });
   };
+
+  /* Червона рамка перетину: слідує за виробом (лежить у його групі). */
+  const footW = ((mainPart?.width || 1000) / 2 + 30) * s;
+  const footD = ((mainPart?.height || 600) / 2 + 30) * s;
 
   return (
     <>
-      {group && mainPlacement && (
+      {group && (
         <TransformControls 
           object={group}
           mode={transformMode as any}
           onDraggingChanged={(e) => setIsDragging(!!e?.value)} 
           onMouseUp={handleDragEnd} 
           size={0.6}
+          /* Крок 5.1: рух — тільки по підлозі (без вертикальної стрілки),
+             поворот — тільки кільце навколо вертикалі. Прив'язки 50 мм і
+             15°; затиснутий Shift вимикає їх для точного доведення. */
+          translationSnap={snapFree ? null : 0.05}
+          rotationSnap={snapFree ? null : Math.PI / 12}
           enabled={is3dAssemblyMode && isSelected}
           visible={is3dAssemblyMode && isSelected}
-          showX={is3dAssemblyMode && isSelected}
-          showY={is3dAssemblyMode && isSelected}
-          showZ={is3dAssemblyMode && isSelected}
+          showX={is3dAssemblyMode && isSelected && transformMode === 'translate'}
+          showY={is3dAssemblyMode && isSelected && transformMode === 'rotate'}
+          showZ={is3dAssemblyMode && isSelected && transformMode === 'translate'}
         />
       )}
       <group 
+        name={`product:${product.id}`}
         position={position as any} 
         rotation={rotation as any} 
         ref={setGroup as any}
         onClick={(e) => {
-          if (is3dAssemblyMode && mainPlacement) {
+          if (is3dAssemblyMode) {
             e.stopPropagation();
-            onSelect(mainPlacement.id);
+            setSelectedProductId(product.id);
+            if (mainPlacement) onSelect(mainPlacement.id);
           }
         }}
       >
-        <ProductElement3DNode
-          element={mainElement}
-          customTextureMapFactory={textureFactory}
-          /* Для розрізаної складної форми (Г/П зі стиками) один меш не може мати
-             три різні UV зі слябу. Тому передаємо сегменти окремо — вузол малює
-             кожен своїм мешем із власною текстурою. */
-          segmentPartsFor={partsOfElement}
-          textureForPart={textureForPart}
-          position={[0, ((mainElement?.baseDefinition?.elevation ?? 900) * 0.001), 0]}
-        />
+        {/* Перетин габаритів двох виробів: тільки показуємо, нічого не
+            рухаємо — острів впритул до кухні ставлять свідомо. */}
+        {colliding && (
+          <Line
+            points={[
+              [-footW, 0.002, -footD], [footW, 0.002, -footD],
+              [footW, 0.002, footD], [-footW, 0.002, footD],
+              [-footW, 0.002, -footD],
+            ] as any}
+            color="#dc2626"
+            lineWidth={2.5}
+          />
+        )}
+        {/* «Показувати контури» мусить діяти і на деталі, намальовані через
+            Detail3DNode: раніше кнопка глушила лише власні меші Підбору,
+            а режим збірки контури ігнорував. */}
+        <EdgesVisibility.Provider value={assemblyShowEdges}>
+          <ProductElement3DNode
+            element={mainElement}
+            customTextureMapFactory={textureFactory}
+            /* Для розрізаної складної форми (Г/П зі стиками) один меш не може мати
+               три різні UV зі слябу. Тому передаємо сегменти окремо — вузол малює
+               кожен своїм мешем із власною текстурою. */
+            segmentPartsFor={partsOfElement}
+            textureForPart={textureForPart}
+            position={[0, ((mainElement?.baseDefinition?.elevation ?? 900) * 0.001), 0]}
+          />
+        </EdgesVisibility.Provider>
       </group>
     </>
   );
@@ -666,9 +744,51 @@ function TexturedPart({
         baseY * s - 0.8 - originOffset[2]
       ];
 
+  /*
+   * ТОРЦІ (28.08): різаки профілів крайок. Симуляція інструмента —
+   * перетин фрези протягнутий уздовж сторін з edgeProfiles і відніматий
+   * CSG, тим самим механізмом, що ріже 45° на загинах. Геометрії вже в
+   * локальному просторі меша (див. engines/edgeCutters), тому без
+   * матриць. Кеш по (part, профілі, товщина) — перерахунок лише коли
+   * людина реально міняє обробку.
+   */
+  const edgeCutterGeoms = useMemo(() => {
+    const out: THREE.BufferGeometry[] = [];
+    // РАДІУСИ (01.09): крім профілів сторін — галочка «Обробка торців» на
+    // куті (профіль сусідньої сторони йде через усю дугу) і на периметрі
+    // вирізу. Кути й вирізи передаються з деталі; отвори бере з part.holes.
+    const millingOn = (v?: string) => Boolean(v) && v !== 'Без фрезерування';
+    type Milled = { edgeProcessing?: string } | undefined;
+    const wantsCutters = Boolean(detail?.edgeProfiles)
+      || Object.values((detail?.corners ?? {}) as Record<string, Milled>).some((c) => millingOn(c?.edgeProcessing))
+      || Object.values((detail?.cutouts ?? {}) as Record<string, Milled>).some((c) => millingOn(c?.edgeProcessing));
+    if (wantsCutters) {
+      try {
+        out.push(...buildEdgeCutters(part, detail?.edgeProfiles, thickness * 1000, {
+          corners: detail?.corners,
+          cutouts: detail?.cutouts,
+        }));
+      } catch (e) {
+        console.error('edge cutters error', e);
+      }
+    }
+    /* Фрезерування площини (проточки для води, декор) — той самий
+       CSG-конвеєр, що й торці. Без цього канавки жили б лише в
+       прев'ю редактора, а в режимі збірки зникали. */
+    const grooves = detail?.surfaceGrooves;
+    if (grooves?.length) {
+      try {
+        out.push(...buildGrooveCutters(grooves, part.width, part.height, thickness * 1000));
+      } catch (e) {
+        console.error('groove cutters error', e);
+      }
+    }
+    return out;
+  }, [part, detail?.edgeProfiles, detail?.corners, detail?.cutouts, detail?.surfaceGrooves, thickness]);
+
   const finalGeometry = useMemo(() => {
     let currentGeom = geometry;
-    if (csgCutters && csgCutters.length > 0) {
+    if ((csgCutters && csgCutters.length > 0) || edgeCutterGeoms.length > 0) {
       try {
         const meshMatrix = new THREE.Matrix4().compose(
           new THREE.Vector3(...meshPos),
@@ -676,41 +796,48 @@ function TexturedPart({
           new THREE.Vector3(1, 1, 1)
         );
         const invMatrix = meshMatrix.clone().invert();
-        
+
         let brush = new Brush(currentGeom, new THREE.Material());
         brush.updateMatrixWorld();
-        
+
         const evaluator = new Evaluator();
         evaluator.useGroups = false;
-        
-        for (const c of csgCutters) {
+
+        for (const c of csgCutters ?? []) {
           const point = new THREE.Vector3(...c.point);
           const normal = new THREE.Vector3(...c.normal);
-          
+
           const cutterBox = new THREE.BoxGeometry(10, 10, 10);
           cutterBox.translate(0, 0, 5);
           const cutterMesh = new THREE.Mesh(cutterBox);
-          
+
           cutterMesh.position.copy(point);
           cutterMesh.lookAt(point.clone().add(normal));
           cutterMesh.updateMatrix();
-          
+
           cutterMesh.applyMatrix4(invMatrix);
           cutterMesh.updateMatrixWorld();
-          
+
           const cutterBrush = new Brush(cutterMesh.geometry, new THREE.Material());
           cutterBrush.matrix.copy(cutterMesh.matrix);
           cutterBrush.updateMatrixWorld();
-          
+
           brush = evaluator.evaluate(brush, cutterBrush, SUBTRACTION);
         }
+
+        for (const cutterGeom of edgeCutterGeoms) {
+          const cutterBrush = new Brush(cutterGeom, new THREE.Material());
+          cutterBrush.updateMatrixWorld();
+          brush = evaluator.evaluate(brush, cutterBrush, SUBTRACTION);
+        }
+
         currentGeom = brush.geometry;
       } catch (e) {
         console.error("CSG error", e);
       }
     }
     return currentGeom;
-  }, [geometry, csgCutters, meshPos, finalQuaternion]);
+  }, [geometry, csgCutters, edgeCutterGeoms, meshPos, finalQuaternion]);
 
   return (
     <mesh
@@ -1220,9 +1347,18 @@ function AssemblyGroup({ mainPlacement, mainPart, foldPlacements, childPlacement
   );
 }
 
-function CaptureController({ onCaptureReady, contentRef, preset = 'default' }: {
-  onCaptureReady?: (snaps: string[]) => void,
+/** Знімки одного виробу — один бланк візуалізації в PDF. */
+export interface ProductSnapshots {
+  productId: string;
+  name: string;
+  snapshots: string[];
+}
+
+function CaptureController({ onCaptureReady, contentRef, preset = 'default', products = [] }: {
+  onCaptureReady?: (snaps: string[], perProduct?: ProductSnapshots[]) => void,
   contentRef: React.RefObject<THREE.Group | null>,
+  /** Вироби проєкту — для посторінкової візуалізації (по одному бланку на виріб). */
+  products?: Array<{ id: string; name: string }>,
   /**
    * 'default' — один ізометричний знімок для PDF розкрою (як було).
    * 'showcase' — три ракурси на БІЛОМУ фоні без осей і сірої підлоги:
@@ -1235,8 +1371,65 @@ function CaptureController({ onCaptureReady, contentRef, preset = 'default' }: {
     if (!onCaptureReady || !contentRef.current) return;
 
     let mounted = true;
-    const timeout = setTimeout(() => {
+    const timeout = setTimeout(() => { void captureNow(); }, 1000);
+
+    /**
+     * FG-08/SC-36, 24.08: якщо в момент знімка WebGL-контекст мертвий,
+     * gl.render()/toDataURL() не кидають помилку — вони мовчки дають
+     * порожній/чорний кадр, і PDF отримує порожню рамку без жодного
+     * сліду в консолі. Тому чекаємо на живий контекст ПЕРЕД тим, як
+     * щось знімати, а не рятуємось постфактум.
+     */
+    async function captureNow() {
       if (!mounted) return;
+      const live = await waitForLiveContext(gl);
+      if (!mounted) return;
+      if (!live) {
+        console.error('[WebGL] Контекст лишається втраченим — знімок для PDF пропущено (FG-08/SC-36).');
+        onCaptureReady!([]);
+        return;
+      }
+
+      /*
+       * SC-36, СПРАВЖНЯ ПРИЧИНА (знайдена відтворенням 24.08): фіксована
+       * пауза перед знімком знімала ПОРОЖНЮ сцену. Кожен виріб загорнутий
+       * у <Suspense> і не з'являється в contentRef, поки його текстура
+       * (фото слябу — data-URL на сотні КБ) не декодується і не заллється
+       * в GPU. На проєктах зі слябом-фото це довше за секунду — і PDF
+       * отримував три білі кадри. Старі проєкти без фото монтуються
+       * миттєво, тому «на старому все ок».
+       *
+       * Тому чекаємо не час, а ФАКТ: у contentRef з'явились усі вироби
+       * (children.length ≥ кількості виробів). Стеля 20с — далі знімаємо
+       * що є, а якщо не з'явилось нічого — чесно повертаємо [] (QuotePanel
+       * покаже попередження замість тихого порожнього PDF).
+       */
+      const expected = Math.max(products.length, 1);
+      const CONTENT_TIMEOUT_MS = 20000;
+      const POLL_MS = 150;
+      let waited = 0;
+      while (
+        mounted &&
+        (contentRef.current?.children.length ?? 0) < expected &&
+        waited < CONTENT_TIMEOUT_MS
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+        waited += POLL_MS;
+      }
+      if (!mounted) return;
+      const mountedChildren = contentRef.current?.children.length ?? 0;
+      if (mountedChildren === 0) {
+        console.error(`[CaptureController] Сцена порожня і через ${CONTENT_TIMEOUT_MS} мс — знімок пропущено (SC-36).`);
+        onCaptureReady!([]);
+        return;
+      }
+      if (mountedChildren < expected) {
+        console.warn(`[CaptureController] Змонтовано ${mountedChildren} з ${expected} виробів за ${CONTENT_TIMEOUT_MS} мс — знімаю що є (SC-36).`);
+      }
+      // Два кадри очікування: перший рендер після монтажу + залиття текстур.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (!mounted) return;
+
       const restore: Array<() => void> = [];
       try {
         const captures: string[] = [];
@@ -1258,40 +1451,122 @@ function CaptureController({ onCaptureReady, contentRef, preset = 'default' }: {
           });
         }
 
-        let distance = 8;
-        const center = new THREE.Vector3(0, 0, 0);
-        if (contentRef.current) {
-          const box = new THREE.Box3().setFromObject(contentRef.current);
-          box.getCenter(center);
-          const size = box.getSize(new THREE.Vector3());
-          const maxDim = Math.max(size.x, size.y, size.z, 0.5);
-          distance = (maxDim / 2) / Math.tan(25 * Math.PI / 180) * 1.1; // Zoomed in!
-        }
-
-        const takeSnapshot = (pos: [number, number, number]) => {
-          cam.position.set(...pos);
-          cam.lookAt(0, 0, 0);
-          gl.render(scene, cam);
-          captures.push(gl.domElement.toDataURL('image/jpeg', 1.0));
+        /*
+         * SC-36, друга половина причини: `Box3.setFromObject(група виробу)`
+         * захоплював і TransformControls (гізмо «Рухати/Обертати» живе
+         * всередині групи): його осьові лінії — геометрія на ~999 000
+         * юнітів, навіть НЕВИДИМІ (setFromObject не пропускає visible=false).
+         * Бокс роздувався до мільйона, камера відлітала — і кадр був чисто
+         * білий. Тому бокс рахуємо САМІ: тільки видимі меші деталей,
+         * пропускаючи піддерева хелперів.
+         */
+        const HELPER_TYPES = new Set([
+          'TransformControls', 'TransformControlsRoot', 'TransformControlsGizmo',
+          'TransformControlsPlane', 'AxesHelper', 'GridHelper',
+        ]);
+        const robustBoxOf = (root: THREE.Object3D) => {
+          const box = new THREE.Box3();
+          root.updateWorldMatrix(true, true);
+          const visit = (object: THREE.Object3D) => {
+            if (!object.visible || HELPER_TYPES.has(object.type)) return;
+            const mesh = object as THREE.Mesh;
+            if (mesh.isMesh && mesh.geometry) {
+              mesh.geometry.computeBoundingBox();
+              const gb = mesh.geometry.boundingBox;
+              if (gb && !gb.isEmpty()) box.union(gb.clone().applyMatrix4(mesh.matrixWorld));
+            }
+            object.children.forEach(visit);
+          };
+          visit(root);
+          return box;
         };
 
-        // Кадр будується від ЦЕНТРУ габаритів виробу, а не від нуля сцени:
-        // зібраний виріб стоїть зі зсувом, і lookAt(0,0,0) різав його кадром.
-        const takeCenteredSnapshot = (direction: [number, number, number]) => {
+        /** Кадр і центр за габаритами конкретного об'єкта сцени. */
+        const frameOf = (target: THREE.Object3D | null) => {
+          const center = new THREE.Vector3(0, 0, 0);
+          let distance = 8;
+          if (target) {
+            const box = robustBoxOf(target);
+            if (!box.isEmpty()) {
+              box.getCenter(center);
+              const size = box.getSize(new THREE.Vector3());
+              const maxDim = Math.max(size.x, size.y, size.z, 0.5);
+              distance = (maxDim / 2) / Math.tan(25 * Math.PI / 180) * 1.1;
+            }
+          }
+          return { center, distance };
+        };
+
+        const shoot = (center: THREE.Vector3, distance: number, direction: [number, number, number]) => {
           const offset = new THREE.Vector3(...direction).normalize().multiplyScalar(distance * 1.15);
           cam.position.copy(center).add(offset);
           cam.lookAt(center);
           gl.render(scene, cam);
-          captures.push(gl.domElement.toDataURL('image/jpeg', 1.0));
+          return gl.domElement.toDataURL('image/jpeg', 1.0);
         };
 
-        const distIso = distance * 0.65;
+        /** Три клієнтські ракурси одного об'єкта. */
+        const showcaseAngles: Array<[number, number, number]> = [
+          [1, 0.62, 1],      // ізометрія справа
+          [-1, 0.55, 1],     // ізометрія зліва
+          [0.08, 0.4, 1.3],  // фронт із легким підйомом
+        ];
+
+        const perProduct: ProductSnapshots[] = [];
+
         if (preset === 'showcase') {
-          takeCenteredSnapshot([1, 0.62, 1]);      // ізометрія справа
-          takeCenteredSnapshot([-1, 0.55, 1]);     // ізометрія зліва
-          takeCenteredSnapshot([0.08, 0.4, 1.3]);  // фронт з легким підйомом
+          /*
+           * ПОСТОРІНКОВА ВІЗУАЛІЗАЦІЯ (19.08, на прохання Богдана).
+           *
+           * Раніше знімався ВЕСЬ проєкт одним кадром: два вироби на одному
+           * аркуші, кожен завбільшки з ніготь, а після кроку 5.1 (вироби
+           * стоять рядком) — і поготів. Тепер кожен виріб знімається
+           * ОКРЕМО: решта ховається, кадр будується по його власних
+           * габаритах. У PDF на кожен виріб іде свій бланк.
+           *
+           * Групи виробів знайдені за іменем `product:<id>` — його ставить
+           * ProductAssemblyWrapper.
+           */
+          const productGroups = new Map<string, THREE.Object3D>();
+          scene.traverse((object) => {
+            if (typeof object.name === 'string' && object.name.startsWith('product:')) {
+              productGroups.set(object.name.slice('product:'.length), object);
+            }
+          });
+
+          if (productGroups.size > 1) {
+            const known = products.length
+              ? products.filter((item) => productGroups.has(item.id))
+              : Array.from(productGroups.keys()).map((id) => ({ id, name: '' }));
+
+            known.forEach((item) => {
+              const target = productGroups.get(item.id)!;
+              // Ховаємо всі інші вироби — на кадрі рівно цей.
+              const hidden: THREE.Object3D[] = [];
+              productGroups.forEach((group, id) => {
+                if (id !== item.id && group.visible) { group.visible = false; hidden.push(group); }
+              });
+              const { center, distance } = frameOf(target);
+              const shots = showcaseAngles.map((angle) => shoot(center, distance, angle));
+              hidden.forEach((group) => { group.visible = true; });
+              perProduct.push({ productId: item.id, name: item.name, snapshots: shots });
+            });
+            // Перший виріб лишається у «плоскому» списку — сумісність зі
+            // старим викликом, який чекає просто масив знімків.
+            captures.push(...(perProduct[0]?.snapshots ?? []));
+          } else {
+            const { center, distance } = frameOf(contentRef.current);
+            showcaseAngles.forEach((angle) => captures.push(shoot(center, distance, angle)));
+            const only = products[0];
+            perProduct.push({ productId: only?.id ?? 'single', name: only?.name ?? '', snapshots: [...captures] });
+          }
         } else {
-          takeSnapshot([distIso, distIso, distIso]); // 1 single visual!
+          const { center, distance } = frameOf(contentRef.current);
+          const distIso = distance * 0.65;
+          cam.position.set(distIso, distIso, distIso);
+          cam.lookAt(0, 0, 0);
+          gl.render(scene, cam);
+          captures.push(gl.domElement.toDataURL('image/jpeg', 1.0));
         }
 
         restore.reverse().forEach((fn) => fn());
@@ -1299,19 +1574,29 @@ function CaptureController({ onCaptureReady, contentRef, preset = 'default' }: {
         cam.quaternion.copy(originalQuat);
         gl.render(scene, cam);
 
-        onCaptureReady(captures);
+        onCaptureReady!(captures, perProduct);
       } catch (e) {
         console.error('Capture failed:', e);
         restore.reverse().forEach((fn) => { try { fn(); } catch { /* вже відновлено */ } });
-        onCaptureReady([]);
+        onCaptureReady!([]);
       }
-    }, 1000);
+    }
+
     return () => { mounted = false; clearTimeout(timeout); };
-  }, [gl, camera, scene, contentRef, onCaptureReady, preset]);
+  }, [gl, camera, scene, contentRef, onCaptureReady, preset, products]);
   return null;
 }
-export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900 rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode, hideToolbar = false, capturePreset = 'default' }: { className?: string, onCaptureReady?: (snaps: string[]) => void, isCaptureMode?: boolean, hideToolbar?: boolean, capturePreset?: 'default' | 'showcase' } = {}) {
+/**
+ * compact — значки замість підписів у панелі сцени. Вмикається просунутим
+ * режимом (шапка) або «Сплітом», де панель удвічі вужча. Кнопки ті самі,
+ * повна назва — у підказці; та сама мова, що на дошці 2D розкрою.
+ */
+export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8] rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode, hideToolbar = false, capturePreset = 'default', compact = false }: { className?: string, onCaptureReady?: (snaps: string[], perProduct?: ProductSnapshots[]) => void, isCaptureMode?: boolean, hideToolbar?: boolean, capturePreset?: 'default' | 'showcase', compact?: boolean } = {}) {
   const project = useProjectStore((state) => state.project);
+  // ПРИМІЩЕННЯ (01.09): опційний шар бази. Коли він увімкнений, один
+  // виріб більше не центрується автоматично — рамку задає кімната.
+  const room = project.room;
+  const roomOn = Boolean(room?.visibleInAssembly && room?.solids.length);
   const parts = useProjectStore((state) => state.parts);
   const is3dGroupingEnabled = useUIStore(s => s.is3dGroupingEnabled);
   const selectedId = useUIStore(s => s.selectedId3d);
@@ -1330,38 +1615,218 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
   const set3dGroupingEnabled = useUIStore(s => s.set3dGroupingEnabled);
   const reset3dAssembly = useProjectStore(s => s.reset3dAssembly);
 
+  /**
+   * ЕКСПОРТ У ДОПОВНЕНУ РЕАЛЬНІСТЬ (27.08).
+   *
+   * Бере ту саму збірку, яку менеджер щойно склав, і кладе на диск два
+   * файли: `.usdz` для айфона і `.glb` для Android. Далі їх можна просто
+   * надіслати клієнту — він поставить виріб у себе на кухні в натуральну
+   * величину.
+   *
+   * Поки що це саме ФАЙЛИ: посилання, яке клієнт відкриє одним дотиком,
+   * потребує публічної сторінки повз наш вхід — питання до ІТ. Файли
+   * працюють уже сьогодні й нічого не чекають.
+   */
+  const [arBusy, setArBusy] = useState(false);
+  const [arNote, setArNote] = useState<string | null>(null);
+
+  const downloadBlob = (blob: Blob, name: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.click();
+    // Звільняємо не одразу: Safari встигає почати завантаження не миттєво
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  };
+
+  /**
+   * ЕКСПОРТ У SKETCHUP = ТОЙ САМИЙ GLB, ЩО ЇДЕ В AR.
+   *
+   * SketchUp з версії 2023 імпортує glTF/GLB нативно (File → Import →
+   * .glb), з текстурами і матеріалами. Перша версія цієї кнопки віддавала
+   * самописний COLLADA (.dae) — SketchUp 2025 з нього взяв одну плиту без
+   * текстур. Самописку викинуто того ж дня: навіщо міст, коли є двері.
+   * Шильдик «VIYAR STONE 3D» лишається і тут — файл гулятиме по
+   * конструкторах і дизайнерах так само, як AR-модель по клієнтах.
+   */
+  const [skpBusy, setSkpBusy] = useState(false);
+
+  const handleSketchupExport = async () => {
+    if (!contentRef.current) return;
+    setSkpBusy(true);
+    setArNote(null);
+    try {
+      const name = project.products?.[0]?.name ?? 'Виріб';
+      const result = await exportForAr(contentRef.current, {
+        caption: 'VIYAR STONE 3D',
+        subline: `AR · ${project.orderNumber || 'демо'}`,
+      });
+      downloadBlob(result.glb, arFileName(project.orderNumber, `${name}_sketchup`, 'glb'));
+      setArNote(`SketchUp: ${result.sizeMm.x}×${result.sizeMm.z} мм, висота ${result.sizeMm.y} · у SketchUp: File → Import → тип файлу GLTF (.glb)`);
+    } catch (error) {
+      setArNote(`Не вийшло зібрати модель: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSkpBusy(false);
+    }
+  };
+
+  const handleArExport = async () => {
+    if (!contentRef.current) return;
+    setArBusy(true);
+    setArNote(null);
+    try {
+      const result = await exportForAr(contentRef.current, {
+        caption: 'VIYAR STONE 3D',
+        subline: `AR · ${project.orderNumber || 'демо'}`,
+      });
+      const productName = project.products?.[0]?.name ?? 'Виріб';
+      downloadBlob(result.usdz, arFileName(project.orderNumber, productName, 'usdz'));
+      downloadBlob(result.glb, arFileName(project.orderNumber, productName, 'glb'));
+      setArNote(`Готово: ${result.sizeMm.x}×${result.sizeMm.z} мм, висота ${result.sizeMm.y} мм · usdz для iPhone, glb для Android`);
+    } catch (error) {
+      setArNote(`Не вийшло зібрати модель: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setArBusy(false);
+    }
+  };
+
   const groups = useMemo(() => {
      return buildAssemblyGroups(parts, project.placements, is3dGroupingEnabled, getAllProjectDetails(project));
   }, [project.placements, parts, is3dGroupingEnabled, project.details, project.products]);
+
+  /*
+   * КРОК 5.1 — розстановка виробів.
+   *
+   * Габарити головних деталей → детермінований дефолтний ряд і перевірка
+   * перетинів. Все в мм; той самий проєкт дає ту саму картинку.
+   */
+  const sceneItems = useMemo(() => (project.products ?? []).map((product) => {
+    const rootId = product.elements?.[0]?.id;
+    const mainPart = rootId ? parts.find((part) => part.detailId === rootId && part.isMain) : undefined;
+    return {
+      productId: product.id,
+      widthMm: mainPart?.width ?? 1000,
+      depthMm: mainPart?.height ?? 600,
+    };
+  }), [project.products, parts]);
+
+  const defaultSlots = useMemo(() => defaultSceneLayout(sceneItems), [sceneItems]);
+
+  const collidingIds = useMemo(() => collidingSceneProducts(
+    sceneItems.map((item) => {
+      const product = (project.products ?? []).find((candidate) => candidate.id === item.productId);
+      const placement = product?.scenePlacement
+        ?? defaultSlots[item.productId]
+        ?? { x: 0, z: 0, rotationYDeg: 0 };
+      return { ...item, placement };
+    }),
+  ), [sceneItems, project.products, defaultSlots]);
+
+  /* Shift = точне доведення без прив'язки 50 мм / 15°. */
+  const [snapFree, setSnapFree] = useState(false);
+  React.useEffect(() => {
+    const down = (event: KeyboardEvent) => { if (event.key === 'Shift') setSnapFree(true); };
+    const up = (event: KeyboardEvent) => { if (event.key === 'Shift') setSnapFree(false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, []);
+
+  /*
+   * <Center> лишається ЛИШЕ для сцени з одним виробом (звична картинка).
+   * Для кількох — позиція тільки з даних: центрування пересувало б вироби
+   * під час перетягування, і розставлене «пливло» б само собою.
+   */
+  const multiProduct = (project.products ?? []).length > 1;
 
   return (
     <div className={`${className} flex flex-col`}>
       {!isCaptureMode && !hideToolbar && (
         <div className="toolbar shrink-0 bg-white border-b border-slate-300 p-2 z-10 shadow-sm relative">
           <div className="segmented">
-            <button className={is3dAssemblyMode ? 'active' : ''} onClick={() => set3dAssemblyMode(!is3dAssemblyMode)}>Режим збірки</button>
-            <button className={is3dGroupingEnabled ? 'active' : ''} disabled={!is3dAssemblyMode} onClick={() => set3dGroupingEnabled(!is3dGroupingEnabled)}>Групувати деталі</button>
-            <button className={showEdges ? 'active' : ''} onClick={() => setShowEdges(!showEdges)}>Показувати контури</button>
+            <button
+              className={is3dAssemblyMode ? 'active' : ''}
+              title="Режим збірки: виріб можна рухати й обертати на сцені"
+              onClick={() => set3dAssemblyMode(!is3dAssemblyMode)}
+            >
+              {compact ? <Blocks className="w-4 h-4" /> : 'Режим збірки'}
+            </button>
+            <button
+              className={is3dGroupingEnabled ? 'active' : ''}
+              disabled={!is3dAssemblyMode}
+              title="Групувати деталі: виріб рухається цілком, а не по одній деталі"
+              onClick={() => set3dGroupingEnabled(!is3dGroupingEnabled)}
+            >
+              {compact ? <Group className="w-4 h-4" /> : 'Групувати деталі'}
+            </button>
+            <button
+              className={showEdges ? 'active' : ''}
+              title="Показувати контури деталей на сцені"
+              onClick={() => setShowEdges(!showEdges)}
+            >
+              {compact ? <Frame className="w-4 h-4" /> : 'Показувати контури'}
+            </button>
             {/* Кнопка з'являється лише якщо в проєкті є сляб із фото підсвітки —
                 щоб не плутати там, де просвітного каменю немає. */}
             {project.slabs.some((s: any) => !!s.photoBacklit) && (
               <button
                 className={isBacklightMode ? 'active !bg-amber-500 !text-white' : ''}
                 onClick={() => useUIStore.getState().setBacklightMode(!isBacklightMode)}
-                title="Показати камінь із підсвіткою (просвітний камінь)"
+                title="Підсвітка: показати камінь із підсвіткою (просвітний камінь)"
               >
-                💡 Підсвітка
+                {compact
+                  ? <Lightbulb className="w-4 h-4" />
+                  : <><Lightbulb className="w-3.5 h-3.5 inline-block mr-1.5 align-middle" />Підсвітка</>}
               </button>
             )}
             {/* Анімація і скидання збірки — інструменти супер-адміна
                 (щит у шапці, PIN): прототип не для менеджерів, а скидання
                 руйнівне для розставленої збірки */}
             {isAdminUnlocked && (
-              <button className={showAnimationPrototype ? 'active !bg-purple-600 !text-white' : ''} onClick={() => setShowAnimationPrototype(!showAnimationPrototype)}>🎬 Анімація (Прототип)</button>
+              <button
+                className={showAnimationPrototype ? 'active !bg-purple-600 !text-white' : ''}
+                title="Анімація обробки (прототип)"
+                onClick={() => setShowAnimationPrototype(!showAnimationPrototype)}
+              >
+                {compact ? <Clapperboard className="w-4 h-4" /> : '🎬 Анімація (Прототип)'}
+              </button>
             )}
-            <button onClick={() => setShowHelp(true)}>Інструкція</button>
+            <button
+              className={roomOn ? 'active !bg-[#0084ff] !text-white' : ''}
+              title={room?.solids.length
+                ? (roomOn ? 'Сховати приміщення' : 'Показати приміщення (базу) на сцені')
+                : 'Спершу намалюй приміщення у вкладці «Приміщення»'}
+              disabled={!room?.solids.length}
+              onClick={() => room && useProjectStore.getState().updateProject({ room: { ...room, visibleInAssembly: !room.visibleInAssembly } })}
+            >
+              {compact ? <Home className="w-4 h-4" /> : '🏠 Приміщення'}
+            </button>
+            <button
+              title="Зібрати модель для телефона: виріб у натуральну величину на кухні клієнта (usdz для iPhone, glb для Android)"
+              disabled={arBusy}
+              onClick={handleArExport}
+            >
+              {arBusy
+                ? <ArSpinner className={`w-4 h-4 animate-spin inline-block${compact ? '' : ' mr-1.5'}`} />
+                : compact && <Smartphone className="w-4 h-4" />}
+              {!compact && (arBusy ? 'Збираю…' : 'AR для телефона')}
+            </button>
+            <button
+              title="Експорт у SketchUp: файл .glb, який SketchUp відкриває сам — File → Import, тип GLTF (.glb). Текстури всередині"
+              disabled={skpBusy}
+              onClick={handleSketchupExport}
+            >
+              {skpBusy
+                ? <ArSpinner className={`w-4 h-4 animate-spin inline-block${compact ? '' : ' mr-1.5'}`} />
+                : compact && <DraftingCompass className="w-4 h-4" />}
+              {!compact && (skpBusy ? 'Збираю…' : 'SketchUp')}
+            </button>
+            <button title="Інструкція: як рухати виріб і збирати сцену" onClick={() => setShowHelp(true)}>
+              {compact ? <BookOpen className="w-4 h-4" /> : 'Інструкція'}
+            </button>
             {isAdminUnlocked && (
-              <button onClick={() => {
+              <button title="Скинути збірку: повернути всі деталі на площину" onClick={() => {
                 useUIStore.getState().showConfirm({
                   title: 'Скинути збірку',
                   message: 'Ви впевнені, що хочете скинути всі 3D координати і повернути деталі на площину?',
@@ -1369,27 +1834,42 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
                   isDestructive: true,
                   onConfirm: () => reset3dAssembly()
                 });
-              }}>Скинути збірку</button>
+              }}>{compact ? <RotateCcw className="w-4 h-4" /> : 'Скинути збірку'}</button>
             )}
           </div>
+          {arNote && (
+            <div className="mt-2 text-[12px] px-2.5 py-1.5 rounded bg-slate-100 text-slate-700 flex items-center gap-2">
+              <span className="flex-1">{arNote}</span>
+              <button type="button" className="opacity-60 hover:opacity-100" onClick={() => setArNote(null)}>✕</button>
+            </div>
+          )}
         </div>
       )}
       <div className="flex-1 min-h-0 relative">
-        <Canvas camera={{ position: [0, 5, 8], fov: 50 }} shadows onPointerMissed={() => setSelectedId(null)}>
-          <color attach="background" args={['#b2c6ce']} />
+        {/* ОДНЕ СЕРЕДОВИЩЕ НА ВСЮ ПРОГРАМУ (26.08, зауваження власника:
+            «в одному середовищі 2 різні кіна»). Сцена збірки тепер живе в
+            тих самих умовах, що 3D у редакторі деталі (Detail3DPreview):
+            світлий фон #f0f4f8, ambient 0.6 + directional 1.2, Environment
+            «city», нескінченна сітка замість сірої підлоги, осі 5. Жорсткі
+            чорні тіні прибрані разом із прапорцем shadows — у редакторі їх
+            немає, і виріб читається краще. Виняток — режим підсвітки:
+            підсвічений камінь дивляться на темному тлі. */}
+        <Canvas
+          camera={{ position: [0, 5, 8], fov: 50 }}
+          onPointerMissed={() => { setSelectedId(null); useUIStore.getState().setSelectedProductId3d(null); }}
+          onCreated={(state) => attachContextLossRecovery(state.gl.domElement)}
+        >
+          <color attach="background" args={[isBacklightMode ? '#25313c' : '#f0f4f8']} />
 
-        <ambientLight intensity={0.5} />
-          <directionalLight
-            position={[10, 10, 5]}
-            intensity={1.5}
-            castShadow 
-            shadow-mapSize-width={1024} 
-            shadow-mapSize-height={1024} 
-          />
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[10, 10, 5]} intensity={1.2} />
+          <SafeEnvironment />
 
           {/* disableY: центруємо лише по X/Z. Інакше <Center> скидає висоту встановлення
-              (elevation) і виріб завжди лягає в нуль. */}
-          <Center disableY>
+              (elevation) і виріб завжди лягає в нуль. Для КІЛЬКОХ виробів
+              центрування вимкнене повністю (крок 5.1) — позиція з даних. */}
+          {roomOn && room && <RoomSolids room={room} ghost />}
+          <MaybeCenter enabled={!multiProduct && !roomOn}>
             {showAnimationPrototype ? (
               <MachineAnimationPrototype detailPart={parts[0]} />
             ) : (
@@ -1405,28 +1885,53 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
                       selectedId={selectedId}
                       onSelect={setSelectedId}
                       setIsDragging={setIsDragging}
+                      defaultSlot={defaultSlots[product.id]}
+                      colliding={collidingIds.has(product.id)}
+                      snapFree={snapFree}
                     />
                   </Suspense>
                 ))}
               </group>
             )}
-          </Center>
+          </MaybeCenter>
 
 
-          <mesh name="floor-plane" rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow raycast={() => null}>
-            <planeGeometry args={[500, 500]} />
-            <meshStandardMaterial color="#c8c8c8" />
-          </mesh>
-          <axesHelper args={[50]} position={[0, -0.49, 0]} />
+          {/* Сітка та сама, що в редакторі деталі. name="floor-plane"
+              збережено: захоплення знімків для PDF ховає об'єкт саме за
+              цим іменем, як ховало сіру підлогу. */}
+          <Grid
+            name="floor-plane"
+            position={[0, -0.5, 0]}
+            infiniteGrid
+            fadeDistance={30}
+            cellColor="#d1d5db"
+            sectionColor="#9ca3af"
+            cellThickness={0.5}
+            sectionThickness={1}
+            raycast={() => null}
+          />
+          <axesHelper args={[5]} position={[0, -0.49, 0]} />
           <OrbitControls 
             makeDefault 
             minPolarAngle={0} 
             maxPolarAngle={Math.PI / 2.1} 
             enabled={!isDragging}
             mouseButtons={{ LEFT: THREE.MOUSE.NONE, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN }}
-            touches={{ ONE: THREE.TOUCH.NONE, TWO: THREE.TOUCH.DOLLY_ROTATE }}
+            // Дотик — як заведено в мобільних 3D: один палець крутить сцену,
+            // щипок наближає, два пальці тягнуть. Раніше один палець не робив
+            // нічого, і на телефоні сцену неможливо було покрутити. Перетягування
+            // виробу за стрілки не конфліктує: на час drag камера вимкнена
+            // (enabled={!isDragging}), а сам тап без руху обертання не запускає.
+            touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
           />
-          {isCaptureMode && <CaptureController onCaptureReady={onCaptureReady} contentRef={contentRef} preset={capturePreset} />}
+          {isCaptureMode && (
+            <CaptureController
+              onCaptureReady={onCaptureReady}
+              contentRef={contentRef}
+              preset={capturePreset}
+              products={(project.products ?? []).map((item) => ({ id: item.id, name: item.name }))}
+            />
+          )}
         </Canvas>
       </div>
 
@@ -1456,4 +1961,4 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-slate-900
       )}
     </div>
   );
-}
+}

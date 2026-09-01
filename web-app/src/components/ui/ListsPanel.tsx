@@ -8,6 +8,7 @@ import { useProjectStore } from '../../store/useProjectStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
 import { Edit2, Trash, Check, Folder, FileText } from 'lucide-react';
 import { toSlot } from '../../domain/ids';
+import { openDetailEditor, deleteDetailOrProduct } from './detailActions';
 
 function pointsBoundsWithPadding(points: Point[]) {
   const xs = points.map((point) => point.x);
@@ -66,14 +67,40 @@ function detailDims(detail: Detail, language?: UiLanguage) {
   return `${g.width ?? 0}×${g.height ?? 0} ${mm}`;
 }
 
-function SlabThumb({ slab }: { slab: SlabInstance }) {
-  const ratio = slab.width / Math.max(slab.height, 1);
-  const width = ratio >= 1 ? 86 : Math.max(38, 86 * ratio);
-  const height = ratio >= 1 ? Math.max(30, 60 / ratio) : 60;
+/**
+ * Серійний номер для показу.
+ *
+ * Зберігається як `SL-3`, а менеджеру показуємо «Слеб 3» — так його і
+ * називають уголос. Формат зберігання не чіпаємо: за ним іде нумерація
+ * і підписи на аркуші розкрою. Старі проєкти теж читаються.
+ */
+function slabTitle(serialNumber: string) {
+  const n = /^SL-(\d+)$/.exec(serialNumber)?.[1];
+  return n ? `Слеб ${n}` : serialNumber;
+}
+
+/**
+ * Фото слябу на всю ширину картки, у справжній пропорції листа.
+ *
+ * Було 86×60 всередині двох вкладених підкладок — три рамки одна в
+ * одній і марка розміром з нігтик. Тепер картинка сама і є верхом
+ * картки: пропорція тримається через aspect-ratio, тому 3200×1600 і
+ * 3000×1900 виглядають по-різному, як і в житті.
+ */
+function SlabPhoto({ slab, emptyLabel }: { slab: SlabInstance; emptyLabel: string }) {
+  const ratio = `${Math.max(1, slab.width)} / ${Math.max(1, slab.height)}`;
+  if (slab.photo) {
+    return (
+      <div className="slab-card-photo" style={{ aspectRatio: ratio, background: `url(${slab.photo}) center/cover` }} />
+    );
+  }
+  // Підпис приходить параметром: `ui` — це функція КОМПОНЕНТА (їй потрібна
+  // мова зі стану), а тут ми на рівні модуля. Виклик звідси падав із
+  // «ui is not defined» рівно на слебах без фото, тобто на натуралці.
   return (
-    <svg className="list-thumb" viewBox="0 0 96 68" aria-hidden="true">
-      <rect x={(96 - width) / 2} y={(68 - height) / 2} width={width} height={height} rx={4} />
-    </svg>
+    <div className="slab-card-photo is-empty" style={{ aspectRatio: ratio }}>
+      <span>{emptyLabel}</span>
+    </div>
   );
 }
 
@@ -97,16 +124,7 @@ function DetailThumb({ detail }: { detail: Detail }) {
 export function ListsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
   const { project, deleteSlab, deleteDetail, removeProduct, startEditDetail, selectedSlabId, setSelectedSlabId, selectedDetailId, setSelectedDetailId, setSelectedPlacementIds } = useProjectStore();
 
-  const handleDeleteDetail = (detail: Detail) => {
-    const product = (project.products || []).find(
-      (p) => detail.id === p.id || detail.id.startsWith(`prod_${p.id}/`) || detail.id.startsWith(`${p.id}/`)
-    );
-    if (product) {
-      removeProduct(product.id);
-    } else {
-      deleteDetail(detail.id);
-    }
-  };
+  const handleDeleteDetail = (detail: Detail) => deleteDetailOrProduct(detail);
   const setProductEditorSession = useUIStore(s => s.setProductEditorSession);
   const [openList, setOpenList] = useState<'slabs' | 'details' | null>(null);
   const language = project.uiLanguage ?? 'uk';
@@ -140,6 +158,8 @@ export function ListsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
     });
     setProductEditorSession({
       editingProductId: product.id,
+      material: product.material,
+      scenePlacement: product.scenePlacement,
       activeDetailId: 'main',
       mainDetail: main.baseDefinition,
       subDetails,
@@ -148,65 +168,7 @@ export function ListsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
 
   const editDetail = (detail: Detail) => {
     setOpenList(null);
-    
-    let productToEdit: Detail | undefined = undefined;
-    let targetActiveSlot = 'main';
-
-    if (detail.isProduct) {
-      productToEdit = detail;
-    } else if (detail.parentDetailId) {
-      const parent = allDetails.find(d => d.id === detail.parentDetailId);
-      if (parent && parent.isProduct) {
-        productToEdit = parent;
-        targetActiveSlot = detail.slot || detail.id;
-        if (detail.type === 'Стінова панель' && detail.parentDetailSide) {
-          targetActiveSlot = `wall_panel_${detail.parentDetailSide}`;
-        } else if (detail.type === 'Опора' && detail.parentDetailSide) {
-          targetActiveSlot = `leg_${detail.parentDetailSide}`;
-        }
-      }
-    }
-
-    if (productToEdit) {
-      const children = allDetails.filter(d => d.parentDetailId === productToEdit!.id);
-      const session: ProductEditorSession = {
-        editingProductId: productToEdit.id.split('__')[0],
-        activeDetailId: targetActiveSlot,
-        mainDetail: { ...draftFromDetail(productToEdit), skirtings: productToEdit.skirtings || {}, wallPanels: {}, legs: {} },
-        subDetails: {}
-      };
-      
-      children.forEach((child) => {
-        const draft = draftFromDetail(child);
-        if (child.type === 'Стінова панель' && child.parentDetailSide) {
-            session.mainDetail.wallPanels[child.parentDetailSide] = { 
-                edgeId: child.parentDetailSide,
-                height: draft.height,
-                thickness: draft.thickness,
-                offset: child.importOffsetX || 0
-            };
-            session.subDetails[`wall_panel_${child.parentDetailSide}`] = draft;
-        } else if (child.type === 'Опора' && child.parentDetailSide) {
-            const isCorner = draft.shape === 'Г-подібна';
-            session.mainDetail.legs[child.parentDetailSide] = {
-                edgeId: child.parentDetailSide,
-                width: draft.width,
-                height: draft.height,
-                size: isCorner ? `${draft.outerWidth}x${draft.outerHeight}` : String(draft.width),
-                offset: child.importOffsetX || 0,
-                jointType: ''
-            };
-            session.subDetails[`leg_${child.parentDetailSide}`] = draft;
-        } else {
-            const slotOrId = child.slot || child.id;
-            session.subDetails[slotOrId] = draft;
-        }
-      });
-      
-      setProductEditorSession(session);
-    } else {
-      startEditDetail(detail.id);
-    }
+    openDetailEditor(detail, allDetails);
   };
 
   return (
@@ -222,22 +184,32 @@ export function ListsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
               {project.slabs.length ? project.slabs.map((slab) => {
                 const isSelected = selectedSlabId === slab.id;
                 return (
-                <div key={slab.id} 
-                     className={`list-item flex flex-col gap-3 p-3 cursor-pointer transition-colors border ${isSelected ? 'bg-blue-50/40 border-blue-200 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                <div key={slab.id}
+                     className={`slab-card ${isSelected ? 'is-selected' : ''}`}
                      onClick={() => setSelectedSlabId(slab.id)}>
-                  <div className="w-full flex items-center justify-center py-3 bg-[#fcfdfd] rounded-[3px] border border-slate-100/80">
-                    <SlabThumb slab={slab} />
-                  </div>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <strong className="truncate block text-[15px] font-bold text-[#1e2d3d] mb-1">{slab.serialNumber}</strong>
-                      <span className="truncate block text-[13px] text-[#536b7a] mb-0.5">{slab.width}×{slab.height} {ui('мм')}</span>
-                      <span className="truncate block text-[13px] text-[#536b7a]">{ui(slab.material)} / {slab.decor || ui('без декору')}</span>
-                    </div>
-                    <div className="flex gap-2 flex-shrink-0">
-                      <button className="delete-button w-9 h-9 flex items-center justify-center rounded-sm shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:brightness-95 transition-all" onClick={(e) => { e.stopPropagation(); deleteSlab(slab.id); }} title="Видалити">
+                  {/* Фото на всю ширину картки, у пропорції листа. Рамка одна —
+                      сама картка; вкладені підкладки прибрані 25.08. */}
+                  <SlabPhoto slab={slab} emptyLabel={ui('без фото')} />
+                  <div className="slab-card-body">
+                    <div className="slab-card-head">
+                      <strong>{slabTitle(slab.serialNumber)}</strong>
+                      <button type="button" className="delete-button slab-card-del"
+                        onClick={(e) => { e.stopPropagation(); deleteSlab(slab.id); }} title="Видалити">
                         <Trash className="w-[17px] h-[17px] stroke-[2.2]" />
                       </button>
+                    </div>
+                    <div className="slab-card-decor">{slab.decor || ui('без декору')}</div>
+                    <div className="slab-card-specs">
+                      <span>{slab.width}×{slab.height} {ui('мм')}</span>
+                      <span>{slab.thickness} {ui('мм')}</span>
+                      <span>{ui(slab.material)}</span>
+                    </div>
+                    {/* Артикул — те, за чим питається ціна. Показуємо прямо в
+                        картці: без нього слеб у прорахунку лишиться без ціни. */}
+                    <div className={`slab-card-article ${slab.article ? '' : 'is-missing'}`}>
+                      {slab.article
+                        ? <>Артикул <b>{slab.article}</b></>
+                        : <>Артикул не заданий — ціни не буде</>}
                     </div>
                   </div>
                 </div>
@@ -396,11 +368,12 @@ export function ListsPanel({ activeTab }: { activeTab?: 'details' | 'slabs' }) {
             <div className="list-modal-grid">
               {openList === 'slabs' && (project.slabs.length ? project.slabs.map((slab) => (
                 <div key={slab.id} className="list-modal-card">
-                  <SlabThumb slab={slab} />
+                  <div style={{ width: 96, flexShrink: 0 }}><SlabPhoto slab={slab} emptyLabel={ui('без фото')} /></div>
                   <div className="list-modal-info">
-                    <strong>{slab.serialNumber}</strong>
-                    <span>{slab.width}×{slab.height} {ui('мм')}</span>
-                    <span>{ui(slab.material)} / {slab.decor || ui('без декору')}</span>
+                    <strong>{slabTitle(slab.serialNumber)}</strong>
+                    <span>{slab.decor || ui('без декору')}</span>
+                    <span>{slab.width}×{slab.height}×{slab.thickness} {ui('мм')} · {ui(slab.material)}</span>
+                    <span>{slab.article ? `${ui('Артикул')}: ${slab.article}` : ui('Артикул не заданий')}</span>
                     <span>{ui('Мін. відступ')}: {slab.minMargin} {ui('мм')}</span>
                   </div>
                   <div className="list-actions flex-shrink-0">

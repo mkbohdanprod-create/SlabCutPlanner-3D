@@ -1,0 +1,454 @@
+/* ═══════════════════════════════════════════════════════════════════
+   МОБІЛЬНИЙ ШАР — 31.08.2026
+
+   Вмикається класом `is-mobile` на <html>, який ставить хук useIsMobile.
+   Медіа-запиту тут навмисно немає: інакше було б два різні визначення
+   «мобільного» — CSS по ширині і хук по ширині плюс пальцю — і телефон
+   у ландшафті (844×390) провалювався б між ними.
+
+   Ергономіка, з якої все виходить:
+     · палець ≈ 44 px, це мінімальна ціль;
+     · нижня третина екрана — зона великого пальця, туди все часте;
+     · 16 px у полях вводу — інакше Safari зумить сторінку при фокусі
+       і людина лишається в зумі назавжди;
+     · робоча область не ділить екран з панеллю — панель приходить
+       поверх і йде геть.
+
+   Перевірити з десктопа: додати ?mobile=1 до адреси. ?desktop=1 —
+   навпаки, лишити десктопний вигляд на телефоні.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --m-nav-h: 58px;
+  --m-header-h: 52px;
+  --m-safe-b: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── Каркас ───────────────────────────────────────────────────────── */
+
+/* Робоча область на весь екран: кожен піксель ширини потрібен кресленню */
+html.is-mobile main.flex-1 {
+  padding: 0 !important;
+  gap: 0 !important;
+  padding-bottom: calc(var(--m-nav-h) + var(--m-safe-b)) !important;
+}
+
+/* Бокова панель на 340 px з'їдала б пів екрана — її вміст у шухляді */
+html.is-mobile aside.sidebar { display: none !important; }
+
+/* Рейка 3D — плаваюча колонка праворуч над сценою, як у мобільних
+   3D-редакторах: інструменти під великим пальцем, сцена не ділиться. */
+html.is-mobile aside.sidebar-3d {
+  position: fixed;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  width: 52px !important;
+  height: auto !important;
+  padding: 6px 0;
+  gap: 4px !important;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border-color, #dce1e6);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(16, 32, 46, 0.14);
+  backdrop-filter: blur(6px);
+}
+html.is-mobile aside.sidebar-3d button {
+  width: 42px !important;
+  height: 42px !important;
+  min-height: 42px !important;
+}
+html.is-mobile aside.sidebar-3d > span:first-child { display: none; }
+/* Поза режимом збірки в рейці немає кнопок — порожню пігулку не показуємо */
+html.is-mobile aside.sidebar-3d:not(:has(button)) { display: none !important; }
+
+/* Хедер нижчий; логотип стискаємо, але не ховаємо */
+html.is-mobile header.h-\[60px\] {
+  height: var(--m-header-h) !important;
+  min-height: var(--m-header-h) !important;
+  padding-left: 8px !important;
+  padding-right: 4px !important;
+  gap: 2px;
+}
+html.is-mobile header h1 > span { font-size: 15px !important; }
+html.is-mobile header h1 > span:last-child { display: none !important; }
+html.is-mobile header .m-hide { display: none !important; }
+
+/* Квадратні кнопки-значки — тільки ті, що вже квадратні на десктопі.
+   Кнопку з назвою проєкту чіпати не можна: фіксована ширина її
+   розчавлює, і текст вивалюється поверх сусідніх значків. */
+html.is-mobile header button.w-12 {
+  width: 42px !important;
+  min-width: 42px !important;
+  height: 42px !important;
+  padding: 0 !important;
+}
+html.is-mobile header button.w-12 svg { width: 23px !important; height: 23px !important; }
+
+/* Назва проєкту: скільки лишилось місця, далі трикрапка */
+html.is-mobile header .relative > button:not(.w-12) {
+  max-width: 34vw;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 13px !important;
+  padding: 0 6px !important;
+}
+html.is-mobile header .relative > button:not(.w-12) span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Статус-бар знизу конфліктує з навігацією */
+html.is-mobile .app-status-bar { display: none !important; }
+
+/* ── Усі кнопки лишаються доступні ────────────────────────────────
+   Ховати органи керування на телефоні — найгірше з рішень: людина
+   не знає, що саме зникло, і шукає навпомацки. Тому і хедер, і
+   вкладки лишаються на місці, просто прокручуються вбік. */
+
+html.is-mobile header.h-\[60px\] {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  justify-content: flex-start !important;
+}
+html.is-mobile header.h-\[60px\]::-webkit-scrollbar { display: none; }
+html.is-mobile header > div { flex-shrink: 0 !important; }
+html.is-mobile header button { flex-shrink: 0 !important; }
+
+/* Вкладки — стрічка під хедером, а не сховані */
+html.is-mobile .workspace-tabs-desktop {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+  scrollbar-width: none;
+}
+html.is-mobile .workspace-tabs-desktop::-webkit-scrollbar { display: none; }
+html.is-mobile .workspace-tabs-desktop .pane-tab {
+  flex-shrink: 0 !important;
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+  font-size: 12.5px !important;
+  white-space: nowrap;
+}
+
+/* ── Тулбари: стрічка замість стовпчика ───────────────────────────── */
+/* На вузькому екрані flex-wrap складав кнопки в колонку на 486 px
+   заввишки — тулбар з'їдав усе креслення. Замість переносу робимо
+   горизонтальну стрічку зі скролом: так поводяться мобільні редактори,
+   і жест «протягнути вбік» тут очікуваний. */
+
+html.is-mobile .toolbar {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  gap: 6px !important;
+  padding: 6px 8px !important;
+}
+html.is-mobile .toolbar::-webkit-scrollbar { display: none; }
+
+html.is-mobile .toolbar > *,
+html.is-mobile .toolbar .flex-wrap {
+  flex-wrap: nowrap !important;
+  flex-shrink: 0 !important;
+  gap: 6px !important;
+}
+/* flex-1 усередині стрічки стискав вміст до 129 px — знімаємо */
+html.is-mobile .toolbar .flex-1 { flex: 0 0 auto !important; }
+
+html.is-mobile .toolbar button {
+  flex-shrink: 0 !important;
+  white-space: nowrap;
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+  font-size: 13px !important;
+}
+
+/* ── Ергономіка дотику ────────────────────────────────────────────── */
+
+html.is-mobile button,
+html.is-mobile [role='button'],
+html.is-mobile .btn,
+html.is-mobile select { min-height: 44px; }
+
+/* Дрібні значкові кнопки в рядках списку — виняток, інакше список
+   деталей розповзається на весь екран */
+html.is-mobile .m-compact button,
+html.is-mobile td button,
+html.is-mobile .icon-btn { min-height: 34px; }
+
+/* 16 px — не естетика, а захист від автозуму Safari */
+html.is-mobile input,
+html.is-mobile select,
+html.is-mobile textarea { font-size: 16px !important; }
+
+/* Сірий спалах по тапу на iOS виглядає як помилка натискання */
+html.is-mobile * { -webkit-tap-highlight-color: transparent; }
+
+/* Полотно розкрою і 3D беруть жести собі, сторінка не смикається */
+html.is-mobile canvas { touch-action: none; }
+
+/* ── Модалки на весь екран ────────────────────────────────────────── */
+
+html.is-mobile .detail-modal,
+html.is-mobile .modal-panel {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+}
+
+/* ── Вкладки: один рядок, компактно ─────────────────────────────── */
+/* «2D Підбір» ламався на два рядки і смуга ставала вдвічі вищою.
+   Тримаємо текст одним рядком і не даємо кнопці стискатись. */
+html.is-mobile .pane-tab,
+html.is-mobile .pane-tab * {
+  white-space: nowrap !important;
+}
+html.is-mobile .pane-tab {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-height: 40px !important;
+  height: 40px !important;
+  padding: 0 11px !important;
+  font-size: 12.5px !important;
+  gap: 6px !important;
+}
+html.is-mobile .pane-tab svg { width: 15px !important; height: 15px !important; }
+
+/* ── Зона підбору текстури ──────────────────────────────────────── */
+/* Заголовок і хінт про колесо миші займали пів екрана стовпцем, а
+   кнопки з'їжджали вправо драбинкою. Хінт про мишу на телефоні
+   безглуздий — ховаємо; кнопки — у звичну стрічку. */
+html.is-mobile .texture-toolbar { display: block !important; }
+html.is-mobile .texture-toolbar h3 {
+  font-size: 14px;
+  margin: 2px 4px 6px;
+  white-space: nowrap;
+}
+html.is-mobile .texture-toolbar .muted { display: none !important; }
+html.is-mobile .texture-actions {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  gap: 6px !important;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+html.is-mobile .texture-actions::-webkit-scrollbar { display: none; }
+html.is-mobile .texture-actions > *,
+html.is-mobile .texture-frame-create { flex: 0 0 auto !important; }
+
+/* ── Прорахунок ─────────────────────────────────────────────────── */
+/* Кнопка «PDF для клієнта» вилазила за край екрана, поля стояли по
+   двоє в тісних колонках. Шапка стає колонкою, кнопки на всю ширину,
+   сітки полів — в один стовпець. */
+html.is-mobile .quote-panel { padding: 10px !important; }
+html.is-mobile .quote-head {
+  flex-direction: column !important;
+  align-items: stretch !important;
+  padding: 14px !important;
+  gap: 10px !important;
+}
+html.is-mobile .quote-head h2 { font-size: 17px !important; }
+html.is-mobile .quote-head > div:last-child {
+  flex-wrap: wrap !important;
+}
+html.is-mobile .quote-head > div:last-child > button {
+  flex: 1 1 46% !important;
+  justify-content: center !important;
+}
+html.is-mobile .quote-panel .grid-cols-2,
+html.is-mobile .quote-panel .grid-cols-3,
+html.is-mobile .quote-panel [class*='md:grid-cols'] {
+  grid-template-columns: 1fr !important;
+}
+html.is-mobile .quote-panel .rounded-lg { padding-left: 14px; padding-right: 14px; }
+
+/* Таблиці не влазять — хай скролиться сама таблиця, а не сторінка */
+html.is-mobile table { display: block; overflow-x: auto; }
+
+/* ── Назва проєкту в хедері на вузькому десктопі ──────────────────
+   Єдиний медіа-запит у файлі, і він не про мобільний режим: на
+   910–1200 px десктопний хедер лишається десктопним, але назва
+   «ФОТОЗОНА-01 | Фотозона · салон» переносилась у три рядки поверх
+   кнопок. Тримаємо її в один рядок із трикрапкою. Вище 1200 не діє. */
+@media (max-width: 1200px) {
+  header.h-\[60px\] .relative > button:not(.w-12) {
+    max-width: 30vw;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  header.h-\[60px\] .relative > button:not(.w-12) span {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Нижня навігація
+   ═══════════════════════════════════════════════════════════════════ */
+
+.m-nav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  /* Вище за шухляду і її тло: меню не накривається нічим і ніколи */
+  z-index: 100;
+  display: flex;
+  height: calc(var(--m-nav-h) + var(--m-safe-b));
+  padding-bottom: var(--m-safe-b);
+  background: #ffffff;
+  border-top: 1px solid var(--border-color, #dce1e6);
+  box-shadow: 0 -2px 12px rgba(16, 32, 46, 0.07);
+}
+
+.m-nav__item {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: none;
+  background: transparent;
+  color: #6b778c;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  transition: color .15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.m-nav__item span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-nav__item.is-active { color: var(--accent-color, #0084ff); }
+
+/* Смужка згори активної вкладки — видно навіть боковим зором */
+.m-nav__item.is-active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 30px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--accent-color, #0084ff);
+}
+
+/* Панель відділена рискою — це не «ще одна вкладка», а інший тип дії:
+   не перемикає екран, а відкриває шухляду */
+.m-nav__item--tools {
+  border-left: 1px solid var(--border-color-light, #e9ecef);
+  flex: 0 0 76px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Нижня шухляда
+   ═══════════════════════════════════════════════════════════════════ */
+
+.m-sheet-backdrop {
+  position: fixed;
+  left: 0; right: 0; top: 0;
+  bottom: calc(var(--m-nav-h) + var(--m-safe-b));
+  z-index: 95;
+  background: rgba(16, 32, 46, 0.38);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .22s ease;
+}
+.m-sheet-backdrop.is-open { opacity: 1; pointer-events: auto; }
+
+.m-sheet {
+  position: fixed;
+  left: 0; right: 0;
+  /* Шухляда виростає з-над меню: меню лишається видимим і робочим,
+     поки вона відкрита — можна перемкнути екран, не закриваючи її */
+  bottom: calc(var(--m-nav-h) + var(--m-safe-b));
+  z-index: 96;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -6px 28px rgba(16, 32, 46, 0.22);
+  transform: translateY(110%);
+  transition: transform .26s cubic-bezier(.32, .72, 0, 1), height .22s ease;
+  will-change: transform;
+}
+.m-sheet.is-open { transform: translateY(0); }
+
+.m-sheet--half { height: 52dvh; }
+.m-sheet--full { height: calc(100dvh - var(--m-header-h) - var(--m-nav-h) - var(--m-safe-b)); }
+
+/* Смуга для тягання — сама по собі ціль дотику на 28 px висоти */
+.m-sheet__grip {
+  padding: 9px 0 5px;
+  display: flex;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+}
+.m-sheet__bar {
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: #cfd6de;
+}
+
+.m-sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 8px;
+  border-bottom: 1px solid var(--border-color-light, #e9ecef);
+}
+.m-sheet__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary, #212529);
+}
+.m-sheet__close {
+  width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: #6b778c;
+  border-radius: 8px; cursor: pointer;
+}
+
+.m-sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Панель усередині шухляди.
+   Селектор навмисно довший за той, що ховає панель у каркасі
+   (html.is-mobile aside.sidebar): у CSS перемагає не порядок, а
+   специфічність, і без цього шухляда відкривалась порожньою. */
+html.is-mobile .m-sheet__body aside.sidebar,
+html.is-mobile .m-sheet__body aside.sidebar-3d {
+  display: flex !important;
+  width: 100% !important;
+  padding-right: 0 !important;
+  overflow: visible !important;
+}

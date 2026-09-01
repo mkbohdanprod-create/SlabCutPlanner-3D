@@ -1,18 +1,22 @@
-import type { CornerProcessing, CutAllowances, Detail, DetailPart, EdgeFeature, Point, DetailShape, SurfaceCutout } from '../domain/types';
+import type { CornerProcessing, CutAllowances, Detail, DetailPart, EdgeFeature, MaterialType, Point, DetailShape, SurfaceCutout } from '../domain/types';
 import { getDimsLabel, buildDetailCounters } from '../lib/project';
 import { mm2ToM2 } from '../utils/math';
 import { pointsBounds } from './geometryUtils';
+import { radiusElementSpecs } from '../domain/radiusElement';
 
 import { DEFAULT_ALLOWANCES } from '../domain/defaults';
 import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
-import { jointAnchorPoints, reflexJointShift, snapJointPosition } from '../domain/joints';
+import { manualJointPosition, jointAnchorPoints, reflexJointShift, snapJointPosition } from '../domain/joints';
 import { metalProfileById, pieceWeightKg } from '../domain/metalProfiles';
+import { EDGE_KIND_LABEL } from '../domain/ids';
 
-function createGeometryEngine(activeAllowances: CutAllowances) {
+function createGeometryEngine(activeAllowances: CutAllowances, activeMaterial?: MaterialType) {
 const SHAPE_LABELS = new Set([
   'Прямокутна',
   'Коло',
   'Еліпс',
+  'Кругла',
+  'Овальна',
   'Г-подібна',
   'П-подібна',
   'Мийка прямокутна',
@@ -291,6 +295,61 @@ function buildComplexRectPoints(
     [rCD, rDA] = fitPair(rCD, rDA, h); // сторона D (ліва)
   }
 
+  // --- ТІ САМІ ОБМЕЖЕННЯ ДЛЯ ФАСОК І Г-ВИРІЗІВ (FG-11) ---
+  // Радіуси вище захищені cap+fitPair, а sizeB/sizeC фасок і Г-вирізів
+  // читались як є. Два сусідні вирізи по 1500 мм на стороні 700 мм гнали
+  // контур у зворотний бік — полігон самоперетинався, і тріангуляція
+  // малювала «діагональний зріз» замість прямого кута.
+  //
+  // Хто скільки з'їдає (з побудови контуру нижче):
+  //   сторона A (верх, w):  DA.sizeC зліва  + AB.sizeB справа
+  //   сторона B (права, h): AB.sizeC зверху + BC.sizeB знизу
+  //   сторона C (низ, w):   BC.sizeC справа + CD.sizeB зліва
+  //   сторона D (ліва, h):  CD.sizeC знизу  + DA.sizeB зверху
+  // Радіус з'їдає обидві свої сторони на r. Якщо пара на стороні не
+  // влазить: два вирізи стискаються пропорційно; виріз поруч із радіусом
+  // поступається (радіус уже узгоджений зі своєю парою вище).
+  const eff = { DA: { b: 0, c: 0 }, AB: { b: 0, c: 0 }, BC: { b: 0, c: 0 }, CD: { b: 0, c: 0 } };
+  {
+    type CK = keyof typeof eff;
+    const cornerOf: Record<CK, import('../domain/types').CornerProcessing | undefined> = {
+      DA: cornerDA, AB: cornerAB, BC: cornerBC, CD: cornerCD,
+    };
+    const radiusOf: Record<CK, number> = { DA: rDA, AB: rAB, BC: rBC, CD: rCD };
+    (Object.keys(eff) as CK[]).forEach((k) => {
+      const c = cornerOf[k];
+      if (c && c.type !== 'radius') {
+        eff[k].b = Math.max(0, c.sizeB || 0);
+        eff[k].c = Math.max(0, c.sizeC || 0);
+      }
+    });
+    // (сторона, [кут1, поле1], [кут2, поле2]) — поле = яка з величин кута
+    // з'їдає саме цю сторону.
+    const SIDES: Array<[number, [CK, 'b' | 'c'], [CK, 'b' | 'c']]> = [
+      [w, ['DA', 'c'], ['AB', 'b']], // A
+      [h, ['AB', 'c'], ['BC', 'b']], // B
+      [w, ['BC', 'c'], ['CD', 'b']], // C
+      [h, ['CD', 'c'], ['DA', 'b']], // D
+    ];
+    for (const [side, [k1, f1], [k2, f2]] of SIDES) {
+      const r1 = radiusOf[k1];
+      const r2 = radiusOf[k2];
+      const a = r1 > 0 ? r1 : eff[k1][f1];
+      const b = r2 > 0 ? r2 : eff[k2][f2];
+      if (a + b <= side) continue;
+      if (r1 > 0 && r2 > 0) continue; // пара радіусів уже узгоджена fitPair
+      if (r1 > 0) {
+        eff[k2][f2] = Math.max(0, side - r1);
+      } else if (r2 > 0) {
+        eff[k1][f1] = Math.max(0, side - r2);
+      } else {
+        const kf = side / (a + b);
+        eff[k1][f1] = a * kf;
+        eff[k2][f2] = b * kf;
+      }
+    }
+  }
+
   const addArc = (cx: number, cy: number, r: number, startA: number, endA: number) => {
     const segments = 12; // points per 90 degrees
     for (let i = 0; i <= segments; i++) {
@@ -305,14 +364,14 @@ function buildComplexRectPoints(
   let endA: Point;
 
   if (cornerAB?.type === 'chamfer') {
-    endA = { x: w - (cornerAB.sizeB || 0), y: 0 };
+    endA = { x: w - eff.AB.b, y: 0 };
     points.push(endA);
-    points.push({ x: w, y: (cornerAB.sizeC || 0) });
+    points.push({ x: w, y: eff.AB.c });
   } else if (cornerAB?.type === 'l-cut') {
-    endA = { x: w - (cornerAB.sizeB || 0), y: 0 };
+    endA = { x: w - eff.AB.b, y: 0 };
     points.push(endA);
-    points.push({ x: w - (cornerAB.sizeB || 0), y: (cornerAB.sizeC || 0) });
-    points.push({ x: w, y: (cornerAB.sizeC || 0) });
+    points.push({ x: w - eff.AB.b, y: eff.AB.c });
+    points.push({ x: w, y: eff.AB.c });
   } else if (rAB > 0) {
     endA = { x: w - rAB, y: 0 };
     points.push(endA);
@@ -327,14 +386,14 @@ function buildComplexRectPoints(
   const startB = points[points.length - 1];
   let endB: Point;
   if (cornerBC?.type === 'chamfer') {
-    endB = { x: w, y: h - (cornerBC.sizeB || 0) };
+    endB = { x: w, y: h - eff.BC.b };
     points.push(endB);
-    points.push({ x: w - (cornerBC.sizeC || 0), y: h });
+    points.push({ x: w - eff.BC.c, y: h });
   } else if (cornerBC?.type === 'l-cut') {
-    endB = { x: w, y: h - (cornerBC.sizeB || 0) };
+    endB = { x: w, y: h - eff.BC.b };
     points.push(endB);
-    points.push({ x: w - (cornerBC.sizeC || 0), y: h - (cornerBC.sizeB || 0) });
-    points.push({ x: w - (cornerBC.sizeC || 0), y: h });
+    points.push({ x: w - eff.BC.c, y: h - eff.BC.b });
+    points.push({ x: w - eff.BC.c, y: h });
   } else if (rBC > 0) {
     endB = { x: w, y: h - rBC };
     points.push(endB);
@@ -349,14 +408,14 @@ function buildComplexRectPoints(
   const startC = points[points.length - 1];
   let endC: Point;
   if (cornerCD?.type === 'chamfer') {
-    endC = { x: (cornerCD.sizeB || 0), y: h };
+    endC = { x: eff.CD.b, y: h };
     points.push(endC);
-    points.push({ x: 0, y: h - (cornerCD.sizeC || 0) });
+    points.push({ x: 0, y: h - eff.CD.c });
   } else if (cornerCD?.type === 'l-cut') {
-    endC = { x: (cornerCD.sizeB || 0), y: h };
+    endC = { x: eff.CD.b, y: h };
     points.push(endC);
-    points.push({ x: (cornerCD.sizeB || 0), y: h - (cornerCD.sizeC || 0) });
-    points.push({ x: 0, y: h - (cornerCD.sizeC || 0) });
+    points.push({ x: eff.CD.b, y: h - eff.CD.c });
+    points.push({ x: 0, y: h - eff.CD.c });
   } else if (rCD > 0 && cornerCD?.reflex) {
     // УВІГНУТИЙ кут (внутрішній кут вирізу складної форми).
     // Матеріал ДОДАЄТЬСЯ: під нижнім лівим кутом з'являється округлий виступ.
@@ -380,14 +439,14 @@ function buildComplexRectPoints(
   const startD = points[points.length - 1];
   let endD: Point;
   if (cornerDA?.type === 'chamfer') {
-    endD = { x: 0, y: (cornerDA.sizeB || 0) };
+    endD = { x: 0, y: eff.DA.b };
     points.push(endD);
-    points.push({ x: (cornerDA.sizeC || 0), y: 0 });
+    points.push({ x: eff.DA.c, y: 0 });
   } else if (cornerDA?.type === 'l-cut') {
-    endD = { x: 0, y: (cornerDA.sizeB || 0) };
+    endD = { x: 0, y: eff.DA.b };
     points.push(endD);
-    points.push({ x: (cornerDA.sizeC || 0), y: (cornerDA.sizeB || 0) });
-    points.push({ x: (cornerDA.sizeC || 0), y: 0 });
+    points.push({ x: eff.DA.c, y: eff.DA.b });
+    points.push({ x: eff.DA.c, y: 0 });
   } else if (rDA > 0) {
     endD = { x: 0, y: rDA };
     points.push(endD);
@@ -448,6 +507,9 @@ function buildPart(
     detailId: detail.id,
     name,
     type: detail.type,
+    // Товщина їде з деталлю в розкрій: там вона єдиний критерій, чи
+    // можна класти деталь на конкретний сляб (заборона за товщиною).
+    thickness: detail.thickness,
     shape,
     width,
     height,
@@ -677,8 +739,39 @@ function isPointInRing(ring: Point[], p: Point): boolean {
   return inside;
 }
 
-/** Стик: точка початку різу та напрямок, у якому він іде. */
-type JointCut = { start: Point; dir: { x: number; y: number } };
+/**
+ * Стик: точка початку різу та напрямок, у якому він іде.
+ *
+ * `line` заповнюється для довільних стиків — це наскрізна лінія, а не промінь
+ * із кута. Різниця принципова, коли стиків кілька: наскрізна лінія має
+ * розрізати КОЖЕН шматок, крізь який проходить, тому для кожного шматка
+ * початок різу шукається заново. Промінь омега/лямбда виходить із конкретного
+ * увігнутого кута і живе лише в тому шматку, де цей кут лишився.
+ */
+type JointCut = {
+  start: Point;
+  dir: { x: number; y: number };
+  line?: { axis: 'vertical' | 'horizontal'; position: number };
+  /** Тип з'єднання — з нього кошторис бере, це пряма склейка чи заусовка 45°. */
+  jointType?: string;
+};
+
+/** Шов, який фактично зробив різ: довжина хорди і тип з'єднання. */
+type JointSeam = { lengthMm: number; jointType?: string };
+
+/**
+ * Вішає перелік швів на ПЕРШИЙ парт, що з'явився після різу.
+ *
+ * Один шов належить двом деталям одразу. Якби ми поклали його на обидві,
+ * кошторис порахував би склейку двічі — тому носій рівно один, а решта
+ * шматків про шов не знають. `before` — довжина масиву партів ДО різу.
+ */
+function attachJointSeams(parts: DetailPart[], before: number, seams: JointSeam[]) {
+  const real = seams.filter((seam) => seam.lengthMm > 1);
+  if (!real.length) return;
+  const owner = parts.slice(before).find((part) => part.isMain) ?? parts[before];
+  if (owner) owner.jointSeams = real;
+}
 
 /**
  * Ріже контур хордами стиків.
@@ -687,29 +780,57 @@ type JointCut = { start: Point; dir: { x: number; y: number } };
  * потрапляє в дотичну точку дуги), або ВСЕРЕДИНІ матеріалу (стик зсунутий від
  * вирізу). У другому випадку хорда має йти в обидва боки, інакше різ не замкнеться.
  */
-function splitContourByJoints(contour: Point[], cuts: JointCut[]): Point[][] {
+function splitContourByJoints(contour: Point[], cuts: JointCut[], seams?: JointSeam[]): Point[][] {
   let rings: Point[][] = [contour];
 
   for (const cut of cuts) {
     const next: Point[][] = [];
+    // Промінь із увігнутого кута застосовується РІВНО раз: він виходить з одної
+    // конкретної точки, і другого шматка з тим самим кутом не існує. Наскрізна
+    // лінія довільного стику — навпаки, ріже все, крізь що проходить.
+    const onceOnly = !cut.line;
     let applied = false;
 
     for (const ring of rings) {
-      if (applied) { next.push(ring); continue; }
+      if (onceOnly && applied) { next.push(ring); continue; }
 
-      const nearest = findContourHit(ring, cut.start);
+      // Для наскрізної лінії початок різу шукаємо всередині САМЕ цього шматка.
+      // Без цього другий стик відштовхувався б від точки, що лежить у сусідньому
+      // шматку, і хорда йшла б повз матеріал.
+      const start = cut.line
+        ? interiorPointOnLine(ring, cut.line.axis, cut.line.position)
+        : cut.start;
+      if (!start) { next.push(ring); continue; }
+
+      const nearest = findContourHit(ring, start);
       if (!nearest) { next.push(ring); continue; }
 
-      const startsOnContour = Math.hypot(nearest.point.x - cut.start.x, nearest.point.y - cut.start.y) < 1;
-      const forward = castRayToContour(ring, cut.start, cut.dir);
+      const startsOnContour = Math.hypot(nearest.point.x - start.x, nearest.point.y - start.y) < 1;
+      const forward = castRayToContour(ring, start, cut.dir);
       const backward = startsOnContour
         ? nearest
-        : castRayToContour(ring, cut.start, { x: -cut.dir.x, y: -cut.dir.y });
+        : castRayToContour(ring, start, { x: -cut.dir.x, y: -cut.dir.y });
 
       if (!forward || !backward) { next.push(ring); continue; }
 
       const split = splitRingByChord(ring, backward, forward);
       if (!split) { next.push(ring); continue; }
+
+      // Різ по самій межі шматка дає виродок нульової площі. Такий «розріз»
+      // не є розрізом — лишаємо шматок цілим, інакше в карту крою поїхала б
+      // деталь-волосина, яку неможливо зробити.
+      if (Math.abs(signedRingArea(split[0])) < 1 || Math.abs(signedRingArea(split[1])) < 1) {
+        next.push(ring);
+        continue;
+      }
+
+      // Довжина шва — це довжина хорди, по якій щойно розділили контур.
+      // Беремо саме її, а не номінальну сторону: після радіусів і фасок шов
+      // коротший, і цех клеїть рівно стільки, скільки тут порахували.
+      seams?.push({
+        lengthMm: Math.hypot(forward.point.x - backward.point.x, forward.point.y - backward.point.y),
+        jointType: cut.jointType,
+      });
 
       next.push(split[0], split[1]);
       applied = true;
@@ -741,9 +862,48 @@ function buildComplexPolygonPoints(
   const points: Point[] = [];
   const sideSegments: Record<string, { start: Point; end: Point }> = {};
   const len = basePoints.length;
-  
+
   const cornerStarts: Point[] = [];
   const cornerEnds: Point[] = [];
+
+  // --- ОБМЕЖЕННЯ РОЗМІРІВ ОБРОБКИ МЕЖАМИ РЕБЕР (FG-11) ---
+  // Раніше radius/sizeB/sizeC читались як є: Г-виріз 1500 мм на ребрі 700 мм
+  // гнав контур у зворотний бік, полігон самоперетинався і тріангуляція
+  // малювала діагональний «зріз» замість прямого кута.
+  // Правило те саме, що в прямокутного будівника: два сусідні вторгнення
+  // на одному ребрі не можуть сумарно перевищити його довжину — інакше
+  // обидва стискаються пропорційно. Радіус після стискання бере мінімум
+  // зі своїх двох напрямків, щоб дуга лишилась дугою.
+  const effPrev: number[] = new Array(len).fill(0);
+  const effNext: number[] = new Array(len).fill(0);
+  {
+    const edgeLen: number[] = new Array(len);
+    for (let i = 0; i < len; i++) {
+      const a = basePoints[i];
+      const b = basePoints[(i + 1) % len];
+      edgeLen[i] = Math.hypot(b.x - a.x, b.y - a.y);
+    }
+    for (let i = 0; i < len; i++) {
+      const c = corners[cornerIds[i]];
+      if (!c) continue;
+      if (c.type === 'radius') {
+        effPrev[i] = effNext[i] = Math.max(0, c.radius || 0);
+      } else {
+        effPrev[i] = Math.max(0, c.sizeB || 0);
+        effNext[i] = Math.max(0, c.sizeC || 0);
+      }
+    }
+    for (let i = 0; i < len; i++) {
+      const j = (i + 1) % len;
+      const a = effNext[i];
+      const b = effPrev[j];
+      const L = edgeLen[i];
+      if (a + b <= L || a + b <= 0) continue;
+      const k = L / (a + b);
+      effNext[i] = a * k;
+      effPrev[j] = b * k;
+    }
+  }
 
   for (let i = 0; i < len; i++) {
     const p = basePoints[i];
@@ -767,7 +927,7 @@ function buildComplexPolygonPoints(
     const dirNext = { x: (pxNext - px) / (lenNext || 1), y: (pyNext - py) / (lenNext || 1) };
 
     if (corner?.type === 'radius' && (corner.radius || 0) > 0) {
-      const r = corner.radius || 0;
+      const r = Math.min(effPrev[i], effNext[i]);
       const S = { x: px + dirPrev.x * r, y: py + dirPrev.y * r };
       const E = { x: px + dirNext.x * r, y: py + dirNext.y * r };
       const C = { x: px + dirPrev.x * r + dirNext.x * r, y: py + dirPrev.y * r + dirNext.y * r };
@@ -791,8 +951,8 @@ function buildComplexPolygonPoints(
       points.push(E);
       cornerStarts.push(E);
     } else if (corner?.type === 'chamfer') {
-      const sizeB = corner.sizeB || 0;
-      const sizeC = corner.sizeC || 0;
+      const sizeB = effPrev[i];
+      const sizeC = effNext[i];
       const S = { x: px + dirPrev.x * sizeB, y: py + dirPrev.y * sizeB };
       const E = { x: px + dirNext.x * sizeC, y: py + dirNext.y * sizeC };
       cornerEnds.push(S);
@@ -800,8 +960,8 @@ function buildComplexPolygonPoints(
       points.push(E);
       cornerStarts.push(E);
     } else if (corner?.type === 'l-cut') {
-      const sizeB = corner.sizeB || 0;
-      const sizeC = corner.sizeC || 0;
+      const sizeB = effPrev[i];
+      const sizeC = effNext[i];
       const S = { x: px + dirPrev.x * sizeB, y: py + dirPrev.y * sizeB };
       const M = { x: px + dirPrev.x * sizeB + dirNext.x * sizeC, y: py + dirPrev.y * sizeB + dirNext.y * sizeC };
       const E = { x: px + dirNext.x * sizeC, y: py + dirNext.y * sizeC };
@@ -965,7 +1125,7 @@ function genitiveLabel(label: string) {
 }
 
 function edgePartName(parentLabel: string, edgeKind: DetailPart['edgeKind'], side: string) {
-  const prefix = edgeKind === 'fold' ? 'Підворот' : 'Потовщення';
+  const prefix = EDGE_KIND_LABEL[edgeKind === 'fold' ? 'fold' : 'thickening'];
   return `${prefix} ${genitiveLabel(parentLabel)} сторона ${side}`;
 }
 
@@ -1130,6 +1290,53 @@ function normalizePoints(points: Point[]) {
   };
 }
 
+/**
+ * Гнуті елементи смуги — FG-27.
+ *
+ * Смуга потовщення чи підвороту, яка проходить обидві сторони скругленого
+ * кута, обходить його по дузі. Раніше цей шматок просто зникав: пряма смуга
+ * рахувалась по `sideSegments`, а вони дуг не містять, — тобто матеріал на
+ * дугу не списувався, і робота цеху не виставлялась.
+ *
+ * Тепер на кожну таку дугу народжується окремий ПРЯМОКУТНИК: довжина —
+ * зовнішня дуга плюс запас, висота — виліт смуги. Він лягає в розкрій як
+ * звичайна деталь (матеріал рахується чесно), а позначка `radiusElement`
+ * дає кошторису підставу нарахувати виготовлення гнутого елемента.
+ *
+ * Якщо на тому самому куті сходяться і потовщення, і підворот — це ДВА
+ * гнуті елементи, бо це дві різні смуги, і кожну цех гне окремо.
+ */
+function radiusElementParts(
+  detail: Detail,
+  feature: EdgeFeature | undefined,
+  basePart: DetailPart,
+  edgeKind: DetailPart['edgeKind'],
+  validSides: string[],
+): DetailPart[] {
+  // Правило «де саме є дуга» живе в domain/radiusElement — воно спільне з
+  // виробом, де смуги народжуються окремими Елементами.
+  const covered = new Set(validSides);
+  const specs = radiusElementSpecs(feature, detail.geometry?.corners, detail.shape, activeMaterial)
+    .filter((spec) => covered.has(spec.sides[0]) && covered.has(spec.sides[1]));
+
+  return specs.map((spec) => {
+    const prefix = EDGE_KIND_LABEL[edgeKind === 'fold' ? 'fold' : 'thickening'];
+    const name = `Обробка гнутої деталі · ${prefix} ${genitiveLabel(basePart.parentLabel)} кут ${spec.cornerId} R${Math.round(spec.radiusMm)}`;
+    const part = buildRectPart(detail, name, spec.lengthMm, spec.bandSizeMm, false, basePart.parentLabel, edgeKind, spec.cornerId);
+    part.radiusElement = {
+      radiusMm: spec.radiusMm,
+      arcLengthMm: spec.arcLengthMm,
+      cornerId: spec.cornerId,
+      arcAngleDeg: spec.arcAngleDeg,
+      bandSizeMm: spec.bandSizeMm,
+      method: spec.method,
+      role: 'countertop',
+      complex: spec.complex,
+    };
+    return part;
+  });
+}
+
 function edgeParts(detail: Detail, feature: EdgeFeature | undefined, basePart: DetailPart, edgeKind: DetailPart['edgeKind']): DetailPart[] {
   if (!feature?.enabled || feature.size <= 0 || feature.sides.length === 0) return [];
   const meta = basePart.textureGroupLabel
@@ -1172,7 +1379,7 @@ function edgeParts(detail: Detail, feature: EdgeFeature | undefined, basePart: D
       return buildPart(detail, edgePartName(basePart.parentLabel, edgeKind, side), detail.shape, points, basePart.width, basePart.height, false, basePart.parentLabel, edgeKind, side);
     });
   }
-  return validSides.map((side) => {
+  const straightBands = validSides.map((side) => {
     const segment = nominalSegment(basePart, side);
     const horizontal = segment
       ? Math.abs(segment.end.x - segment.start.x) >= Math.abs(segment.end.y - segment.start.y)
@@ -1188,6 +1395,11 @@ function edgeParts(detail: Detail, feature: EdgeFeature | undefined, basePart: D
     const allowanceMeta = allowanceRectMeta(nominalWidth, nominalHeight, activeAllowances.elementLength, activeAllowances.elementWidth, meta);
     return buildRectPart(detail, edgePartName(basePart.parentLabel, edgeKind, side), width, height, false, basePart.parentLabel, edgeKind, side, allowanceMeta);
   });
+
+  // Пряма частина смуги йде по сторонах, гнута — окремими шматками по дугах.
+  // Подвійного рахунку тут немає: довжина прямої смуги береться з
+  // `sideSegments`, а вони закінчуються там, де починається скруглення.
+  return [...straightBands, ...radiusElementParts(detail, feature, basePart, edgeKind, validSides)];
 }
 
 type EdgeSpec = { side: string; length: number; horizontal: boolean };
@@ -1331,20 +1543,67 @@ function buildSinkPolygonPart(
   );
 }
 
-function triangleBack(base: number, height: number): Point[] {
-  return [{ x: 0, y: 0 }, { x: base, y: 0 }, { x: base / 2, y: height }];
+/**
+ * ОТВІР ПІД ВСТАВКУ ЗЛИВУ (28.08.2026, зауваження власника).
+ *
+ * Чотири трикутники дна сходяться гострими вершинами в ЦЕНТРІ чаші —
+ * рівно там, куди стає «кругла деталь дна» Ø114 (деталь №14 у цій же
+ * розкладці, вона ж носій решітки зливу). Отвору під неї не було
+ * взагалі: трикутники малювались до точки, і вставку не було куди
+ * ставити — ні на кресленні, ні фізично.
+ *
+ * Тому гостра вершина кожного трикутника ЗРІЗАЄТЬСЯ дугою радіуса
+ * `drainDiameter/2` з центром у самій вершині. Чотири чверті разом
+ * складають повне коло під вставку, а метраж каменю перестає
+ * рахуватись із надлишком.
+ */
+function cutDrainVertex(points: Point[], vertexIndex: number, radius: number, segments = 8): Point[] {
+  const n = points.length;
+  if (n < 3 || radius <= 0) return points;
+
+  const apex = points[vertexIndex];
+  const prev = points[(vertexIndex - 1 + n) % n];
+  const next = points[(vertexIndex + 1) % n];
+
+  const toPrev = { x: prev.x - apex.x, y: prev.y - apex.y };
+  const toNext = { x: next.x - apex.x, y: next.y - apex.y };
+  const lenPrev = Math.hypot(toPrev.x, toPrev.y);
+  const lenNext = Math.hypot(toNext.x, toNext.y);
+  if (lenPrev < 1 || lenNext < 1) return points;
+
+  // Радіус не може з'їсти сторону цілком — інакше деталі не лишиться
+  const r = Math.min(radius, lenPrev * 0.9, lenNext * 0.9);
+
+  const a0 = Math.atan2(toPrev.y, toPrev.x);
+  const a1 = Math.atan2(toNext.y, toNext.x);
+  // Коротка дуга від сторони до сторони — саме її проходить інструмент
+  let delta = a1 - a0;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+
+  const arc: Point[] = [];
+  for (let i = 0; i <= segments; i += 1) {
+    const a = a0 + (delta * i) / segments;
+    arc.push({ x: apex.x + r * Math.cos(a), y: apex.y + r * Math.sin(a) });
+  }
+
+  return [...points.slice(0, vertexIndex), ...arc, ...points.slice(vertexIndex + 1)];
 }
 
-function triangleFront(base: number, height: number): Point[] {
-  return [{ x: 0, y: height }, { x: base, y: height }, { x: base / 2, y: 0 }];
+function triangleBack(base: number, height: number, drainRadius = 0): Point[] {
+  return cutDrainVertex([{ x: 0, y: 0 }, { x: base, y: 0 }, { x: base / 2, y: height }], 2, drainRadius);
 }
 
-function triangleLeft(width: number, height: number): Point[] {
-  return [{ x: 0, y: 0 }, { x: 0, y: height }, { x: width, y: height / 2 }];
+function triangleFront(base: number, height: number, drainRadius = 0): Point[] {
+  return cutDrainVertex([{ x: 0, y: height }, { x: base, y: height }, { x: base / 2, y: 0 }], 2, drainRadius);
 }
 
-function triangleRight(width: number, height: number): Point[] {
-  return [{ x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height / 2 }];
+function triangleLeft(width: number, height: number, drainRadius = 0): Point[] {
+  return cutDrainVertex([{ x: 0, y: 0 }, { x: 0, y: height }, { x: width, y: height / 2 }], 2, drainRadius);
+}
+
+function triangleRight(width: number, height: number, drainRadius = 0): Point[] {
+  return cutDrainVertex([{ x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height / 2 }], 2, drainRadius);
 }
 
 function pushRectSinkParts(parts: DetailPart[], detail: Detail, parentLabel: string) {
@@ -1386,10 +1645,24 @@ function pushRectSinkParts(parts: DetailPart[], detail: Detail, parentLabel: str
   const p2 = layoutSize(n2.width, n2.height);
   const p3 = layoutSize(n3.width, n3.height);
   const p4 = layoutSize(n4.width, n4.height);
-  const t5 = triangleBack(n5.width, n5.height);
-  const t6 = triangleFront(n6.width, n6.height);
-  const t7 = triangleLeft(n7.width, n7.height);
-  const t8 = triangleRight(n8.width, n8.height);
+  /*
+   * ⚠️ ОТВІР ПІД ВСТАВКУ ЗЛИВУ — ТИМЧАСОВО ВИМКНЕНИЙ (28.08, регресія).
+   *
+   * Зріз гострої вершини (`cutDrainVertex`) правильний за кресленням:
+   * чотири трикутники мають віддати по чверті кола Ø114 під вставку.
+   * Але 3D центрує деталь по НОМІНАЛЬНОМУ габариту (`translate(-pw/2,
+   * -ph/2)` у ProductElement3DNode), а зріз зменшує ФАКТИЧНИЙ — і дно
+   * чаші розповзається щілинами по кутах. Власник це побачив одразу.
+   *
+   * Щоб увімкнути назад, спершу треба навчити 3D центрувати деталі
+   * мийки по фактичному контуру, а не по номіналу. Функція
+   * `cutDrainVertex` лишається готовою — міняється лише цей рядок.
+   */
+  const drainRadius = 0;
+  const t5 = triangleBack(n5.width, n5.height, drainRadius);
+  const t6 = triangleFront(n6.width, n6.height, drainRadius);
+  const t7 = triangleLeft(n7.width, n7.height, drainRadius);
+  const t8 = triangleRight(n8.width, n8.height, drainRadius);
   const p5 = polygonLayoutSize(t5, n5.width, n5.height);
   const p6 = polygonLayoutSize(t6, n6.width, n6.height);
   const p7 = polygonLayoutSize(t7, n7.width, n7.height);
@@ -1545,6 +1818,18 @@ function originalCornerPoints(detail: Detail): { points: Record<string, Point>; 
     const height = g.outerHeight || 1200;
     const iw = g.innerHorizontal || 600;
     const ih = g.innerVertical || 600;
+    // ЛІВА Г ('BL', 26.08): той самий обхід, що в lShapePoints — інакше
+    // кути, задані на цілому виробі, мапились би на дзеркально не ті
+    // вершини. Увігнута вершина в лівої — D, не C.
+    if (g.cornerOrientation === 'BL') {
+      return {
+        points: {
+          start: { x: 0, y: 0 }, A: { x: width, y: 0 }, B: { x: width, y: height }, C: { x: iw, y: height },
+          D: { x: iw, y: height - ih }, E: { x: 0, y: height - ih }
+        },
+        reflexIds: ['D'],
+      };
+    }
     return {
       points: {
         start: { x: 0, y: 0 }, A: { x: width, y: 0 }, B: { x: width, y: height - ih }, C: { x: iw, y: height - ih },
@@ -1741,13 +2026,30 @@ function manualJointCuts(detail: Detail, ring: Point[]): JointCut[] {
   const anchors = jointAnchorPoints(detail.shape, detail.geometry);
   const cuts: JointCut[] = [];
 
+  // Два стики на тому самому місці — не два різи, а один. Так буває, коли
+  // менеджер тисне «+ Вертикальний» двічі: обидва лягають на типову відстань,
+  // і другий «система не бачить» (FG-07). Прибираємо дублі тут, у рушії, щоб
+  // жоден шлях створення стику не міг завести деталь у різ нульової ширини.
+  const seen: Array<{ axis: string; position: number }> = [];
+
   for (const joint of joints) {
-    const anchor = joint.anchorCorner ? anchors?.[joint.anchorCorner] : undefined;
-    const base = anchor ? (joint.axis === 'vertical' ? anchor.x : anchor.y) : 0;
-    const position = snapJointOffArcs(detail, joint.axis, base + joint.offset);
+    // Позицію рахує СПІЛЬНА manualJointPosition (domain/joints) — тут жила її
+    // копія `base + offset`, і саме вона не знала, що відступ від дальнього
+    // кута відкладається всередину деталі. Копія давала стик за контуром:
+    // у 3D лінія зникала, а в розкрої різ ішов повз матеріал.
+    const { requested } = manualJointPosition(anchors, detail.geometry?.corners, joint);
+    const position = snapJointOffArcs(detail, joint.axis, requested);
+    if (seen.some((item) => item.axis === joint.axis && Math.abs(item.position - position) < 1)) continue;
+    seen.push({ axis: joint.axis, position });
+
     const start = interiorPointOnLine(ring, joint.axis, position);
     if (!start) continue; // лінія не перетинає деталь — стик ігноруємо
-    cuts.push({ start, dir: joint.axis === 'vertical' ? { x: 0, y: -1 } : { x: -1, y: 0 } });
+    cuts.push({
+      start,
+      dir: joint.axis === 'vertical' ? { x: 0, y: -1 } : { x: -1, y: 0 },
+      line: { axis: joint.axis, position },
+      jointType: joint.jointType,
+    });
   }
 
   return cuts;
@@ -1848,6 +2150,23 @@ function explodeDetails(details: Detail[]): DetailPart[] {
       });
       const g = detail.geometry;
 
+      /**
+       * «Деталь цілком» і стик — взаємно виключні стани, і вирішує це рушій,
+       * а не той, хто його викликав.
+       *
+       * FG-20: у 3D пунктир стику намальовано, а в карту крою деталь їде
+       * цілою. Редактор цю пару вже розводить (`elementToDetail`), але
+       * проєкти, збережені до появи тієї перевірки, несуть обидва прапорці
+       * одразу — і рушій слухняно робив «цілком». Стик, який видно на
+       * екрані, мусить різати; інакше програма показує одне, а цех отримує
+       * інше. Тому нормалізуємо тут, у єдиній точці.
+       */
+      const wholeDetail = Boolean(g.wholeDetail)
+        && !g.jointDirection
+        && !g.jointOmegaDirection
+        && !g.jointLambdaDirection
+        && !g.manualJoints?.length;
+
       if (g.sinkKind === 'slot') {
         pushSlotSinkParts(parts, detail, parentLabel);
         continue;
@@ -1875,13 +2194,16 @@ function explodeDetails(details: Detail[]): DetailPart[] {
       // Довільні стики працюють на будь-якій формі: ріжемо готовий контур
       // так само, як і стики на увігнутих кутах. Потрібні, коли деталь більша
       // за сляб або коли ріжемо із залишку.
-      if (g.manualJoints?.length && !g.wholeDetail) {
+      if (g.manualJoints?.length && !wholeDetail) {
         const contour = contourForDetail(detail);
         const cuts = contour ? manualJointCuts(detail, contour) : [];
         if (contour && cuts.length) {
-          const rings = splitContourByJoints(contour, cuts);
+          const seams: JointSeam[] = [];
+          const rings = splitContourByJoints(contour, cuts, seams);
           if (rings.length >= 2) {
+            const before = parts.length;
             pushRingParts(parts, detail, rings, parentLabel);
+            attachJointSeams(parts, before, seams);
             continue;
           }
         }
@@ -1892,7 +2214,7 @@ function explodeDetails(details: Detail[]): DetailPart[] {
         const minX = Math.min(...g.customPoints.map((point) => point.x));
         const minY = Math.min(...g.customPoints.map((point) => point.y));
         const holes = (g.customHoles ?? []).map((hole) => hole.map((point) => ({ x: point.x - minX, y: point.y - minY })));
-        const sideSegments = g.sideSegments
+        const translatedSegments = g.sideSegments
           ? Object.fromEntries(Object.entries(g.sideSegments).map(([side, segment]) => [
             side,
             {
@@ -1901,12 +2223,43 @@ function explodeDetails(details: Detail[]): DetailPart[] {
             },
           ]))
           : undefined;
+
+        /*
+         * РЕМОНТ 19.08 — ОБРОБКА КУТІВ НА ДОВІЛЬНОМУ КОНТУРІ.
+         *
+         * Ця гілка (ніша, шаблон подіуму, імпорт) брала точки як є і
+         * ІГНОРУВАЛА detail.corners: радіуси жили в 3D, а бланк і карта
+         * крою різали гострі кути — цех отримував не ту деталь, яку
+         * погодив клієнт. Проганяємо контур через той самий будівник, що
+         * й Г/П-форми (buildComplexPolygonPoints): він знає обмеження
+         * FG-11 і повертає чесні sideSegments разом із дугами.
+         *
+         * Кути шукаються за id точки — та сама угода, що в 3D. Точки без
+         * імен (імпорт DXF) просто не матчаться, і контур не змінюється.
+         */
+        const cornersOnContour = (() => {
+          const cornerRecord = g.corners as Record<string, import('../domain/types').CornerProcessing> | undefined;
+          if (!cornerRecord || !Object.keys(cornerRecord).length) return undefined;
+          const src = g.customPoints!;
+          const n = src.length;
+          const cornerIds = src.map((point) => (point as { id?: string }).id ?? '');
+          if (!cornerIds.some((id) => id && cornerRecord[id])) return undefined;
+          // Ім'я ребра, що ПОЧИНАЄТЬСЯ в точці i: за угодою customPoints
+          // це id НАСТУПНОЇ точки; замикальне ребро — closeId ?? id першої.
+          const sideIds = src.map((point, index) => (index < n - 1
+            ? ((src[index + 1] as { id?: string }).id ?? `edge-${index + 1}`)
+            : ((src[0] as { closeId?: string; id?: string }).closeId ?? (src[0] as { id?: string }).id ?? 'close')));
+          return buildComplexPolygonPoints(normalized.points, cornerRecord, cornerIds, sideIds);
+        })();
+
+        const contourPoints = cornersOnContour?.points ?? normalized.points;
+        const sideSegments = cornersOnContour?.sideSegments ?? translatedSegments;
         const useImportAllowance = activeAllowances.applyToImports;
         const isElementImport = detail.importRole === 'thickening' || detail.importRole === 'fold';
         const outerPadX = useImportAllowance ? (isElementImport ? activeAllowances.elementLength : activeAllowances.detailLength) : 0;
         const outerPadY = useImportAllowance ? (isElementImport ? activeAllowances.elementWidth : activeAllowances.detailWidth) : 0;
-        const offsetOuter = offsetPolygon(normalized.points, outerPadX, outerPadY);
-        const actualPoints = useImportAllowance ? offsetOuter.points : normalized.points;
+        const offsetOuter = offsetPolygon(contourPoints, outerPadX, outerPadY);
+        const actualPoints = useImportAllowance ? offsetOuter.points : contourPoints;
         const actualHoles = useImportAllowance
           ? holes.map((hole) => {
             const shiftedHole = offsetPoints(hole, offsetOuter.shiftX, offsetOuter.shiftY);
@@ -1914,7 +2267,7 @@ function explodeDetails(details: Detail[]): DetailPart[] {
           })
           : holes;
         const nominalPoints = useImportAllowance
-          ? offsetPoints(normalized.points, offsetOuter.shiftX, offsetOuter.shiftY)
+          ? offsetPoints(contourPoints, offsetOuter.shiftX, offsetOuter.shiftY)
           : undefined;
         const nominalHoles = useImportAllowance
           ? holes.map((hole) => offsetPoints(hole, offsetOuter.shiftX, offsetOuter.shiftY))
@@ -1937,8 +2290,28 @@ function explodeDetails(details: Detail[]): DetailPart[] {
           : detail.parentDetailId
           ? `import:${importedParent?.importGroupId ?? detail.parentDetailId}`
           : detail.importGroupId ? `import:${detail.importGroupId}` : `import:${detail.id}`;
+        /*
+         * ХВИЛЯ 4, крок 4.4 — вирізи на деталі з ДОВІЛЬНИМ контуром.
+         *
+         * Ця гілка брала отвори лише з `customHoles` (їх кладе імпорт), а
+         * `cutouts` — те, що користувач малює в редакторі, — мовчки
+         * втрачала: далі йде `continue`, і перетворення вирізів в отвори
+         * нижче вже не спрацьовує. Наслідок тихий і дорогий: панель із
+         * нішею І мийкою/вентиляційним отвором їхала в цех без отвору.
+         *
+         * Тепер вирізи домішуються тут-таки, тим самим будівельником, що
+         * й для прямокутних деталей.
+         */
+        const cutoutHoles = buildHolesFromCutouts(
+          g.cutouts,
+          actualPoints,
+          nextWidth,
+          nextHeight,
+        );
+        const allHoles = cutoutHoles.length ? [...actualHoles, ...cutoutHoles] : actualHoles;
+
         const importMeta: PartLayoutMeta = {
-          holes: actualHoles,
+          holes: allHoles,
           nominalPoints,
           nominalHoles,
           textureGroupLabel: importGroupLabel,
@@ -1978,6 +2351,10 @@ function explodeDetails(details: Detail[]): DetailPart[] {
         const padX = Math.max(0, activeAllowances.detailLength);
         const padY = Math.max(0, activeAllowances.detailWidth);
         const main = buildRectPart(detail, parentLabel, nominalW + padX * 2, nominalH + padY * 2, true, parentLabel, undefined, undefined, allowanceRectMeta(nominalW, nominalH, padX, padY));
+        // Доповнення-дуга з редактора виробу: сам прямокутник звичайний,
+        // але позначка мусить дожити до фактів — з неї нараховується
+        // виготовлення гнутого елемента.
+        if (g.radiusElement) main.radiusElement = g.radiusElement;
         pushPartWithEdges(parts, detail, main);
         continue;
       }
@@ -2007,7 +2384,7 @@ function explodeDetails(details: Detail[]): DetailPart[] {
         const nominalIV = g.innerVertical ?? 500;
         const ih = Math.min(g.innerHorizontal ?? 900, nominalOW - 20);
         const iv = Math.min(g.innerVertical ?? 500, nominalOH - 20);
-        if (g.wholeDetail) {
+        if (wholeDetail) {
           const layout = lShapeWithAllowances(nominalOW, nominalOH, nominalIH, nominalIV, g.cornerOrientation);
           const complexLayout = buildComplexPolygonPoints(
             layout.points,
@@ -2028,6 +2405,16 @@ function explodeDetails(details: Detail[]): DetailPart[] {
         } else {
           const firstLabel = splitLabel(parentLabel, 1);
           const secondLabel = splitLabel(parentLabel, 2);
+          // Г-форма ріжеться не контуром, а двома прямокутниками з номіналів,
+          // тому довжину шва тут рахуємо аналітично — по спільному ребру цих
+          // прямокутників. Без цього кутовий стик Г-виробу лишався б без
+          // склейки й пропилу в кошторисі (SC-02).
+          const beforeL = parts.length;
+          const seamL: JointSeam[] = [{
+            lengthMm: g.jointDirection === 'vertical'
+              ? Math.max(0, nominalOH - iv)
+              : Math.min(ih, nominalOW),
+          }];
           if (g.jointDirection === 'vertical') {
             const m1 = splitMeta(parentLabel, 0, 0, { E: 'C', F: 'D' });
             m1.mappedCorners = mapCornersToRect(detail, 0, 0, ih, nominalOH);
@@ -2082,6 +2469,7 @@ function explodeDetails(details: Detail[]): DetailPart[] {
               { side: 'F', length: ih, horizontal: true },
             ]);
           }
+          attachJointSeams(parts, beforeL, seamL);
         }
         continue;
       }
@@ -2096,7 +2484,7 @@ function explodeDetails(details: Detail[]): DetailPart[] {
         const side = g.innerCutSide ?? 'bottom';
         const leftH = g.leftLegHeight ?? nominalH;
         const rightH = g.rightLegHeight ?? nominalH;
-        if (g.wholeDetail) {
+        if (wholeDetail) {
           const layout = uShapeWithAllowances(nominalW, nominalH, cutW, cutD, offset, side, leftH, rightH);
           const complexLayout = buildComplexPolygonPoints(
             layout.points,
@@ -2228,12 +2616,15 @@ function explodeDetails(details: Detail[]): DetailPart[] {
           addJointCut(lambda, offset + cutW, topHeight, reflexJointShift(corners, 'D', [cutW, cutD], g.jointLambdaRadiusSide), 1);
           jointCuts.push(...manualJointCuts(detail, processedContour.points));
 
+          const jointSeams: JointSeam[] = [];
           const jointRings = jointCuts.length
-            ? splitContourByJoints(processedContour.points, jointCuts)
+            ? splitContourByJoints(processedContour.points, jointCuts, jointSeams)
             : [];
 
           if (jointRings.length >= 2) {
+            const before = parts.length;
             pushRingParts(parts, detail, jointRings, parentLabel);
+            attachJointSeams(parts, before, jointSeams);
           } else if (omega === 'vertical' && lambda === 'vertical') {
             pushPartWithEdges(parts, detail, markRect(firstLabel, offset, nominalH, firstLabel, 0, 0, { G: 'C', H: 'D' }), leftLegSpecs);
             pushPartWithEdges(parts, detail, markRect(secondLabel, cutW, topHeight, secondLabel, leftWidth, 0, { F: 'D' }), bridgeSpecs);
@@ -2349,6 +2740,15 @@ function explodeDetails(details: Detail[]): DetailPart[] {
 }
 
 
-export function explodeDetails(details: Detail[], allowances: CutAllowances = DEFAULT_ALLOWANCES): DetailPart[] {
-  return createGeometryEngine({ ...DEFAULT_ALLOWANCES, ...allowances }).explodeDetails(details);
+export function explodeDetails(
+  details: Detail[],
+  allowances: CutAllowances = DEFAULT_ALLOWANCES,
+  /**
+   * Матеріал проєкту. Потрібен рівно для одного: технологічний запас на
+   * гнутий елемент — 30% на сегментацію каменю, 20% на гнуття акрилу.
+   * Порожньо — рахуємо як сегментацію (безпечніший, більший запас).
+   */
+  material?: MaterialType,
+): DetailPart[] {
+  return createGeometryEngine({ ...DEFAULT_ALLOWANCES, ...allowances }, material).explodeDetails(details);
 }

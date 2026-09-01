@@ -12,6 +12,8 @@ export interface PackingWorkerRequest {
   project: Project;
   parts: DetailPart[];
   mode?: PackingMode;
+  /** Крок 5.2: зберегти розміщення, зроблені руками (перерахунок після правки). */
+  preserveManual?: boolean;
 }
 
 export interface PackingWorkerResponse {
@@ -20,10 +22,10 @@ export interface PackingWorkerResponse {
 }
 
 self.onmessage = (e: MessageEvent<PackingWorkerRequest>) => {
-  const { requestId, project, parts, mode } = e.data;
+  const { requestId, project, parts, mode, preserveManual } = e.data;
 
   try {
-    const result = autoPack(project, parts, mode);
+    const result = autoPack(project, parts, mode, preserveManual);
     
     const response: PackingWorkerResponse = {
       requestId,

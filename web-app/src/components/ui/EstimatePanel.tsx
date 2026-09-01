@@ -1,8 +1,9 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
-import { computeEstimate, CATEGORY_LABELS, type EstimateLine } from '../../engines/estimate';
-import { FileText, Download, AlertTriangle, List, Layers, BookMarked } from 'lucide-react';
+import { computeEstimate, estimatePriceRequests, CATEGORY_LABELS, type EstimateLine } from '../../engines/estimate';
+import { FileText, Download, AlertTriangle, List, Layers, BookMarked, Loader2, RefreshCw } from 'lucide-react';
+import { usePrices1c } from './usePrices1c';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useUIStore } from '../../store/useStore';
 import { ManufacturabilityNotice } from './ManufacturabilityNotice';
@@ -16,6 +17,11 @@ import { ManufacturabilityNotice } from './ManufacturabilityNotice';
  * геометрія → виробничі факти → прив'язки → ціни. Раніше тут була
  * окрема математика, яка брала номінальні width/height елемента, тому
  * для Г-подібної деталі площа й периметр були неправильні за побудовою.
+ *
+ * ЦІНИ. Кошторис рахується ДВІЧІ: спершу без грошей — щоб знати, які
+ * коди 1С і в якій кількості питати, — і вже з відповіддю 1С удруге.
+ * Інакше довелось би вгадувати перелік номенклатур наперед. Ціни ті
+ * самі, що й у «Прорахунку»: один код — одне число в обох документах.
  */
 export function EstimatePanel() {
   const project = useProjectStore((s) => s.project);
@@ -41,13 +47,37 @@ export function EstimatePanel() {
     [mappingOverrides, customRules],
   );
 
-  const estimate = useMemo(() => {
+  // Крок 1: кількості. Гроші тут ще нульові — потрібен тільки перелік
+  // кодів, за якими є що питати.
+  const draft = useMemo(() => {
     const details = getAllProjectDetails(project);
     return computeEstimate(project, parts, { details, catalog, rules: getRules() });
     // getRules читає mappingOverrides і customRules — тримаємо їх у залежностях
     // явно, інакше зміна прив'язок не перерахує кошторис.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, parts, catalog, mappingOverrides, customRules]);
+
+  const priceItems = useMemo(() => estimatePriceRequests(draft.lines), [draft.lines]);
+  // Контрагент — той самий, що у «Прорахунку»: знижка в 1С рахується за
+  // ним, і кошторис не має показувати іншу ціну на ту саму операцію.
+  const erp = usePrices1c(priceItems, project.quoteCalc?.contragentId);
+
+  // Крок 2: той самий кошторис, але з цінами 1С.
+  const estimate = useMemo(() => {
+    const details = getAllProjectDetails(project);
+    return computeEstimate(project, parts, {
+      details, catalog, rules: getRules(), erpPrices: erp.unitPrices,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, parts, catalog, mappingOverrides, customRules, erp.unitPrices]);
+
+  const pricesLoading = erp.state === 'loading';
+  // Рядки, за якими грошей немає: або код 1С не заповнений, або 1С за ним
+  // нічого не повернула. Мовчазний нуль у кошторисі — найгірше з можливого:
+  // саме він колись видавався за пораховану суму.
+  const unpriced = estimate.lines.filter((line) => line.priceSource === 'none');
+  const noCode = unpriced.filter((line) => !line.externalId).length;
+  const noAnswer = unpriced.length - noCode;
 
   const getUnitLabel = (unit: string) => {
     switch (unit) {
@@ -90,7 +120,12 @@ export function EstimatePanel() {
       <td className="px-6 py-3 font-medium text-slate-800">{line.name}</td>
       <td className="px-6 py-3 text-right font-medium text-slate-700">{line.quantity.toFixed(2)}</td>
       <td className="px-6 py-3 text-center text-slate-500">{getUnitLabel(line.unit)}</td>
-      <td className="px-6 py-3 text-right text-slate-600">{line.unitPrice.toFixed(2)}</td>
+      <td className={`px-6 py-3 text-right ${line.priceSource === 'none' ? 'text-slate-300' : 'text-slate-600'}`}>
+        {line.unitPrice.toFixed(2)}
+        {line.priceSource === 'manual' && (
+          <span className="ml-1.5 text-[10px] font-bold text-amber-600" title="Ціна з каталогу налаштувань, а не з 1С">РУЧНА</span>
+        )}
+      </td>
       <td className="px-6 py-3 text-right font-bold text-slate-800">{line.total.toFixed(2)}</td>
     </tr>
     );
@@ -109,11 +144,20 @@ export function EstimatePanel() {
             <div>
               <h2 className="text-xl font-bold text-slate-800">Послуги для виробництва (BOM)</h2>
               <p className="text-sm text-slate-500">Розрахунок із геометрії розкрою: {estimate.facts.length} виробничих фактів · клік по рядку підсвічує лінії на карті крою</p>
+              <p className={`text-xs mt-0.5 flex items-center gap-1.5 ${erp.state === 'error' || erp.state === 'off' ? 'text-amber-600' : 'text-slate-500'}`}>
+                {pricesLoading && <Loader2 className="w-3 h-3 animate-spin shrink-0" />}
+                <span>
+                  {pricesLoading ? 'Рахую ціни в 1С…'
+                    : erp.error ? erp.error
+                    : priceItems.length === 0 ? 'Немає позицій із кодом 1С — цін немає, суми нульові'
+                    : 'Ціни з 1С за кодом номенклатури'}
+                </span>
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="flex rounded-md border border-slate-300 overflow-hidden text-sm">
+          <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
+            <div className="flex rounded-md border border-slate-300 overflow-hidden text-sm shrink-0">
               <button
                 onClick={() => setGrouped(false)}
                 className={`flex items-center gap-1.5 px-3 py-2 ${!grouped ? 'bg-slate-100 text-slate-800 font-semibold' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -131,6 +175,18 @@ export function EstimatePanel() {
                 Укрупнено
               </button>
             </div>
+
+            <button
+              onClick={erp.refresh}
+              disabled={pricesLoading || priceItems.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 shrink-0"
+              title="Перерахувати ціни в 1С"
+            >
+              {pricesLoading
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <RefreshCw className="w-3.5 h-3.5" />}
+              Оновити ціни
+            </button>
 
             <button
               onClick={handleExportJson}
@@ -153,6 +209,17 @@ export function EstimatePanel() {
         )}
 
         <ManufacturabilityNotice />
+
+        {unpriced.length > 0 && (
+          <div className="flex items-start gap-2 px-6 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-800">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              Без ціни: {unpriced.length} з {estimate.lines.length} рядків — вони рахуються по нулю.
+              {noCode > 0 && ` У ${noCode} не заповнений код 1С — ціну за ними спитати нема за чим.`}
+              {noAnswer > 0 && ` За ${noAnswer} код є, але 1С ціну не повернула.`}
+            </span>
+          </div>
+        )}
 
         {estimate.missingServiceIds.length > 0 && (
           <div className="flex items-start gap-2 px-6 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-800">

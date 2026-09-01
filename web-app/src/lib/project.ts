@@ -78,9 +78,29 @@ export function rotatedLocalPoints(points: Point[], rotation: Rotation, width: n
     .map((point) => ({ x: point.x - bounds.minX, y: point.y - bounds.minY }));
 }
 
-export function rotatedPoints(part: DetailPart, rotation: Rotation, placement?: Placement): Point[] {
+/**
+ * Дзеркалення контуру по вертикальній осі деталі (хвиля 3, крок 3.4).
+ *
+ * Робиться ДО повороту і в локальних координатах, тому габарит не
+ * змінюється, а нумерація вершин лишається тією самою — саме на цьому
+ * тримається крок 3.3: позначки обробки їдуть за деталлю без окремої
+ * математики на дзеркало.
+ */
+export function mirroredLocalPoints(points: Point[], width: number): Point[] {
+  return points.map((point) => ({ x: width - point.x, y: point.y }));
+}
+
+export function rotatedPoints(
+  part: DetailPart,
+  rotation: Rotation,
+  // Приймаємо не весь Placement, а лише те, що впливає на геометрію: так
+  // місця, які знають про дзеркало, але не мають розміщення (позначки
+  // обробки, підсвітка фактів), можуть передати просто `{ mirror }`.
+  placement?: Pick<Placement, 'mirror' | 'computedAllowances'>,
+): Point[] {
   const allowances = placement?.computedAllowances;
-  return rotatedLocalPoints(part.points, rotation, part.width, part.height, part.points, allowances);
+  const source = placement?.mirror ? mirroredLocalPoints(part.points, part.width) : part.points;
+  return rotatedLocalPoints(source, rotation, part.width, part.height, source, allowances);
 }
 
 export function rotatedSize(part: DetailPart, rotation: Rotation) {

@@ -5,6 +5,9 @@ import { DimensionsTable } from './DimensionsTable';
 import { Detail2DBlueprint } from './Detail2DBlueprint';
 import { sideOptionsFor, supportsEdges } from './FormsPanel';
 import { getSideSize } from '../forms/utils/draftHelpers';
+import { useSettingsStore } from '../../store/useSettingsStore';
+import { useUIStore } from '../../store/useStore';
+import { minSideMmFor } from '../../domain/manufacturability';
 
 function Accordion({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -27,17 +30,28 @@ function Accordion({ title, children, defaultOpen = false }: { title: string; ch
   );
 }
 
-import type { Project } from '../../../domain/types';
+import type { MaterialType, Project } from '../../domain/types';
+import { thicknessesFor, allowsManualThickness, MANUAL_THICKNESS_RANGE } from '../../domain/materialThickness';
 
 export function ElementSettingsModal({
   initialDetail,
   project,
+  material,
   onClose,
   onSave,
   embedded = false,
+  occupiedSides,
 }: {
   initialDetail: DetailDraft;
   project: Project;
+  /** Сторони, закриті доповненням (нога/потовщення/підворот) — у таблиці сторін форму не обрати. */
+  occupiedSides?: Record<string, string>;
+  /**
+   * Матеріал виробу (01.09): від нього перелік товщин у «Товщина виробу».
+   * Порожньо (старий виріб без матеріалу) — беремо матеріал проєкту, а
+   * без нього — історичний список 12/20/30/40.
+   */
+  material?: MaterialType;
   onClose: () => void;
   onSave: (draft: DetailDraft) => void;
   /** true — рендеримо всередині робочої області (дерево і властивості лишаються видимі),
@@ -45,6 +59,16 @@ export function ElementSettingsModal({
   embedded?: boolean;
 }) {
   const [draft, setDraft] = useState<DetailDraft>(initialDetail);
+  const effectiveMaterial = material ?? project.projectMaterial;
+  const thicknessOptions = useMemo(() => {
+    const list = effectiveMaterial ? thicknessesFor(effectiveMaterial) : [12, 20, 30, 40];
+    // Поточна товщина поза переліком (старий виріб, ручна товщина
+    // натуралки) — показуємо, щоб select не «стрибав» на чуже значення.
+    return list.includes(draft.thickness) ? list : [...list, draft.thickness].sort((a, b) => a - b);
+  }, [effectiveMaterial, draft.thickness]);
+  const manualThicknessAllowed = allowsManualThickness(effectiveMaterial);
+  // Просунутий режим: підказки сховані (рішення власника 01.09).
+  const isExpertMode = useUIStore((s) => s.isExpertMode);
   const sides = useMemo(() => sideOptionsFor(draft.kind), [draft.kind]);
   const showEdges = supportsEdges(draft.type);
 
@@ -52,15 +76,25 @@ export function ElementSettingsModal({
     setDraft((prev) => ({ ...prev, ...patch }));
   };
 
-  const errorSide = useMemo(() => {
+  /**
+   * FG-10. Коротка сторона — це РИЗИК, а не заборона.
+   *
+   * Тут стояло `size < 150` із зашитим числом, і воно гасило кнопку
+   * «Зберегти». Фокус-група вперлась у це на реальному замовленні: смуга
+   * 2800×32 не заводилась узагалі, хоча цех такі ріже. Тепер поріг живе в
+   * налаштуваннях окремо під матеріал, а результат — жовте попередження:
+   * менеджер бачить ризик і вирішує сам.
+   */
+  const minSideMm = useSettingsStore((s) => s.minSideMm);
+  const sideLimitMm = minSideMmFor(project.projectMaterial, minSideMm);
+  const warnSide = useMemo(() => {
+    if (sideLimitMm <= 0) return null;
     for (const side of sides) {
       const size = getSideSize(draft, side);
-      if (size > 0 && size < 150) {
-        return side;
-      }
+      if (size > 0 && size < sideLimitMm) return side;
     }
     return null;
-  }, [draft, sides]);
+  }, [draft, sides, sideLimitMm]);
 
   return (
     <div
@@ -80,28 +114,57 @@ export function ElementSettingsModal({
         </div>
         )}
 
-        {/* Warning / Error Banner */}
-        {errorSide ? (
-          <div className="bg-[#cc0000] border-b border-[#a30000] px-6 py-2 text-center text-sm font-bold text-white">
-            Помилка: Сторона {errorSide} має бути мінімум 150 мм
+        {/* Попередження про коротку сторону (FG-10).
+            Три окремі вузли, а не один рядок: перекладач інтерфейсу міняє
+            текст вузла ЦІЛКОМ за збігом, тож літера сторони посередині
+            зробила б фразу неперекладною. */}
+        {warnSide ? (
+          <div className="shrink-0 bg-[#fff4e0] border-b border-[#e2a03f] px-6 py-2 text-center text-sm font-medium text-[#7a4b06]">
+            <span>Сторона</span>{' '}
+            <span className="font-bold">{warnSide}</span>{' '}
+            <span>{`вужча за ${sideLimitMm} мм — деталь ризикована, цех може відмовити`}</span>
           </div>
         ) : (
-          <div className="bg-[#fff9e6] border-b border-[#f2c94c] px-6 py-2 text-center text-sm font-medium text-slate-800">
+          <div className="shrink-0 bg-[#fff9e6] border-b border-[#f2c94c] px-6 py-2 text-center text-sm font-medium text-slate-800">
             Попередження: Перевірте всі габаритні розміри
           </div>
         )}
 
-        {/* Main Body Split */}
-        <div className="flex-1 flex overflow-hidden">
+        {/* Main Body Split.
+            min-h-0 обов'язковий: без нього flex-дитина не дає собі стиснутись
+            нижче власного вмісту, права панель перестає скролитись, і нижні
+            блоки разом із рядком кнопок їдуть за межу вікна (FG-25/FG-26). */}
+        <div className="flex-1 min-h-0 flex overflow-hidden">
           {/* Main Blueprint Area */}
           <div className="flex-1 p-6 flex flex-col bg-white">
             <div className="flex-1 bg-[#f4f7f9] border border-slate-300 relative rounded-md overflow-hidden shadow-inner">
               <Detail2DBlueprint detail={draft} />
+              {/* Ліва/права Г (26.08): перемикач прямо на кресленні, бо саме
+                  тут людина бачить, куди дивиться виріз. Дзеркалиться
+                  реальний контур (cornerOrientation у рушії), не картинка. */}
+              {draft.kind === 'l' && (
+                <div className="absolute top-2 left-2 flex rounded overflow-hidden border border-slate-300 bg-white text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => updateDraft({ mirrorL: undefined })}
+                    className={`px-3 py-1.5 ${!draft.mirrorL ? 'bg-[#1f93ef] text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    Права
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateDraft({ mirrorL: true })}
+                    className={`px-3 py-1.5 ${draft.mirrorL ? 'bg-[#1f93ef] text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    Ліва
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Right Sidebar */}
-          <div className="flex-1 bg-[#f4f7f9] overflow-y-auto p-4 flex flex-col">
+          <div className="flex-1 min-h-0 bg-[#f4f7f9] overflow-y-auto custom-scrollbar p-4 flex flex-col">
             {/* Сторони (Розміри та Кромка) */}
             {showEdges && (
               <Accordion title="Сторони" defaultOpen={true}>
@@ -112,6 +175,7 @@ export function ElementSettingsModal({
                     sides={sides} 
                     edgeProfiles={project.referenceData?.edgeProfiles ?? []}
                     material={project.slabs[0]?.material} // Use main material as default for estimation
+                    occupiedSides={occupiedSides}
                   />
                 </div>
               </Accordion>
@@ -142,11 +206,30 @@ export function ElementSettingsModal({
                   onChange={(e) => updateDraft({ thickness: Number(e.target.value) })}
                   className="w-full p-2 border border-slate-300 rounded-sm outline-none focus:border-[#1f93ef] bg-white text-sm"
                 >
-                  <option value="12">12</option>
-                  <option value="20">20</option>
-                  <option value="30">30</option>
-                  <option value="40">40</option>
+                  {thicknessOptions.map((t) => (
+                    <option key={t} value={t}>
+                      {t}{effectiveMaterial && !thicknessesFor(effectiveMaterial).includes(t) ? ' (поза переліком матеріалу)' : ''}
+                    </option>
+                  ))}
                 </select>
+                {effectiveMaterial && !isExpertMode && (
+                  <span className="text-xs text-slate-500">
+                    Матеріал «{effectiveMaterial}»: {thicknessesFor(effectiveMaterial).join(' / ')} мм{manualThicknessAllowed ? ' або своя' : ''}
+                  </span>
+                )}
+                {manualThicknessAllowed && (
+                  <label className="flex items-center gap-2 text-xs text-slate-600">
+                    Своя товщина, мм
+                    <input
+                      type="number"
+                      min={MANUAL_THICKNESS_RANGE.min}
+                      max={MANUAL_THICKNESS_RANGE.max}
+                      value={draft.thickness}
+                      onChange={(e) => updateDraft({ thickness: Number(e.target.value) })}
+                      className="w-24 p-1.5 border border-slate-300 rounded-sm outline-none focus:border-[#1f93ef] text-sm"
+                    />
+                  </label>
+                )}
               </div>
             </Accordion>
 
@@ -178,27 +261,33 @@ export function ElementSettingsModal({
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
-          <button 
-            type="button"
-            onClick={onClose}
-            className="px-6 py-2 border border-slate-300 text-slate-600 font-medium rounded-sm hover:bg-slate-100 transition-colors"
-          >
-            Закрити
-          </button>
-          <button 
-            type="button"
-            onClick={() => onSave(draft)}
-            disabled={!!errorSide}
-            className={`px-8 py-2 font-bold rounded-sm shadow-sm transition-colors ${
-              errorSide 
-                ? "bg-slate-300 text-slate-500 cursor-not-allowed" 
-                : "bg-[#1f93ef] text-white hover:bg-[#1875c0]"
-            }`}
-          >
-            Зберегти
-          </button>
+        {/* Footer.
+            FG-26: рядок дій закріплений (shrink-0) — він більше не їде разом
+            із вмістом правої панелі. І назви розведені: тут зберігається САМЕ
+            ця деталь, а «Зберегти виріб» угорі праворуч закриває весь виріб.
+            Раніше обидві кнопки називались «Зберегти», і люди тиснули не ту. */}
+        <div className="shrink-0 px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+          <span className="text-xs text-slate-500">
+            Зберігає лише цю деталь. Виріб цілком — кнопкою «Зберегти виріб» угорі.
+          </span>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-6 py-2 border border-slate-300 text-slate-600 font-medium rounded-sm hover:bg-slate-100 transition-colors"
+            >
+              {embedded ? 'Закрити креслення' : 'Закрити'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onSave(draft)}
+              /* FG-10: коротка сторона більше НЕ блокує збереження — це
+                 попередження, а рішення за менеджером. */
+              className="px-8 py-2 font-bold rounded-sm shadow-sm transition-colors bg-[#1f93ef] text-white hover:bg-[#1875c0]" 
+            >
+              Зберегти деталь
+            </button>
+          </div>
         </div>
     </div>
   );

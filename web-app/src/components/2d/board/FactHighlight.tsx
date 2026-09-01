@@ -1,6 +1,6 @@
 import type { DetailPart, Placement, Point } from '../../../domain/types';
 import type { FactRef } from '../../../engines/productionFacts';
-import { rotatedLocalPoints } from '../../../lib/project';
+import { mirroredLocalPoints, rotatedLocalPoints } from '../../../lib/project';
 import { logicalSegmentForSide, sideContourPolyline } from '../../../utils/edgeProfiles';
 import { toSlot } from '../../../domain/ids';
 
@@ -89,7 +89,9 @@ export function FactHighlight({
   if (!mine.length) return null;
 
   // ЛОКАЛЬНІ повернуті координати — без зсуву розміщення.
-  const outline = rotatedLocalPoints(part.points, placement.rotation, part.width, part.height, part.points);
+  // Крок 3.4: дзеркалимо ДО повороту, як і решта геометрії розкрою.
+  const localPoints = placement.mirror ? mirroredLocalPoints(part.points, part.width) : part.points;
+  const outline = rotatedLocalPoints(localPoints, placement.rotation, part.width, part.height, localPoints);
   const toScreen = (points: Point[]) =>
     points.map((p) => `${(placement.x + p.x) * scale},${(placement.y + p.y) * scale}`).join(' ');
   const lineOf = (start: Point, end: Point, key: string) => (
@@ -117,14 +119,14 @@ export function FactHighlight({
     // ── стик: його ділянка на кожній із двох деталей ────────────────
     if (ref.factKind === 'joint_length' || ref.factKind === 'joint_count') {
       if (matchesA(ref) && ref.side) {
-        const segment = logicalSegmentForSide(part, ref.side, placement.rotation);
+        const segment = logicalSegmentForSide(part, ref.side, placement.rotation, Boolean(placement.mirror));
         if (segment) {
           const clipped = clipSegment(segment, ref.fromMm, ref.toMm);
           shapes.push(lineOf(clipped.start, clipped.end, `jointA_${index}`));
         }
       }
       if (matchesB(ref) && ref.sideB) {
-        const segment = logicalSegmentForSide(part, ref.sideB, placement.rotation);
+        const segment = logicalSegmentForSide(part, ref.sideB, placement.rotation, Boolean(placement.mirror));
         if (segment) {
           const clipped = clipSegment(segment, ref.fromMmB, ref.toMmB);
           shapes.push(lineOf(clipped.start, clipped.end, `jointB_${index}`));
@@ -137,7 +139,7 @@ export function FactHighlight({
     // Ламана, а не відрізок: кромка йде через кутові дуги (радіус, фаска),
     // і метри в кошторисі нараховано разом із половинами цих дуг.
     if (ref.side) {
-      const path = sideContourPolyline(part, ref.side, placement.rotation);
+      const path = sideContourPolyline(part, ref.side, placement.rotation, Boolean(placement.mirror));
       if (path && path.length >= 2) {
         shapes.push(
           <polyline
@@ -157,7 +159,7 @@ export function FactHighlight({
         shapes.push(
           <polygon
             key={`hole_${ref.cutoutIndex}_${index}`}
-            points={toScreen(rotatedLocalPoints(hole, placement.rotation, part.width, part.height, part.points))}
+            points={toScreen(rotatedLocalPoints(placement.mirror ? mirroredLocalPoints(hole, part.width) : hole, placement.rotation, part.width, part.height, localPoints))}
             fill="none"
           />,
         );

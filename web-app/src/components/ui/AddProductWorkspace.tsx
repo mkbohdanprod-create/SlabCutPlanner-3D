@@ -27,7 +27,7 @@ export const AddProductWorkspace: React.FC<AddProductWorkspaceProps> = ({ onClos
   const ui = (text: string) => translateStaticUiText(language, text);
 
   // Get dynamic shapes based on the selected type
-  const designs = designsForType(detail.type);
+  const designs = designsForType(detail.type, isAdminUnlocked, detail.kind);
   const sides = allSides;
 
   const updateDetail = (patch: Partial<DetailDraft>) => {
@@ -106,7 +106,7 @@ export const AddProductWorkspace: React.FC<AddProductWorkspaceProps> = ({ onClos
                     value={detail.type} 
                     onChange={(e) => {
                       const newType = e.target.value as any;
-                      const nextDesigns = designsForType(newType);
+                      const nextDesigns = designsForType(newType, isAdminUnlocked, detail.kind);
                       if (!nextDesigns.some(d => d.kind === detail.kind)) {
                         updateDetail({ type: newType, kind: nextDesigns[0].kind });
                       } else {
@@ -236,4 +236,4 @@ export const AddProductWorkspace: React.FC<AddProductWorkspaceProps> = ({ onClos
       </div>
     </div>
   );
-};
+};

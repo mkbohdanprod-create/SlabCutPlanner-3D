@@ -18,16 +18,21 @@ import {
 import { fabrication1cCode } from '../../domain/quote1cCatalog';
 
 /**
- * Налаштування прорахунку: прайс і коди номенклатур 1С.
+ * Налаштування прорахунку: коди номенклатур 1С і режим калібрування цін.
  *
  * Дзеркало «Прив'язок послуг» виробничої частини, але для клієнтського
- * калькулятора: старший менеджер виставляє ціни за одиницю і код 1С
- * кожній номенклатурі. Живе в useSettingsStore (localStorage) — їде
- * в експорт/імпорт налаштувань разом із виробничим каталогом.
+ * калькулятора. Живе в useSettingsStore (localStorage) — їде в
+ * експорт/імпорт налаштувань разом із виробничим каталогом.
  *
- * Виготовлення має два рівні: базова ціна типу виробу і уточнення по
- * виробнику («Виготовлення … Laminam» — окрема номенклатура, ТЗ §3).
- * Уточнення перемагає базу — і в ціні, і в коді.
+ * Ціна за умовчанням НЕ заводиться руками (рішення 25.08.2026): єдине
+ * джерело ціни — 1С за кодом номенклатури. Колонка ціни лишилась для режиму
+ * калібрування: керівник свідомо вмикає його, перекриває ціну там, де
+ * бачить розходження, проганяє 10–20 проектів і за статистикою
+ * виправляє прайс у 1С. Поки режим вимкнений, ці числа рушій не бачить
+ * узагалі — саме тому колонка сіра, а перемикач стоїть першим екраном.
+ *
+ * Виготовлення має два рівні: базова номенклатура типу виробу і
+ * уточнення по виробнику («Виготовлення … Laminam», ТЗ §3).
  */
 
 const inputCls = 'border border-slate-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-[#0084ff]';
@@ -37,10 +42,12 @@ const num = (value: string) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-function PriceCodeRow({ label, sublabel, price, code, codePlaceholder, onPrice, onCode }: {
+function PriceCodeRow({ label, sublabel, price, code, codePlaceholder, onPrice, onCode, priceActive }: {
   label: string;
   sublabel?: string;
   price: number;
+  /** Режим калібрування ввімкнений — ручна ціна реально впливає на КП */
+  priceActive: boolean;
   code: string;
   /** Вбудований код 1С — показується сірим, коли ручний не заданий */
   codePlaceholder?: string;
@@ -54,14 +61,16 @@ function PriceCodeRow({ label, sublabel, price, code, codePlaceholder, onPrice, 
         {sublabel && <div className="text-xs text-slate-400">{sublabel}</div>}
       </div>
       <input
-        className={`${inputCls} text-right`}
+        className={`${inputCls} text-right ${priceActive ? 'border-amber-400 bg-amber-50' : 'text-slate-400 bg-slate-50'}`}
         style={{ width: 110 }}
         type="number"
         min={0}
         value={price || ''}
         placeholder="0"
         onChange={(e) => onPrice(num(e.target.value))}
-        title="Ціна за одиницю, грн"
+        title={priceActive
+          ? 'Ручна ціна за одиницю, грн — перекриває ціну сервісу'
+          : 'Режим калібрування вимкнений: це значення на розрахунок не впливає'}
       />
       <input
         className={`${inputCls} font-mono`}
@@ -90,6 +99,8 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
   const updateBook = useSettingsStore((s) => s.updateQuotePriceBook);
   const setCode = useSettingsStore((s) => s.setQuoteCode1c);
   const resetBook = useSettingsStore((s) => s.resetQuotePriceBook);
+  const manualPricing = useSettingsStore((s) => s.quoteManualPricing);
+  const setManualPricing = useSettingsStore((s) => s.setQuoteManualPricing);
   const showConfirm = useUIStore((s) => s.showConfirm);
 
   const [fabMaterial, setFabMaterial] = useState<QuoteMaterialType>(QUOTE_MATERIAL_TYPES[0]);
@@ -101,7 +112,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
   const columnHead = (
     <div className="flex items-center gap-3 pb-1 border-b border-slate-200 text-xs font-bold text-slate-400 uppercase">
       <div className="flex-1">Номенклатура</div>
-      <div style={{ width: 110 }} className="text-right">Ціна, грн</div>
+      <div style={{ width: 110 }} className="text-right">{manualPricing ? 'Ручна ціна' : 'Ціна (вимк.)'}</div>
       <div style={{ width: 120 }}>Код 1С</div>
     </div>
   );
@@ -118,14 +129,14 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
             <Settings className="w-5 h-5 text-[#0084ff]" />
             <div>
               <h2 className="text-lg font-semibold text-gray-800">Налаштування прорахунку</h2>
-              <p className="text-xs text-slate-500">Прайс і коди номенклатур 1С · для старших менеджерів</p>
+              <p className="text-xs text-slate-500">Коди номенклатур 1С і калібрування · для старших менеджерів</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => showConfirm({
-                title: 'Скинути прайс прорахунку?',
-                message: 'Усі ціни й коди 1С прорахунку повернуться до порожніх. Виробничих прив\'язок це не зачіпає.',
+                title: 'Скинути налаштування прорахунку?',
+                message: 'Ручні ціни обнуляться, коди 1С повернуться до вбудованих. Виробничих прив\'язок це не зачіпає.',
                 confirmText: 'Скинути',
                 isDestructive: true,
                 onConfirm: resetBook,
@@ -142,10 +153,48 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
 
         <div className="flex-1 overflow-y-auto p-4 bg-slate-50 flex flex-col gap-4 custom-scrollbar">
 
+          {/* Режим калібрування. Стоїть першим і виглядає як попередження
+              навмисно: поки він вимкнений, уся колонка «Ціна, грн» нижче
+              на розрахунок не впливає — і менеджер має це бачити одразу,
+              а не гадати, чому вписана ціна «не спрацювала». */}
+          <div className={`rounded-lg border p-4 ${manualPricing ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
+            <label className="cursor-pointer" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <input
+                type="checkbox"
+                // Ширину задаємо інлайном: глобальний стиль форм тягне
+                // input на всю ширину, і чекбокс вилітав в окремий рядок.
+                className="accent-amber-600 shrink-0"
+                style={{ width: 16, height: 16, minWidth: 16, marginTop: 2 }}
+                checked={manualPricing}
+                onChange={(e) => setManualPricing(e.target.checked)}
+              />
+              <div className="flex-1">
+                <div className="text-sm font-bold text-slate-800">
+                  Режим калібрування цін
+                  <span className={`ml-2 text-[10px] font-bold px-1.5 py-px rounded border ${manualPricing
+                    ? 'text-amber-800 bg-amber-100 border-amber-300'
+                    : 'text-slate-500 bg-slate-100 border-slate-300'}`}>
+                    {manualPricing ? 'УВІМКНЕНО' : 'ВИМКНЕНО'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-1">
+                  {manualPricing
+                    ? <>Ціни з таблиці нижче <b>перекривають</b> ціну 1С. Кожен такий рядок
+                        у розрахунку помічений «РУЧНА», поряд зберігається ціна з 1С — щоб було
+                        з чим порівнювати. Для звичайної роботи режим треба вимкнути.</>
+                    : <>Ціни з таблиці нижче <b>не впливають</b> на розрахунок: ціна береться лише від
+                        1С за кодом номенклатури. Вмикайте, щоб зібрати статистику розходжень на
+                        10–20 проектах і потім виправити прайс у 1С.</>}
+                </p>
+              </div>
+            </label>
+          </div>
+
           <Section title="Виготовлення — базові ціни" hint="Застосовуються, коли для виробника не задано власної номенклатури">
             {columnHead}
             {QUOTE_PRODUCT_TYPES.filter((type) => !type.foldInto).map((type) => (
               <PriceCodeRow
+                priceActive={manualPricing}
                 key={type.id}
                 label={type.label}
                 sublabel={`за ${QUOTE_UNIT_LABELS[type.unit]}`}
@@ -184,6 +233,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
               const pairKey = `${fabMaterial}:${manufacturer}`;
               return (
                 <PriceCodeRow
+                priceActive={manualPricing}
                   key={type.id}
                   label={`${type.label} — ${manufacturer}`}
                   sublabel={`за ${QUOTE_UNIT_LABELS[type.unit]}`}
@@ -206,6 +256,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
             {columnHead}
             {QUOTE_MATERIAL_TYPES.map((material) => (
               <PriceCodeRow
+                priceActive={manualPricing}
                 key={material}
                 label={`Замір (${material})`}
                 price={book.measure[material] ?? 0}
@@ -220,6 +271,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
             {columnHead}
             {(Object.keys(QUOTE_MONTAGE_LABELS) as MontageCategory[]).map((category) => (
               <PriceCodeRow
+                priceActive={manualPricing}
                 key={category}
                 label={QUOTE_MONTAGE_LABELS[category]}
                 price={book.montage[category] ?? 0}
@@ -234,6 +286,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
             {columnHead}
             {DELIVERY_ZONES.filter((zone) => zone > 0).map((zone) => (
               <PriceCodeRow
+                priceActive={manualPricing}
                 key={zone}
                 label={`Виїзд — зона ${zone}`}
                 price={book.deliveryZones[zone] ?? 0}
@@ -250,6 +303,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
             {columnHead}
             {PYRAMID_LENGTHS.map((length) => (
               <PriceCodeRow
+                priceActive={manualPricing}
                 key={length}
                 label={`Дерев'яна піраміда ${length} мм`}
                 sublabel="за шт"
@@ -260,6 +314,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
               />
             ))}
             <PriceCodeRow
+                priceActive={manualPricing}
               label="Пакування в короб"
               sublabel="за м²"
               price={book.boxPerM2}
@@ -268,6 +323,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
               onCode={(value) => setCode('box', value)}
             />
             <PriceCodeRow
+                priceActive={manualPricing}
               label="Матеріал"
               sublabel="за лист"
               price={book.sheet}
@@ -281,6 +337,7 @@ export function QuoteSettingsModal({ open, onClose }: { open: boolean; onClose: 
             {columnHead}
             {QUOTE_SERVICES.map((service) => (
               <PriceCodeRow
+                priceActive={manualPricing}
                 key={service.id}
                 label={service.label}
                 sublabel={`за ${QUOTE_UNIT_LABELS[service.unit]}`}

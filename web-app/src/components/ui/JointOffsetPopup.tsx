@@ -1,7 +1,7 @@
 import React from 'react';
 import type { CornerProcessing, Point } from '../../domain/types';
 import { manualJointPosition, type JointSideSelection } from '../../domain/joints';
-import { useCloseOnOutsideClick } from './useCloseOnOutsideClick';
+import { DraggableDialog } from './DraggableDialog';
 
 interface JointOffsetPopupProps {
   x: number;
@@ -43,8 +43,6 @@ export function JointOffsetPopup({
     inputRef.current?.select();
   }, []);
 
-  useCloseOnOutsideClick(onCancel);
-
   const { requested, snapped } = manualJointPosition(anchors, corners, {
     axis: joint.axis,
     anchorCorner: joint.anchorCorner,
@@ -53,22 +51,16 @@ export function JointOffsetPopup({
   const willBeMoved = Math.abs(snapped - requested) > 0.01;
 
   return (
-    <div
-      className="fixed z-50 bg-white rounded-md shadow-lg border border-slate-200 p-3 w-64 text-sm"
-      style={{
-        left: Math.min(x, window.innerWidth - 280),
-        top: Math.min(y, window.innerHeight - 240),
-      }}
-      onClick={(e) => e.stopPropagation()}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }}
+    <DraggableDialog
+      title={joint.axis === 'vertical' ? 'Вертикальний стик' : 'Горизонтальний стик'}
+      onClose={onCancel}
+      width={264}
+      initialAt={{ x, y }}
+      headerClassName="bg-[#3b82f6] text-white"
+      className="bg-[#eaf4fc] border border-[#b8d4ee] overflow-hidden"
+      z={250}
     >
-      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-1.5 mb-2">
-        {joint.axis === 'vertical' ? 'Вертикальний стик' : 'Горизонтальний стик'}
-      </div>
-
+      <div className="p-3 text-sm">
       <div className="text-slate-700 mb-2">
         Між сторонами <b>{joint.sideId}</b> і <b>{joint.oppositeSideId}</b>
       </div>
@@ -119,6 +111,7 @@ export function JointOffsetPopup({
           Скасувати
         </button>
       </div>
-    </div>
+      </div>
+    </DraggableDialog>
   );
 }

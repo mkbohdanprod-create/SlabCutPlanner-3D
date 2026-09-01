@@ -1,5 +1,6 @@
 import React from 'react';
 import { Target, Move } from 'lucide-react';
+import { useCommittedNumber } from '../../ui/useCommittedNumber';
 
 export function CornerMarker({ x, y, id, onClick }: { x: number; y: number; id: string; onClick: (id: string, e: React.MouseEvent) => void }) {
   return (
@@ -17,10 +18,13 @@ export function SvgInput({ x, y, value, onChange, width = 68, height = 38, class
   const digits = String(Math.round(Math.abs(value))).length;
   const actualWidth = Math.max(width, Math.min(96, 42 + digits * 10));
   const actualX = x - (actualWidth - width) / 2;
+  // Розмір застосовується на Enter / втраті фокуса, а не на кожну цифру:
+  // інакше «600» не набрати — після першої «6» число вже пішло в модель.
+  const field = useCommittedNumber(value, onChange);
   return (
     <foreignObject x={actualX} y={y} width={actualWidth} height={height}>
       <div className={`scheme-input-wrap ${className}`}>
-        <input type="number" value={Math.round(value)} onChange={(event) => onChange(Number(event.target.value))} />
+        <input type="number" {...field} />
       </div>
     </foreignObject>
   );

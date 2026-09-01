@@ -1,4 +1,6 @@
 import type { CalculationStatus, PackingMode, UiLanguage } from './domain/types';
+import { staticUiText } from './i18nStatic';
+import { staticUiPatterns } from './i18nPatterns';
 
 export const languageOptions: Array<{ value: UiLanguage; label: string }> = [
   { value: 'uk', label: 'Українська' },
@@ -205,205 +207,6 @@ export function localeForLanguage(language: UiLanguage | undefined) {
   return 'uk-UA';
 }
 
-const staticUiText: Record<string, { en: string; pl: string }> = {
-  'Перемістити': { en: 'Move', pl: 'Przenieś' },
-  'Створити рамку': { en: 'Create frame', pl: 'Utwórz ramkę' },
-  'Кут': { en: 'Angle', pl: 'Kąt' },
-  'Повернути 90°': { en: 'Rotate 90°', pl: 'Obróć 90°' },
-  'Рамка': { en: 'Frame', pl: 'Ramka' },
-  'Швидкі дії': { en: 'Quick actions', pl: 'Szybkie akcje' },
-  'Зберегти проєкт': { en: 'Save project', pl: 'Zapisz projekt' },
-  'Завантажити проєкт': { en: 'Load project', pl: 'Wczytaj projekt' },
-  'Експортувати PNG': { en: 'Export PNG', pl: 'Eksportuj PNG' },
-  'Експортувати PDF': { en: 'Export PDF', pl: 'Eksportuj PDF' },
-  'Додати слеб': { en: 'Add slab', pl: 'Dodaj slab' },
-  'Серійний номер': { en: 'Serial number', pl: 'Numer seryjny' },
-  'Матеріал': { en: 'Material', pl: 'Materiał' },
-  'Ширина': { en: 'Width', pl: 'Szerokość' },
-  'Висота': { en: 'Height', pl: 'Wysokość' },
-  'Товщина': { en: 'Thickness', pl: 'Grubość' },
-  'Мін. відступ': { en: 'Min. margin', pl: 'Min. odstęp' },
-  'Декор': { en: 'Decor', pl: 'Dekor' },
-  'Коментар': { en: 'Comment', pl: 'Komentarz' },
-  'Деталі': { en: 'Details', pl: 'Detale' },
-  'Додати деталь': { en: 'Add detail', pl: 'Dodaj detal' },
-  'Редагувати деталь': { en: 'Edit detail', pl: 'Edytuj detal' },
-  'Імпортувати DXF': { en: 'Import DXF', pl: 'Importuj DXF' },
-  'Припуски': { en: 'Allowances', pl: 'Naddatki' },
-  'Деталь': { en: 'Detail', pl: 'Detal' },
-  'Елементи': { en: 'Elements', pl: 'Elementy' },
-  'Потовщення': { en: 'Thickening', pl: 'Pogrubienie' },
-  'Підворот': { en: 'Fold', pl: 'Podwinięcie' },
-  'стільниці': { en: 'countertop', pl: 'blatu' },
-  'сторона': { en: 'side', pl: 'strona' },
-  'сторони': { en: 'side', pl: 'strony' },
-  'DXF контур': { en: 'DXF contour', pl: 'Kontur DXF' },
-  'Усі сторони': { en: 'All sides', pl: 'Wszystkie strony' },
-  'Тип': { en: 'Type', pl: 'Typ' },
-  'Форма': { en: 'Shape', pl: 'Kształt' },
-  'Розмір': { en: 'Size', pl: 'Rozmiar' },
-  'Кількість': { en: 'Quantity', pl: 'Ilość' },
-  'Кількість деталей': { en: 'Detail quantity', pl: 'Liczba detali' },
-  'Технічні параметри припусків для нових розрахунків': { en: 'Technical allowance settings for new calculations', pl: 'Techniczne parametry naddatków dla nowych obliczeń' },
-  'Припуск по довжині на сторону, мм': { en: 'Length allowance per side, mm', pl: 'Naddatek długości na stronę, mm' },
-  'Припуск по ширині на сторону, мм': { en: 'Width allowance per side, mm', pl: 'Naddatek szerokości na stronę, mm' },
-  'Малі внутрішні вирізи до 100 мм': { en: 'Small inner cutouts up to 100 mm', pl: 'Małe wycięcia wewnętrzne do 100 mm' },
-  'Великі внутрішні вирізи понад 100 мм': { en: 'Large inner cutouts over 100 mm', pl: 'Duże wycięcia wewnętrzne ponad 100 mm' },
-  'Показувати припуски пунктиром': { en: 'Show allowances as dashed outlines', pl: 'Pokaż naddatki linią przerywaną' },
-  'Використовувати припуски для імпортованих векторів': { en: 'Use allowances for imported vectors', pl: 'Używaj naddatków dla importowanych wektorów' },
-  'Пропил між деталями': { en: 'Saw cut between details', pl: 'Cięcie piłą między detalami' },
-  'Відстань між деталями та елементами, мм': { en: 'Distance between details and elements, mm', pl: 'Odległość między detalami i elementami, mm' },
-  'Швидкий вибір форми через мініатюри': { en: 'Quick shape selection with thumbnails', pl: 'Szybki wybór kształtu przez miniatury' },
-  'Товщина, мм:': { en: 'Thickness, mm:', pl: 'Grubość, mm:' },
-  'Матеріал:': { en: 'Material:', pl: 'Materiał:' },
-  'Закрити': { en: 'Close', pl: 'Zamknij' },
-  'Зберегти': { en: 'Save', pl: 'Zapisz' },
-  'Готово': { en: 'Done', pl: 'Gotowe' },
-  'Скасувати': { en: 'Cancel', pl: 'Anuluj' },
-  'Імпортувати': { en: 'Import', pl: 'Importuj' },
-  'Видалити': { en: 'Delete', pl: 'Usuń' },
-  'Редагувати': { en: 'Edit', pl: 'Edytuj' },
-  'Відкрити': { en: 'Open', pl: 'Otwórz' },
-  'слібів у проєкті': { en: 'slabs in the project', pl: 'slabów w projekcie' },
-  'деталей у проєкті': { en: 'details in the project', pl: 'detali w projekcie' },
-  'Вибрати': { en: 'Select', pl: 'Wybierz' },
-  'Назва': { en: 'Name', pl: 'Nazwa' },
-  'Роль': { en: 'Role', pl: 'Rola' },
-  'Прив’язка': { en: 'Binding', pl: 'Powiązanie' },
-  'Без прив’язки': { en: 'No binding', pl: 'Bez powiązania' },
-  'Список слебів': { en: 'Slab list', pl: 'Lista slabów' },
-  'Список усіх деталей': { en: 'All details list', pl: 'Lista wszystkich detali' },
-  'Слебів ще немає': { en: 'No slabs yet', pl: 'Brak slabów' },
-  'Деталей ще немає': { en: 'No details yet', pl: 'Brak detali' },
-  'Попередній перегляд DXF': { en: 'DXF preview', pl: 'Podgląd DXF' },
-  'Перевірте контури, призначте роль і тип перед імпортом.': { en: 'Check contours and assign role and type before import.', pl: 'Sprawdź kontury oraz przypisz rolę i typ przed importem.' },
-  'Налаштування PDF': { en: 'PDF settings', pl: 'Ustawienia PDF' },
-  'Сторінка': { en: 'Page', pl: 'Strona' },
-  'Формат': { en: 'Format', pl: 'Format' },
-  'Масштаб': { en: 'Scale', pl: 'Skala' },
-  'мм': { en: 'mm', pl: 'mm' },
-  'м²': { en: 'm²', pl: 'm²' },
-  'Керамограніт': { en: 'Porcelain stoneware', pl: 'Gres porcelanowy' },
-  'Кварцит': { en: 'Quartzite', pl: 'Kwarcyt' },
-  'Натуральний камінь': { en: 'Natural stone', pl: 'Kamień naturalny' },
-  'Акрил': { en: 'Acrylic', pl: 'Akryl' },
-  'Компакт-плита': { en: 'Compact board', pl: 'Płyta kompaktowa' },
-  'Розміщення слебів': { en: 'Slab placement', pl: 'Rozmieszczenie slabów' },
-  'Автор розкрою': { en: 'Cutting author', pl: 'Autor rozkroju' },
-  'Склад PDF': { en: 'PDF contents', pl: 'Zawartość PDF' },
-  'Відображення': { en: 'Display', pl: 'Wyświetlanie' },
-  'Технічний': { en: 'Technical', pl: 'Techniczny' },
-  'Поверх фото': { en: 'Photo surface', pl: 'Na zdjęciu' },
-  'Текстурний режим': { en: 'Texture mode', pl: 'Tryb tekstury' },
-  'Розміри': { en: 'Dimensions', pl: 'Wymiary' },
-  'Прямокутна': { en: 'Rectangular', pl: 'Prostokątna' },
-  'Коло': { en: 'Circle', pl: 'Koło' },
-  'Еліпс': { en: 'Ellipse', pl: 'Elipsa' },
-  'Г-подібна': { en: 'L-shaped', pl: 'L-kształtna' },
-  'П-подібна': { en: 'U-shaped', pl: 'U-kształtna' },
-  'Мийка прямокутна': { en: 'Rectangular sink', pl: 'Zlew prostokątny' },
-  'Мийка щілинна': { en: 'Slot sink', pl: 'Zlew szczelinowy' },
-  'Стільниця': { en: 'Countertop', pl: 'Blat' },
-  'Стінова панель': { en: 'Wall panel', pl: 'Panel ścienny' },
-  'Мийка': { en: 'Sink', pl: 'Zlew' },
-  'Фасад': { en: 'Facade', pl: 'Front' },
-  'Опора': { en: 'Support', pl: 'Podpora' },
-  'Кругла': { en: 'Round', pl: 'Okrągła' },
-  'Овальна': { en: 'Oval', pl: 'Owalna' },
-  'A4 книжний': { en: 'A4 portrait', pl: 'A4 pionowo' },
-  'A4 альбомний': { en: 'A4 landscape', pl: 'A4 poziomo' },
-  'A3 книжний': { en: 'A3 portrait', pl: 'A3 pionowo' },
-  'A3 альбомний': { en: 'A3 landscape', pl: 'A3 poziomo' },
-  'Оберіть формат, режим сторінок і блоки, які потрібно включити у документ.': { en: 'Choose the page format, layout mode, and blocks to include in the document.', pl: 'Wybierz format strony, tryb układu i bloki do umieszczenia w dokumencie.' },
-  'Автоматично під сторінку': { en: 'Auto fit to page', pl: 'Automatycznie do strony' },
-  '100% від доступного масштабу': { en: '100% of available scale', pl: '100% dostępnej skali' },
-  '75% від доступного масштабу': { en: '75% of available scale', pl: '75% dostępnej skali' },
-  '50% від доступного масштабу': { en: '50% of available scale', pl: '50% dostępnej skali' },
-  'Один слеб на сторінку': { en: 'One slab per page', pl: 'Jeden slab na stronę' },
-  'Два слеби на сторінку': { en: 'Two slabs per page', pl: 'Dwa slaby na stronę' },
-  'Кілька слебів на сторінку': { en: 'Several slabs per page', pl: 'Kilka slabów na stronę' },
-  'Автоматично': { en: 'Automatic', pl: 'Automatycznie' },
-  "Ім'я автора": { en: 'Author name', pl: 'Imię autora' },
-  'Титульна сторінка': { en: 'Title page', pl: 'Strona tytułowa' },
-  'Загальний список деталей': { en: 'General detail list', pl: 'Ogólna lista detali' },
-  'Список нерозміщених деталей': { en: 'Unplaced detail list', pl: 'Lista nierozmieszczonych detali' },
-  'Технічний режим': { en: 'Technical mode', pl: 'Tryb techniczny' },
-  'Фото-режим': { en: 'Photo mode', pl: 'Tryb zdjęcia' },
-  '2D-зона підбору текстури': { en: '2D texture matching zone', pl: 'Strefa doboru tekstury 2D' },
-  '3D-збірка': { en: '3D assembly', pl: 'Montaż 3D' },
-  'Показувати розміри': { en: 'Show dimensions', pl: 'Pokaż wymiary' },
-  'Включати дефекти': { en: 'Include defects', pl: 'Uwzględnij defekty' },
-  'Включати коментарі': { en: 'Include comments', pl: 'Uwzględnij komentarze' },
-  'Пропорції реальних розмірів слебів зберігаються на сторінці автоматично.': { en: 'Real slab proportions are preserved on the page automatically.', pl: 'Rzeczywiste proporcje slabów są automatycznie zachowywane na stronie.' },
-  'Формується PDF…': { en: 'Creating PDF…', pl: 'Tworzenie PDF…' },
-  'Сформувати PDF': { en: 'Create PDF', pl: 'Utwórz PDF' },
-  'Інспектор слеба': { en: 'Slab inspector', pl: 'Inspektor slabu' },
-  'Масштаб фото': { en: 'Photo scale', pl: 'Skala zdjęcia' },
-  'Прозорість': { en: 'Opacity', pl: 'Przezroczystość' },
-  'Фото': { en: 'Photo', pl: 'Zdjęcie' },
-  'Поворот фото 90°': { en: 'Rotate photo 90°', pl: 'Obróć zdjęcie 90°' },
-  'Дефекти:': { en: 'Defects:', pl: 'Defekty:' },
-  'Прямокутник': { en: 'Rectangle', pl: 'Prostokąt' },
-  'Трикутник': { en: 'Triangle', pl: 'Trójkąt' },
-  'Полігон': { en: 'Polygon', pl: 'Poligon' },
-  'Дефект': { en: 'Defect', pl: 'Defekt' },
-  'без декору': { en: 'no decor', pl: 'bez dekoru' },
-  'без номера': { en: 'no number', pl: 'bez numeru' },
-  'без контрагента': { en: 'no customer', pl: 'bez kontrahenta' },
-  'конфлікт': { en: 'conflict', pl: 'konflikt' },
-  'поза слебом': { en: 'outside slab', pl: 'poza slabem' },
-  'розміщено': { en: 'placed', pl: 'rozmieszczono' },
-  'частково': { en: 'partial', pl: 'częściowo' },
-  'нерозміщено': { en: 'unplaced', pl: 'nierozmieszczono' },
-  'виріз': { en: 'cutout', pl: 'wycięcie' },
-  'Звіт попереднього розкрою': { en: 'Preliminary cutting report', pl: 'Raport wstępnego rozkroju' },
-  'Зведення розкрою': { en: 'Cutting summary', pl: 'Podsumowanie rozkroju' },
-  'Нерозміщених деталей немає': { en: 'No unplaced details', pl: 'Brak nierozmieszczonych detali' },
-  'Нерозміщених деталей немає.': { en: 'No unplaced details.', pl: 'Brak nierozmieszczonych detali.' },
-  'Замовлення': { en: 'Order', pl: 'Zamówienie' },
-  'Автор': { en: 'Author', pl: 'Autor' },
-  'Експорт': { en: 'Export', pl: 'Eksport' },
-  'Площа': { en: 'Area', pl: 'Powierzchnia' },
-  'Площа заготовок': { en: 'Blank area', pl: 'Powierzchnia formatek' },
-  'Слебів': { en: 'Slabs', pl: 'Slaby' },
-  'Деталей': { en: 'Details', pl: 'Detali' },
-  'Матеріали': { en: 'Materials', pl: 'Materiały' },
-  'Декори': { en: 'Decors', pl: 'Dekory' },
-  'Дата створення': { en: 'Created at', pl: 'Data utworzenia' },
-  'Дата експорту': { en: 'Export date', pl: 'Data eksportu' },
-  'Загальний статус': { en: 'Overall status', pl: 'Status ogólny' },
-  'Деталі не додані': { en: 'No details added', pl: 'Nie dodano detali' },
-  'Ще': { en: 'Another', pl: 'Jeszcze' },
-  'рядків у повному списку': { en: 'rows in the full list', pl: 'wierszy na pełnej liście' },
-  'сліби': { en: 'slabs', pl: 'slaby' },
-  'Зона підбору текстури': { en: 'Texture matching zone', pl: 'Strefa doboru tekstury' },
-  'Зона підбору текстури не містить деталей.': { en: 'The texture matching zone has no details.', pl: 'Strefa doboru tekstury nie zawiera detali.' },
-  'Фрагменти текстури з розміщених деталей': { en: 'Texture fragments from placed details', pl: 'Fragmenty tekstury z rozmieszczonych detali' },
-  'Показати елементи': { en: 'Show elements', pl: 'Pokaż elementy' },
-  'Відкрити прев’ю': { en: 'Open preview', pl: 'Otwórz podgląd' },
-  "Відкрити прев'ю": { en: 'Open preview', pl: 'Otwórz podgląd' },
-  'Прев’ю підбору текстури': { en: 'Texture matching preview', pl: 'Podgląd doboru tekstury' },
-  'Прев’ю зони підбору текстури': { en: 'Texture matching zone preview', pl: 'Podgląd strefy doboru tekstury' },
-  'Колесо миші прокручує, Shift + колесо масштабує цю зону': { en: 'Mouse wheel scrolls, Shift + wheel zooms this zone', pl: 'Kółko myszy przewija, Shift + kółko skaluje tę strefę' },
-  'Потягніть, щоб змінити висоту зони': { en: 'Drag to change the zone height', pl: 'Przeciągnij, aby zmienić wysokość strefy' },
-  'Вид спереду (розріз)': { en: 'Front view (section)', pl: 'Widok z przodu (przekrój)' },
-  'Вид збоку (розріз)': { en: 'Side view (section)', pl: 'Widok z boku (przekrój)' },
-  'Вид зверху': { en: 'Top view', pl: 'Widok z góry' },
-  '3D-збірку не налаштовано для цього проєкту.': { en: '3D assembly is not configured for this project.', pl: 'Montaż 3D nie jest skonfigurowany dla tego projektu.' },
-  'К-сть': { en: 'Qty', pl: 'Ilość' },
-  'Габарити': { en: 'Dimensions', pl: 'Gabaryty' },
-  'Статус': { en: 'Status', pl: 'Status' },
-  'Товщ.': { en: 'Thick.', pl: 'Grub.' },
-  'Діаметр': { en: 'Diameter', pl: 'Średnica' },
-  'Радіус': { en: 'Radius', pl: 'Promień' },
-  'Стик вертикальний': { en: 'Vertical joint', pl: 'Styk pionowy' },
-  'Стик горизонтальний': { en: 'Horizontal joint', pl: 'Styk poziomy' },
-  'Стик вертикальний Ω': { en: 'Vertical joint Ω', pl: 'Styk pionowy Ω' },
-  'Стик горизонтальний Ω': { en: 'Horizontal joint Ω', pl: 'Styk poziomy Ω' },
-  'Стик вертикальний λ': { en: 'Vertical joint λ', pl: 'Styk pionowy λ' },
-  'Стик горизонтальний λ': { en: 'Horizontal joint λ', pl: 'Styk poziomy λ' },
-};
-
 const reverseStaticUiText = new Map<string, string>();
 Object.entries(staticUiText).forEach(([source, translations]) => {
   reverseStaticUiText.set(source, source);
@@ -415,11 +218,109 @@ function sourceUiText(text: string) {
   return reverseStaticUiText.get(text.trim());
 }
 
+/**
+ * ШАБЛОНИ З ПІДСТАНОВКОЮ — другий ешелон після точного словника.
+ *
+ * Зразок «Радіус: {0} мм» перетворюється на регулярку з групою на кожне
+ * місце підстановки. Ліниво: регулярки збираються при першому зверненні,
+ * бо на українській мові вони взагалі не потрібні.
+ */
+const CYRILLIC_RE = /[А-Яа-яІіЇїЄєҐґ]/;
+const NUMBER_SLOT = '([-+\\d][\\d\\s.,×xX*/+-]*)';
+// Латиниця і цифри: літера сторони (A…F), артикул, код профілю. Кирилиці тут
+// свідомо немає — інакше «Кут {0}» з'їв би «Кут нахилу».
+const CODE_SLOT = '([A-Za-z0-9Ø][A-Za-z0-9.,°×+/Ø-]{0,11})';
+const FREE_SLOT = '([\\s\\S]+?)';
+
+let compiledPatterns: RegExp[] | null = null;
+/**
+ * Порядок перебору: спершу найдовший сталий текст. Інакше «Виріз {0} мм»
+ * забрав би собі «Виріз під розетку 410×12 мм», і уточнення загубилось би.
+ * У самому файлі шаблони згруповані по джерелах — так їх зручніше читати,
+ * тому черговість задаємо тут, а не порядком рядків.
+ */
+let patternOrder: number[] | null = null;
+
+function splitOnSlots(text: string) {
+  return text.split(/\{\d+\}/);
+}
+
+function slotOrder(text: string) {
+  return Array.from(text.matchAll(/\{(\d+)\}/g)).map((m) => Number(m[1]));
+}
+
+function compilePatterns(): RegExp[] {
+  return staticUiPatterns.map((entry) => {
+    const slot = entry.guard === 'number' ? NUMBER_SLOT
+      : entry.guard === 'code' ? CODE_SLOT
+        : FREE_SLOT;
+    const body = splitOnSlots(entry.pattern)
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join(slot);
+    return new RegExp(`^${body}$`);
+  });
+}
+
+function fillTemplate(template: string, groups: string[]) {
+  return splitOnSlots(template).reduce((acc, part, index) => {
+    if (index === 0) return part;
+    const slot = slotOrder(template)[index - 1] ?? index - 1;
+    return `${acc}${groups[slot] ?? ''}${part}`;
+  }, '');
+}
+
+/**
+ * Підставлене значення теж буває словниковим: «Виготовлення: Стільниця без
+ * потовщень — Laminam». Значення пробуємо ТІЛЬКИ точним словником (пускати
+ * сюди шаблони означало б рекурсію), спершу цілком, а потім по сегментах —
+ * назви в прорахунку склеюються з частин через « — », « · » і кому, і
+ * перекладна там зазвичай лише перша.
+ */
+const VALUE_SEPARATORS = /( — | · |, )/;
+
+function translateValue(language: 'en' | 'pl', value: string | undefined): string {
+  if (!value) return value ?? '';
+  const whole = sourceUiText(value);
+  if (whole) return staticUiText[whole][language];
+  if (!VALUE_SEPARATORS.test(value)) return value;
+  return value
+    .split(VALUE_SEPARATORS)
+    .map((part) => {
+      const source = sourceUiText(part);
+      return source ? staticUiText[source][language] : part;
+    })
+    .join('');
+}
+
+function translateByPattern(language: 'en' | 'pl', trimmed: string) {
+  if (!CYRILLIC_RE.test(trimmed)) return null;
+  if (!compiledPatterns) compiledPatterns = compilePatterns();
+  if (!patternOrder) {
+    const literalLength = (index: number) =>
+      staticUiPatterns[index].pattern.replace(/\{\d+\}/g, '').length;
+    patternOrder = staticUiPatterns
+      .map((_, index) => index)
+      .sort((a, b) => literalLength(b) - literalLength(a));
+  }
+  for (let i = 0; i < patternOrder.length; i += 1) {
+    const index = patternOrder[i];
+    const match = compiledPatterns[index].exec(trimmed);
+    if (!match) continue;
+    return fillTemplate(staticUiPatterns[index][language], match.slice(1).map((group) => translateValue(language, group)));
+  }
+  return null;
+}
+
 export function translateStaticUiText(language: UiLanguage | undefined, text: string) {
   const leading = text.match(/^\s*/)?.[0] ?? '';
   const trailing = text.match(/\s*$/)?.[0] ?? '';
   const trimmed = text.trim();
   const source = sourceUiText(trimmed);
-  if (!source || language === 'uk' || !language) return source ? `${leading}${source}${trailing}` : text;
-  return `${leading}${staticUiText[source][language]}${trailing}`;
+  if (source) {
+    if (language === 'uk' || !language) return `${leading}${source}${trailing}`;
+    return `${leading}${staticUiText[source][language]}${trailing}`;
+  }
+  if (language === 'uk' || !language) return text;
+  const patterned = translateByPattern(language, trimmed);
+  return patterned === null ? text : `${leading}${patterned}${trailing}`;
 }

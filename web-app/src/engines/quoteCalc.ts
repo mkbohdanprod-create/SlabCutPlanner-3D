@@ -3,6 +3,7 @@ import {
   PYRAMID_LENGTHS,
   QUOTE_MONTAGE_LABELS,
   QUOTE_SERVICES,
+  RADIUS_QUOTE_SERVICE_ID,
   QUOTE_UNIT_LABELS,
   quoteProductType,
   type MontageCategory,
@@ -11,10 +12,19 @@ import {
   type QuotePriceBook,
   type QuoteShape,
   type QuoteUnit,
+  ACRYLIC_BASE_SURFACE,
 } from '../domain/quoteCalc';
 import type { Detail, DetailPart, Project } from '../domain/types';
 import { fabrication1cCode } from '../domain/quote1cCatalog';
 import { jointLengthMm } from './productionFacts';
+import { parseAdditionSlot } from '../domain/ids';
+import {
+  classifyRadiusService,
+  radiusMatrixKey,
+  radiusMethodFor,
+  radiusRoleForType,
+} from '../domain/radiusElement';
+import { edgeKindByLabel } from '../domain/ids';
 
 /**
  * Движок прорахунку для клієнта.
@@ -33,9 +43,31 @@ import { jointLengthMm } from './productionFacts';
  *     — лише для способу «за кресленням»; на монтаж везуть без піраміди
  *   · модель обробки торця на вартість НЕ впливає (§11)
  *
- * Кожен рядок має стабільний id — на нього чіпляється ручна ціна
- * (priceOverrides) і по ньому бланк погодження знайде свої дані.
+ * Кожен рядок має стабільний id — по ньому бланк погодження знайде свої
+ * дані.
+ *
+ * Ціни рахує 1С (метод getDiscountPrice) за кодом номенклатури 1С —
+ * саме він знає прайс-категорію контрагента, знижки й акції. Локальний
+ * прайс лишається фолбеком: для рядків без коду (власні послуги філії) і
+ * на випадок, коли сервіс недоступний. Руками ціну не вписують: сума в
+ * рядку рахується сама.
  */
+
+/**
+ * Звідки взялась ціна рядка:
+ *   cost   — порахував 1С за кодом номенклатури;
+ *   manual — керівник перекрив ціну руками в режимі калібрування;
+ *   none   — ціни немає: або в номенклатури не заданий код 1С, або
+ *            сервіс за цим кодом нічого не повернув.
+ *
+ * Тихого фолбеку на локальний прайс більше немає (рішення 25.08.2026).
+ * Раніше було 'book': коли сервіс мовчав, у КП мовчки підставлялась
+ * ручна ціна з налаштувань — і рядок виглядав порахованим, хоча сервіс
+ * не відповів. Саме на цьому ми один раз помилково вирішили, що інтеграція
+ * працює. Тепер ручна ціна застосовується тільки при свідомо
+ * ввімкненому режимі калібрування і завжди позначена як ручна.
+ */
+export type QuotePriceSource = 'erp' | 'manual' | 'none';
 
 export interface QuoteCalcLine {
   id: string;
@@ -44,8 +76,14 @@ export interface QuoteCalcLine {
   qty: number;
   unit: QuoteUnit;
   unitPrice: number;
-  /** Ціна взята з ручного поля, а не з прайсу */
-  overridden: boolean;
+  /** Джерело ціни — показується в інтерфейсі й пояснює, чому ціна така */
+  source: QuotePriceSource;
+  /**
+   * Ціна, яку дав 1С, коли рядок перекритий руками.
+   * Без неї калібрування безглузде: щоб звести аналітику по 10–20
+   * проектах, треба бачити обидва числа, а не тільки виправлене.
+   */
+  erpUnitPrice?: number;
   sum: number;
   /** Код номенклатури 1С з налаштувань прорахунку (codes1c) */
   code?: string;
@@ -119,6 +157,18 @@ function fabricationPrice(book: QuotePriceBook, productTypeId: string, material:
 export function computeQuoteCalc(
   doc: QuoteCalcDoc,
   book: QuotePriceBook = DEFAULT_QUOTE_PRICE_BOOK,
+  /**
+   * Ціни від 1С: код номенклатури 1С → грн за одиницю.
+   * Порожньо — рахуємо за локальним прайсом, як і до підключення API.
+   */
+  erpPrices: Record<string, number> = {},
+  /**
+   * Режим калібрування цін. Вимкнено — ручні ціни з прайсу рушій НЕ
+   * бачить узагалі: ціна або від сервісу, або її немає. Це навмисно:
+   * стара ціна, що лежить у localStorage конкретного браузера, не
+   * повинна мати жодного шансу підмінити ціну інтеграції.
+   */
+  manualPricing = false,
 ): QuoteCalcResult {
   const lines: QuoteCalcLine[] = [];
   const warnings: string[] = [];
@@ -133,13 +183,22 @@ export function computeQuoteCalc(
     code?: string,
   ) => {
     if (qty <= 0) return;
-    const override = doc.priceOverrides[id];
-    const unitPrice = override !== undefined ? override : bookPrice;
+    const erpPrice = code ? erpPrices[code] : undefined;
+    // Ручна ціна перемагає — але тільки при ввімкненому калібруванні і
+    // тільки якщо її справді ввели. Нуль означає «не задано», а не
+    // «безкоштовно»: інакше порожній прайс обнуляв би ціни сервісу.
+    const manualPrice = manualPricing && bookPrice > 0 ? bookPrice : undefined;
+    const unitPrice = manualPrice ?? erpPrice ?? 0;
+    const source: QuotePriceSource = manualPrice !== undefined ? 'manual'
+      : erpPrice !== undefined ? 'erp' : 'none';
     lines.push({
       id, group, label,
       qty: round3(qty), unit,
       unitPrice: round2(unitPrice),
-      overridden: override !== undefined,
+      source,
+      // Ціну сервісу тягнемо поряд саме тоді, коли її перекрили —
+      // це і є матеріал для аналітики розходжень.
+      ...(source === 'manual' && erpPrice !== undefined ? { erpUnitPrice: round2(erpPrice) } : {}),
       sum: round2(qty * unitPrice),
       ...(code ? { code } : {}),
     });
@@ -217,8 +276,29 @@ export function computeQuoteCalc(
     warnings.push('У замовленні є нога — додайте послугу «Стикування “Ноги” з виробом» (м.п. з\'єднання) в додаткових послугах');
   }
 
-  // ── 2. Матеріал: лист/півлиста ─────────────────────────────────────
-  if (doc.materialSheets > 0) {
+  // ── 2. Матеріал ────────────────────────────────────────────────────
+  //  Джерело — слеби проєкту: по рядку на артикул, кількість = скільки
+  //  листів цього артикулу додано. Ціну за артикулом дає 1С,
+  //  точно як за послуги. Немає слебів (старий проєкт, або рахують без
+  //  розкрою) — лишається ручне поле «Листів на замовлення», як було.
+  if (doc.materials?.length) {
+    doc.materials.forEach((line) => {
+      if (line.qty <= 0) return;
+      const decor = line.decor ? `, декор ${line.decor}` : '';
+      const thickness = line.thickness ? `, ${line.thickness} мм` : '';
+      push(
+        `material:${line.key}`,
+        'material',
+        `Матеріал: ${line.material}${decor}${thickness}`,
+        line.qty,
+        'sheet',
+        0,
+        // Артикул слебу і є код номенклатури, за яким питається ціна.
+        // Немає — рядок лишається без ціни, і це видно в попередженнях.
+        line.article || undefined,
+      );
+    });
+  } else if (doc.materialSheets > 0) {
     const decor = doc.decorCode ? `, декор ${doc.decorCode}` : '';
     push('material:sheets', 'material', `Матеріал: ${doc.materialType}${decor}`, doc.materialSheets, 'sheet', book.sheet, code1c('sheet'));
   }
@@ -253,6 +333,29 @@ export function computeQuoteCalc(
     if (qty > 0) push(`svc:${service.id}`, 'services', service.label, qty, service.unit, book.services[service.id] ?? 0, code1c(`svc:${service.id}`));
   });
 
+  // ── 4b. Обробка поверхні — лише акриловий камінь (FG-33) ───────────
+  //  Акрил приходить у напівглянці; мат або глянець — реальна робота цеху,
+  //  яка досі йшла коментарем і в рахунок не потрапляла ніколи. Площа —
+  //  сума площ виробів з розкрою: вона вже містить підвороти, ноги і
+  //  панелі, тобто всі зовнішні поверхні (рішення Богдана, 19.08).
+  if (
+    doc.materialType === 'Акриловий камінь'
+    && doc.method !== 'sink_only'
+    && doc.surfaceType
+    && doc.surfaceType !== ACRYLIC_BASE_SURFACE
+  ) {
+    const surfaceAreaM2 = doc.items.reduce((sum, item) => sum + itemAreaM2(item), 0);
+    push(
+      'surface:processing',
+      'fabrication',
+      `Обробка поверхні: ${doc.surfaceType.toLowerCase()}`,
+      round3(surfaceAreaM2),
+      'm2',
+      book.services['surface_processing'] ?? 0,
+      code1c('svc:surface_processing'),
+    );
+  }
+
   // ── 5. Пакування — лише «за кресленням» (Логіка §1) ───────────────
   if (doc.method === 'drawing') {
     if (doc.packaging.pyramidQty > 0) {
@@ -276,9 +379,20 @@ export function computeQuoteCalc(
     if (stray) warnings.push('У способі «Окрема мийка» доступні лише мийка та раковина');
   }
 
-  const zeroPriced = lines.filter((line) => line.unitPrice === 0);
+  const noCode = lines.filter((line) => !line.code);
+  if (lines.length && noCode.length) {
+    warnings.push(`Без коду 1С: ${noCode.length} з ${lines.length} рядків — ціну за ними спитати нема за чим`);
+  }
+  const zeroPriced = lines.filter((line) => line.unitPrice === 0 && line.code);
   if (lines.length && zeroPriced.length) {
-    warnings.push(`Без ціни: ${zeroPriced.length} з ${lines.length} рядків — впишіть ціни в рядках або наповніть прайс`);
+    warnings.push(`Без ціни: ${zeroPriced.length} з ${lines.length} рядків — код є, але 1С ціну не повернула`);
+  }
+  // Ручні ціни мають бути видимі в кожному місці, де їх видно: у списку
+  // попереджень теж. «Тихого» калібрування не буває — саме тиша й була
+  // проблемою старого фолбеку.
+  const manualLines = lines.filter((line) => line.source === 'manual');
+  if (manualLines.length) {
+    warnings.push(`Режим калібрування: ${manualLines.length} ${manualLines.length === 1 ? 'рядок іде' : 'рядків ідуть'} за ручною ціною, а не за ціною компанії`);
   }
 
   return {
@@ -324,15 +438,74 @@ export function mergeQuoteServices(
   return merged;
 }
 
-export function autoQuoteServices(project: Project, details: Detail[]): Record<string, number> {
+export function autoQuoteServices(
+  project: Project,
+  details: Detail[],
+  /**
+   * Деталі розкрою. Позначки радіусних елементів живуть на партах —
+   * це єдине джерело, спільне для виробів і легасі-галочок. Без партів
+   * радіусні послуги в авто-кількості не потраплять.
+   */
+  parts?: DetailPart[],
+): Record<string, number> {
   const auto: Record<string, number> = {};
+
+  /*
+   * Радіусні (гнуті) елементи — ТЗ 19.08. Послуга за ШТУКУ на кожен
+   * елемент; для акрилу додатково матриця — за кількістю УНІКАЛЬНИХ
+   * геометрій (радіус × виліт × кут дуги), а не за кількістю радіусів:
+   * чотири однакові R500 гнуть на одній матриці.
+   */
+  const matrixKeys = new Set<string>();
+  (parts ?? []).forEach((part) => {
+    const mark = part.radiusElement;
+    if (!mark) return;
+    const method = mark.method ?? radiusMethodFor(project.projectMaterial);
+    const kind = classifyRadiusService({
+      method,
+      role: mark.role ?? radiusRoleForType(part.type),
+      bandSizeMm: mark.bandSizeMm ?? Math.min(part.width, part.height),
+      radiusMm: mark.radiusMm,
+      complex: mark.complex,
+    });
+    const serviceId = RADIUS_QUOTE_SERVICE_ID[kind];
+    if (serviceId) auto[serviceId] = (auto[serviceId] ?? 0) + 1;
+
+    if (method === 'bending') {
+      matrixKeys.add(radiusMatrixKey({
+        radiusMm: mark.radiusMm,
+        bandSizeMm: mark.bandSizeMm ?? Math.min(part.width, part.height),
+        arcAngleDeg: mark.arcAngleDeg ?? 90,
+        complex: mark.complex,
+      }));
+    }
+  });
+  if (matrixKeys.size > 0) auto.radius_matrix = matrixKeys.size;
 
   let legMm = 0;
   const walkElements = (elements: Array<{ joints?: unknown[]; additions?: unknown[] }> | undefined) => {
     (elements ?? []).forEach((element) => {
       (element.joints ?? []).forEach((joint) => {
         const j = joint as { id?: string };
-        if (String(j.id ?? '').startsWith('joint_leg_')) {
+        /*
+         * Стик ноги впізнається РОЗБОРОМ слота, а не префіксом (виправлено
+         * 26.08 за зауваженням продажів: кількість завищувалась).
+         *
+         * Id стику — `joint_` + слот доповнення. Префіксний матч
+         * `joint_leg_` загрібав і СКЛЕЙКИ ПІДВОРОТІВ САМОЇ НОГИ: опуск на
+         * нозі живе в слоті `leg_B_fold_C`, і його стик `joint_leg_B_fold_C`
+         * теж починається з `joint_leg_`. Так «стикування ноги з виробом»
+         * росло на кожен опуск.
+         *
+         * І дзеркальна вада: нога, приклеєна до СТІНОВОЇ ПАНЕЛІ, живе в
+         * слоті `wall_panel_B_leg_C` — її стик префікс не ловив узагалі.
+         *
+         * parseAdditionSlot бере ОСТАННІЙ префікс слота: для
+         * `leg_B_fold_C` це fold (не рахуємо), для `wall_panel_B_leg_C` —
+         * leg (рахуємо). Рівно та семантика, що потрібна.
+         */
+        const slot = String(j.id ?? '').replace(/^joint_/, '');
+        if (parseAdditionSlot(slot).kind === 'leg') {
           legMm += jointLengthMm(joint as Parameters<typeof jointLengthMm>[0]);
         }
       });
@@ -413,7 +586,8 @@ export function quoteItemsFromProject(
   const items: QuoteItem[] = [];
 
   groups.forEach((group) => {
-    const folds = group.filter((detail) => detail.type === 'Підворот' || detail.type === 'Потовщення');
+    // Обидва крайові доповнення тарифікуються однаково — вливаються в стільницю.
+    const folds = group.filter((detail) => Boolean(edgeKindByLabel(detail.type as string)));
     const foldsArea = folds.reduce((sum, detail) => sum + areaOf(detail.id), 0);
     const countertops = group.filter((detail) => detail.type === 'Стільниця');
     const hasThickening = folds.length > 0 || countertops.some((detail) =>
@@ -450,6 +624,15 @@ export function quoteItemsFromProject(
       if (detail.type === 'Опора' && area > 0) {
         items.push({ ...base, productTypeId: 'leg', areaM2: area });
       } else if (detail.type === 'Стінова панель' && area > 0) {
+        const thickness = detail.thickness ?? defaultThicknessMm ?? 0;
+        items.push({ ...base, productTypeId: thickness >= 12 ? 'wall_panel_ge12' : 'wall_panel_lt12', areaM2: area });
+      } else if ((detail.type as string) === 'Бортик' && area > 0) {
+        /*
+         * Бортик у прорахунку — СТІНОВА ПАНЕЛЬ (рішення продажів 26.08).
+         * Раніше гілки не було взагалі, і бортик мовчки випадав із КП:
+         * деталь різалась, а виробу за неї не нараховувалось. Категорія
+         * панелі та сама вилка за товщиною, що й у стінової панелі.
+         */
         const thickness = detail.thickness ?? defaultThicknessMm ?? 0;
         items.push({ ...base, productTypeId: thickness >= 12 ? 'wall_panel_ge12' : 'wall_panel_lt12', areaM2: area });
       } else if (detail.type === 'Мийка') {

@@ -188,6 +188,10 @@ export function calculateCommercialQuote(
   edgeProfiles.forEach((profile) => {
     const quantity = round(edgeLengths[profile.id] ?? 0, 3);
     if (quantity <= 0) return;
+    // Ціна крайки збирається з операцій профілю. У вбудованому каталозі
+    // цін більше немає (їх дає 1С за кодом номенклатури), тому тут вийде
+    // нуль, поки ціну не вписали руками в налаштуваннях КП: цей старий
+    // діалог до інтеграції не підключений — рахує «Прорахунок».
     const calcPrice = profile.operations?.reduce((acc, op) => acc + ((DEFAULT_SERVICE_CATALOG[op.serviceId]?.price ?? 0) * op.multiplier), 0) ?? 0;
     addLine(lines, settings, {
       id: `edge-${profile.id}`,

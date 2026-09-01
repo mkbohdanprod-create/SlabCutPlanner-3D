@@ -3,6 +3,9 @@ import { useUIStore, type PaneView } from './store/useStore';
 import { useProjectStore } from './store/useProjectStore';
 import { Sidebar } from './components/ui/Sidebar';
 import { Sidebar3D } from './components/ui/Sidebar3D';
+import { useIsMobile } from './hooks/useIsMobile';
+import { MobileBottomNav } from './components/mobile/MobileBottomNav';
+import { MobileSheet } from './components/mobile/MobileSheet';
 import { HeaderToolbar } from './components/ui/HeaderToolbar';
 import { AppStatusBar } from './components/ui/AppStatusBar';
 import { Scissors, FolderOpen, Loader2, UserCircle, Save, Image, Download, FileText, Plus, Box, Calculator, Trash, Eye, LayoutDashboard, Layers, Settings2, ZoomIn, LogOut, Edit2, Play, Undo2, Redo2 } from 'lucide-react';
@@ -13,17 +16,25 @@ import { LanguageDomTranslator } from './components/ui/LanguageDomTranslator';
 import { ProjectsDashboard } from './components/ui/ProjectsDashboard';
 import { CommercialQuoteDialog } from './components/ui/CommercialQuoteDialog';
 import { HelpDialog } from './components/ui/HelpDialog';
+import { useAuth } from './components/auth/AuthContext';
+import { LoginModal } from './components/auth/LoginModal';
+import { NewProjectDialog } from './components/ui/NewProjectDialog';
 import { ServiceDialog } from './components/ui/ServiceDialog';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { BugReporterDialog } from './components/ui/BugReporterDialog';
 import { WorkspacePane } from './components/WorkspacePane';
+import { WorkspaceTabs } from './components/WorkspaceTabs';
+import { ProjectLoadingOverlay } from './components/ui/ProjectLoadingOverlay';
 import { AddProductWorkspace } from './components/ui/AddProductWorkspace';
 import { ProductEditorWorkspace } from './components/ui/ProductEditorWorkspace';
 import { SettingsModal } from './components/ui/SettingsModal';
 import { EdgeProfileSettingsModal } from './components/ui/EdgeProfileSettingsModal';
+import { EdgeProfileCatalogHost } from './components/ui/EdgeProfileCatalog';
 
 import { blackbox } from './utils/blackbox';
-import * as rrweb from 'rrweb';
+// rrweb НЕ імпортується вгорі навмисне: блокувальники реклами (uBlock/AdGuard)
+// ріжуть запит із назвою rrweb.js → модуль App не вантажився і сторінка лишалась
+// біла. Тепер бібліотека підвантажується лише коли реально почали запис багу.
 
 function App() {
   const setMainView = useUIStore((s) => s.setMainView);
@@ -36,6 +47,17 @@ function App() {
   const setSplitRightView = useUIStore((s) => s.setSplitRightView);
   const splitRatio = useUIStore((s) => s.splitRatio);
   const setSplitRatio = useUIStore((s) => s.setSplitRatio);
+
+  // ── Мобільний режим ──────────────────────────────────────────────
+  // Ліва панель на телефоні приходить знизу поверх креслення і йде геть:
+  // ділити вузький екран між нею і робочою областю немає з чого.
+  const isMobile = useIsMobile();
+  const [toolsOpen, setToolsOpen] = useState(false);
+
+  // «Спліт» на телефоні безглуздий — дві панелі по 180 px нечитабельні.
+  useEffect(() => {
+    if (isMobile && mainView === 'split') setMainView(splitLeftView);
+  }, [isMobile, mainView, splitLeftView, setMainView]);
   const set3dAssemblyMode = useUIStore((s) => s.set3dAssemblyMode);
   const updateProjectHeader = useProjectStore((s) => s.updateProjectHeader);
   const initialize = useProjectStore(s => s.initialize);
@@ -46,6 +68,7 @@ function App() {
   const isInitialized = useProjectStore(s => s.isInitialized);
   const isPacking = useProjectStore(s => s.isPacking);
   const clearCalculation = useProjectStore(s => s.clearCalculation);
+  const newProject = useProjectStore(s => s.newProject);
   const setUiLanguage = useProjectStore((s) => s.setUiLanguage);
   const language = useProjectStore((s) => s.project.uiLanguage);
   const [isProjectsOpen, setIsProjectsOpen] = useState(false);
@@ -56,6 +79,10 @@ function App() {
   const [isLoadOpen, setIsLoadMenuOpen] = useState(false);
   const [isExportOpen, setIsExportMenuOpen] = useState(false);
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+  // Keycloak-сесія: бейдж користувача в шапці і вхід для збережених проєктів
+  const { user, signOut } = useAuth();
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const isRecordingBug = useUIStore(s => s.isRecordingBug);
   const setIsRecordingBug = useUIStore(s => s.setIsRecordingBug);
   const setIsBugReporterOpen = useUIStore(s => s.setIsBugReporterOpen);
@@ -64,6 +91,35 @@ function App() {
   const [popupActiveView, setPopupActiveView] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get('popup')
   );
+
+  /**
+   * Що саме зникне при створенні нового проєкту. Рахуємо просте й видиме:
+   * вироби, окремі деталі (DXF/бланк/ручні) і сляби. Порожній проєкт —
+   * той, у якому нічого з цього немає і номер замовлення ще не вписаний.
+   */
+  const productCount = project.products?.length ?? 0;
+  const detailCount = project.details?.length ?? 0;
+  const slabCount = project.slabs?.length ?? 0;
+  const isProjectEmpty = productCount === 0 && detailCount === 0
+    && !project.orderNumber?.trim() && !project.customer?.trim();
+  /**
+   * «1 виробів» у вікні, яке попереджає про втрату роботи, читається як
+   * недбалість — тому відмінюємо. Кожна форма покрита шаблоном у
+   * i18nPatterns: склеєний із числом рядок точним словником не взяти.
+   */
+  const plural = (count: number, one: string, few: string, many: string) => {
+    const mod100 = count % 100;
+    const mod10 = count % 10;
+    if (mod100 >= 11 && mod100 <= 14) return `${count} ${many}`;
+    if (mod10 === 1) return `${count} ${one}`;
+    if (mod10 >= 2 && mod10 <= 4) return `${count} ${few}`;
+    return `${count} ${many}`;
+  };
+  const projectSummary = [
+    productCount ? plural(productCount, 'виріб', 'вироби', 'виробів') : '',
+    detailCount ? plural(detailCount, 'деталь', 'деталі', 'деталей') : '',
+    slabCount ? plural(slabCount, 'слеб', 'слеби', 'слебів') : '',
+  ].filter(Boolean).join(' · ') || 'порожній проєкт';
 
   const langLabels: Record<string, string> = { uk: 'UA', en: 'EN', pl: 'PL' };
   const fullLangLabels: Record<string, string> = { uk: 'Українська', en: 'English', pl: 'Polski' };
@@ -78,7 +134,8 @@ function App() {
     const createdAt = project.versions?.[0]?.timestamp ?? project.updatedAt;
     const stamp = new Date(createdAt).toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
     const safeOrder = (project.orderNumber || 'без номера').trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/\s+/g, ' ');
-    const safeCustomer = (project.customer || 'без контрагента').trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/\s+/g, ' ');
+    // Контрагент може бути заповнений лише в прорахунку — ім'я файла це враховує
+    const safeCustomer = (project.customer || project.quoteCalc?.contragent || 'без контрагента').trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/\s+/g, ' ');
     const fileName = `${safeOrder}_${safeCustomer}_${stamp}.json`;
     downloadTextFile(fileName, exportProject());
   };
@@ -139,17 +196,27 @@ function App() {
   }, [initialize]);
 
   useEffect(() => {
+    if (!isRecordingBug) return;
     let stopFn: (() => void) | undefined = undefined;
-    if (isRecordingBug) {
-      const events: any[] = [];
-      stopFn = rrweb.record({
-        emit(event) {
-          events.push(event);
-        },
+    let cancelled = false;
+    const events: any[] = [];
+    setRrwebEvents(events);
+    // Динамічний імпорт: якщо блокувальник реклами заріже rrweb —
+    // впаде лише запис дій, а не весь застосунок.
+    import('rrweb')
+      .then((rrweb) => {
+        if (cancelled) return;
+        stopFn = rrweb.record({
+          emit(event) {
+            events.push(event);
+          },
+        });
+      })
+      .catch((err) => {
+        console.warn('rrweb недоступний, запис дій вимкнено:', err);
       });
-      setRrwebEvents(events);
-    }
     return () => {
+      cancelled = true;
       if (stopFn) stopFn();
     };
   }, [isRecordingBug, setRrwebEvents]);
@@ -261,6 +328,10 @@ function App() {
                     />
                   </div>
                   <div>
+                    {/* Довідник контрагентів живе лише на вкладці «Прорахунок»
+                        і сюди НЕ пише: у шапці це самостійне поле, яке менеджер
+                        веде руками. Документи беруть те, що заповнене — шапку
+                        або прорахунок (див. utils/export). */}
                     <label className="text-xs text-slate-500 font-bold mb-1 block">КОНТРАГЕНТ</label>
                     <input 
                       type="text" 
@@ -307,7 +378,12 @@ function App() {
 
           <div className="relative">
             <button
-              onClick={() => { alert('Функція створення нового проєкту буде додана незабаром.'); }}
+              onClick={() => {
+                // Порожній проєкт нема чого рятувати — не смикаємо менеджера
+                // діалогом там, де втрачати нічого.
+                if (isProjectEmpty) newProject();
+                else setNewProjectDialogOpen(true);
+              }}
               className="flex items-center justify-center w-12 h-12 !text-white !bg-transparent !border-transparent hover:!bg-white/10 rounded-sm transition-colors shadow-none"
               title="Додати новий проєкт"
             >
@@ -382,10 +458,27 @@ function App() {
                     <input type="file" accept="application/json" className="hidden" onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
-                      const { readFileAsText } = await import('./utils/file');
-                      const text = await readFileAsText(file);
-                      useProjectStore.getState().importProject(JSON.parse(text));
                       setIsLoadMenuOpen(false);
+                      // Кроки видно людині: на проєкті з фото слебів читання
+                      // і розбір JSON — це мегабайти й помітні секунди.
+                      const { runWithProgress } = await import('./lib/loadWithProgress');
+                      const { readFileAsText } = await import('./utils/file');
+                      await runWithProgress<{ text: string; data: unknown }>(
+                        file.name,
+                        { text: '', data: null },
+                        [
+                          { label: 'Читаю файл із диска…', run: async (v) => ({ ...v, text: await readFileAsText(file) }) },
+                          { label: 'Розбираю проєкт…', run: (v) => ({ ...v, data: JSON.parse(v.text) }) },
+                          { label: 'Розгортаю деталі й розкладку…', run: (v) => {
+                            useProjectStore.getState().importProject(v.data as never);
+                            return v;
+                          } },
+                        ],
+                      ).catch((err) => {
+                        console.error('Не вдалося відкрити проєкт:', err);
+                        window.alert('Не вдалося відкрити проєкт: файл пошкоджений або це не проєкт Viyar Stone 3D.');
+                      });
+                      e.target.value = '';
                     }} />
                   </label>
                 </div>
@@ -515,27 +608,90 @@ function App() {
               </>
             )}
           </div>
+
+          {user ? (
+            <button
+              onClick={signOut}
+              className="flex items-center gap-2 !text-white hover:!text-white/80 transition-colors group ml-2 !bg-transparent !border-transparent shadow-none"
+              title={`Вийти: ${user.email}`}
+            >
+              <span className="text-sm font-semibold">{user.email?.split('@')[0] || 'Користувач'}</span>
+              <div className="w-8 h-8 flex items-center justify-center !bg-[#0084ff] group-hover:!bg-[#006bce] rounded-sm transition-colors">
+                <UserCircle className="w-5 h-5 !text-white" />
+              </div>
+            </button>
+          ) : (
+            <button
+              onClick={() => setIsLoginModalOpen(true)}
+              className="w-8 h-8 flex items-center justify-center !text-white !bg-white/10 hover:!bg-white/20 rounded-sm transition-colors !border-transparent shadow-none ml-2"
+              title="Увійти"
+            >
+              <UserCircle className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </header>
       
       <ProjectsDashboard isOpen={isProjectsOpen} onClose={() => setIsProjectsOpen(false)} />
       <CommercialQuoteDialog open={isQuoteOpen} onClose={() => setIsQuoteOpen(false)} />
       <PdfExportDialog open={pdfDialogOpen} project={project} parts={useProjectStore.getState().parts} onClose={() => setPdfDialogOpen(false)} />
+      <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
       <HelpDialog />
+      {newProjectDialogOpen && (
+        <NewProjectDialog
+          summary={projectSummary}
+          onSaveAndCreate={() => {
+            // Спершу файл на диск, і лише потім знищення: якщо збереження
+            // впаде (відмова в діалозі браузера), проєкт має лишитись.
+            handleSaveProject();
+            setNewProjectDialogOpen(false);
+            newProject();
+          }}
+          onCreateAnyway={() => { setNewProjectDialogOpen(false); newProject(); }}
+          onClose={() => setNewProjectDialogOpen(false)}
+        />
+      )}
+      <ProjectLoadingOverlay />
       <ServiceDialog />
       <ConfirmDialog />
       <BugReporterDialog />
 
       {/* Main Content Workspace */}
-      <main className="flex-1 min-h-0 overflow-hidden flex p-4 gap-4 relative">
+      {/* НАВІГАЦІЯ СТОЇТЬ НА МІСЦІ (27.08). Смуга вкладок — над усією
+          робочою областю, на всю ширину вікна і по центру. Раніше вона
+          жила всередині правої панелі, а та міняла ширину разом із лівим
+          меню (на «Прорахунку» його немає зовсім) — і група вкладок
+          стрибала вправо-вліво на кожному перемиканні. У «Спліті» смуга
+          лишається всередині кожної половини: там вона в кожної своя. */}
+      {!isProductEditorMode && !isAddProductMode && mainView !== 'split' && (
+        <WorkspaceTabs
+          view={mainView as PaneView}
+          onChangeView={setMainView}
+          isSplitModeActive={false}
+          onToggleSplit={() => setMainView('split')}
+          centered
+        />
+      )}
+
+      <main className="flex-1 min-h-0 overflow-hidden flex px-4 gap-4 relative">
         {isProductEditorMode ? (
           <ProductEditorWorkspace />
         ) : isAddProductMode ? (
           <AddProductWorkspace onClose={() => useUIStore.getState().setAddProductMode(false)} />
         ) : (
           <>
-            {/* Left Sidebar - Tools & Parts */}
-            {mainView === '2d' || mainView === 'split' ? <Sidebar /> : <Sidebar3D />}
+            {/* Left Sidebar - Tools & Parts.
+                На «Прорахунку» сайдбара немає взагалі (26.08): панель
+                «3D Збірка» там була недоречна — прорахунок працює з
+                документом, а не зі сценою, і порожній стовпець зліва
+                тільки відбирав ширину в таблиці розрахунку. */}
+            {/* «3D Збірка» стосується лише сцени 3D Підбору. На «Підборі
+                текстури», «Прорахунку» і «Послугах» лівого меню немає
+                (26.08): там воно керувало сценою, якої на екрані нема, —
+                зайвий стовпець, що відбирав ширину в робочої зони. */}
+            {mainView === '2d' || mainView === 'split'
+              ? (!isMobile && <Sidebar />)
+              : mainView === '3d' ? <Sidebar3D /> : null}
 
             <div className="flex-1 min-h-0 min-w-0 flex flex-col relative">
           {mainView === 'split' ? (
@@ -588,6 +744,7 @@ function App() {
               onChangeView={setMainView}
               isSplitModeActive={false}
               onToggleSplit={() => setMainView('split')}
+              showTabs={false}
             />
           )}
         </div>
@@ -595,14 +752,47 @@ function App() {
         )}
       </main>
 
+      {/* ── Мобільні органи керування ─────────────────────────────
+          Рендеряться лише на вузькому екрані — на десктопі їх у дереві
+          немає взагалі, тому зачепити там нічого не можуть. */}
+      {isMobile && (
+        <>
+          <MobileBottomNav
+            view={mainView}
+            onChange={(v) => {
+              // Меню видно завжди — і в редакторі виробу теж. Тап по
+              // вкладці з редактора означає «вийти і показати екран»,
+              // а не «перемкнути тло під редактором».
+              if (isProductEditorMode) useUIStore.getState().setProductEditorSession(null);
+              if (isAddProductMode) useUIStore.getState().setAddProductMode(false);
+              setMainView(v);
+              setToolsOpen(false);
+            }}
+            onOpenTools={() => setToolsOpen((v) => !v)}
+            toolsOpen={toolsOpen}
+          />
+          <MobileSheet
+            open={toolsOpen}
+            title="Деталі та слеби"
+            onClose={() => setToolsOpen(false)}
+          >
+            {/* У 3D рейка інструментів уже лежить на сцені (Sidebar3D
+                на мобільному стає плаваючою колонкою праворуч), тому в
+                шухляді — список деталей і слебів, а не її дубль. */}
+            <Sidebar />
+          </MobileSheet>
+        </>
+      )}
+
       {/* Status Bar */}
       <AppStatusBar />
 
       {/* Modals */}
       <SettingsModal />
       <EdgeProfileSettingsModal isOpen={isEdgeProfileSettingsOpen} onClose={() => setIsEdgeProfileSettingsOpen(false)} />
+      <EdgeProfileCatalogHost />
     </div>
   );
 }
 
-export default App;
+export default App;

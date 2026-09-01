@@ -1,87 +1,100 @@
-import { useMemo, useState } from 'react';
-import type { MouseEvent } from 'react';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DetailPart } from '../../domain/types';
 import { polygonBounds, pointString } from '../../lib/project';
 import { useProjectStore } from '../../store/useProjectStore';
+import { RemnantFinderModal } from './RemnantFinderModal';
+import { PackageSearch, Inbox, ChevronRight, ChevronLeft } from 'lucide-react';
 
-const CANVAS_WIDTH = 1000;
-const PADDING = 54;
-const GAP = 42;
-const BASE_SCALE = 0.13;
-const MIN_CANVAS_HEIGHT = 150;
+/**
+ * БУФЕР НЕРОЗМІЩЕНИХ ДЕТАЛЕЙ — права колонка 2D Розкрою.
+ *
+ * До 28.08 буфер лежав ГОРИЗОНТАЛЬНОЮ смугою над аркушами і з'їдав
+ * висоту робочого поля: одна деталь у буфері — і дошка починалась на
+ * третині екрана. Власник: «деталі, які не помістились, — справа, меню
+ * яке можна скривати».
+ *
+ * Тепер це колонка з двома станами:
+ *  · розгорнута (`PANEL_WIDTH`) — картки деталей одна під одною;
+ *  · згорнута (`RAIL_WIDTH`) — вузька рейка зі значком, лічильником і
+ *    вертикальним підписом.
+ *
+ * Вибір людини живе в localStorage (`vs3d.unplacedCollapsed`) — це її
+ * звичка, а не властивість проєкту (те саме правило, що для просунутого
+ * режиму, див. store/useStore.ts).
+ *
+ * ⚠️ Клас `.unplaced-panel` на кореневому елементі — не косметика:
+ * `SlabBoard` шукає саме його через `document.querySelector`, щоб
+ * зрозуміти, що деталь кинули в буфер. Клас має лишатись на елементі,
+ * який видно в ОБОХ станах.
+ */
 
-type UnplacedLayoutItem = ReturnType<typeof layoutUnplacedParts>[number];
-type BufferDragPreview = {
-  item: UnplacedLayoutItem;
+const PANEL_WIDTH = 268;
+const RAIL_WIDTH = 44;
+/** Висота мініатюри в картці. Контур вписує сам браузер (preserveAspectRatio) */
+const THUMB_HEIGHT = 78;
+/** Ghost при перетягуванні: більша сторона контуру в пікселях */
+const GHOST_MAX_SIDE = 190;
+const COLLAPSED_KEY = 'vs3d.unplacedCollapsed';
+
+type DragPreview = {
+  points: Array<{ x: number; y: number }>;
+  widthMm: number;
+  heightMm: number;
+  /** px на міліметр — у масштабі ghost'а, не мініатюри */
+  scale: number;
   clientX: number;
   clientY: number;
   offsetX: number;
   offsetY: number;
-  screenScale: number;
 };
 
-function previewLabel(partName: string) {
-  return partName.length > 28 ? `${partName.slice(0, 25)}...` : partName;
-}
-
-function layoutUnplacedParts(parts: DetailPart[]) {
-  let x = PADDING;
-  let y = 34;
-  let rowHeight = 0;
-
-  return parts.map((part) => {
-    const bounds = polygonBounds(part.points);
-    const width = Math.max(bounds.maxX - bounds.minX, 1);
-    const height = Math.max(bounds.maxY - bounds.minY, 1);
-    const scale = Math.min(BASE_SCALE, (CANVAS_WIDTH - PADDING * 2) / width);
-    const itemWidth = width * scale;
-    const itemHeight = height * scale;
-
-    if (x > PADDING && x + itemWidth > CANVAS_WIDTH - PADDING) {
-      x = PADDING;
-      y += rowHeight + 34;
-      rowHeight = 0;
-    }
-
-    const item = {
-      part,
-      bounds,
-      scale,
-      x,
-      y,
-      width: itemWidth,
-      height: itemHeight,
-    };
-
-    x += itemWidth + GAP;
-    rowHeight = Math.max(rowHeight, itemHeight);
-    return item;
-  });
+function readCollapsed() {
+  try {
+    return window.localStorage.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
 }
 
 export function UnplacedPartsPanel() {
   const { project, parts, bufferDragPartId, unplacedDropVisible, startBufferDrag } = useProjectStore();
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const [dragPreview, setDragPreview] = useState<BufferDragPreview | null>(null);
-  const unplacedParts = project.unplacedPartIds
-    .map((id) => parts.find((part) => part.id === id))
-    .filter(Boolean) as DetailPart[];
-  const unplacedReason = Array.from(new Set(
+  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const [remnantsOpen, setRemnantsOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  const unplacedParts = useMemo(
+    () => project.unplacedPartIds
+      .map((id) => parts.find((part) => part.id === id))
+      .filter(Boolean) as DetailPart[],
+    [project.unplacedPartIds, parts],
+  );
+
+  const unplacedReason = useMemo(() => Array.from(new Set(
     unplacedParts
       .map((part) => project.unplacedReasons?.[part.id])
       .filter(Boolean) as string[],
-  )).slice(0, 2).join('; ');
-  const layout = layoutUnplacedParts(unplacedParts);
-  const canvasHeight = Math.max(
-    MIN_CANVAS_HEIGHT,
-    ...layout.map((item) => item.y + item.height + 34),
-  );
+  )).slice(0, 2).join('; '), [unplacedParts, project.unplacedReasons]);
+
+  const toggle = useCallback(() => {
+    setCollapsed((current) => {
+      const next = !current;
+      try { window.localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0'); } catch { /* приватний режим браузера */ }
+      return next;
+    });
+  }, []);
+
+  /*
+   * Поки деталь тягнуть у буфер — колонка розгорнута примусово, навіть
+   * якщо людина її згорнула. Інакше довелось би цілити в рейку 44 px, а
+   * промах означає, що деталь повернулась на аркуш.
+   */
+  const open = !collapsed || unplacedDropVisible;
 
   useEffect(() => {
     if (!dragPreview) return undefined;
     const onMove = (event: MouseEvent) => {
-      setDragPreview((current) => current ? { ...current, clientX: event.clientX, clientY: event.clientY } : current);
+      setDragPreview((current) => (current ? { ...current, clientX: event.clientX, clientY: event.clientY } : current));
     };
     const onUp = () => setDragPreview(null);
     window.addEventListener('mousemove', onMove);
@@ -90,115 +103,169 @@ export function UnplacedPartsPanel() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [dragPreview?.item.part.id]);
+  }, [dragPreview !== null]);
+
+  const beginDrag = useCallback((event: React.MouseEvent<SVGSVGElement>, part: DetailPart) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+
+    const bounds = polygonBounds(part.points);
+    const widthMm = Math.max(bounds.maxX - bounds.minX, 1);
+    const heightMm = Math.max(bounds.maxY - bounds.minY, 1);
+    const rect = event.currentTarget.getBoundingClientRect();
+
+    /* Масштаб, у якому контур зараз намальовано в картці (browser fit) */
+    const thumbScale = Math.min(rect.width / widthMm, rect.height / heightMm);
+    /* Ghost більший за мініатюру: у колонці 268 px деталь 1600×2400 —
+       нігтик, а тягти нігтиком на аркуш незручно. */
+    const ghostScale = Math.max(thumbScale, GHOST_MAX_SIDE / Math.max(widthMm, heightMm));
+
+    /* Де саме всередині контуру людина взялась — у частках, щоб ghost
+       не стрибав під курсором при зміні масштабу */
+    const drawnWidth = widthMm * thumbScale;
+    const drawnHeight = heightMm * thumbScale;
+    const insideX = event.clientX - (rect.left + (rect.width - drawnWidth) / 2);
+    const insideY = event.clientY - (rect.top + (rect.height - drawnHeight) / 2);
+    const shareX = Math.min(Math.max(insideX / drawnWidth, 0), 1);
+    const shareY = Math.min(Math.max(insideY / drawnHeight, 0), 1);
+
+    startBufferDrag(part.id);
+    setDragPreview({
+      points: part.points.map((point) => ({ x: point.x - bounds.minX, y: point.y - bounds.minY })),
+      widthMm,
+      heightMm,
+      scale: ghostScale,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      offsetX: shareX * widthMm * ghostScale,
+      offsetY: shareY * heightMm * ghostScale,
+    });
+  }, [startBufferDrag]);
 
   if (!unplacedParts.length && !unplacedDropVisible) return null;
 
-  const svgPoint = (clientX: number, clientY: number) => {
-    const svg = svgRef.current;
-    const ctm = svg?.getScreenCTM();
-    if (!svg || !ctm) return undefined;
-    const point = svg.createSVGPoint();
-    point.x = clientX;
-    point.y = clientY;
-    return point.matrixTransform(ctm.inverse());
-  };
-
-  const beginDrag = (event: React.MouseEvent<SVGGElement>, item: UnplacedLayoutItem) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const point = svgPoint(event.clientX, event.clientY);
-    startBufferDrag(item.part.id);
-    setDragPreview({
-      item,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      offsetX: point ? point.x - item.x : item.width / 2,
-      offsetY: point ? point.y - item.y : item.height / 2,
-      screenScale: svgRef.current ? svgRef.current.getBoundingClientRect().width / CANVAS_WIDTH : 1,
-    });
-  };
-
   return (
     <>
-      <section className={`panel unplaced-panel${unplacedDropVisible ? ' drop-target' : ''}`}>
-        <div className="toolbar compact">
-          <h3>Нерозміщені деталі</h3>
-          <span className="muted">{unplacedParts.length} шт.</span>
-          {unplacedReason && <span className="muted">Причина: {unplacedReason}</span>}
-        </div>
-        {unplacedParts.length ? (
-          <svg
-            ref={svgRef}
-            className="unplaced-window"
-            viewBox={`0 0 ${CANVAS_WIDTH} ${canvasHeight}`}
-            style={{ height: `${canvasHeight}px` }}
-            aria-label="Нерозміщені деталі"
-          >
-            <rect x={0} y={0} width={CANVAS_WIDTH} height={canvasHeight} rx={8} />
-            {layout.map((item) => {
-              const points = item.part.points.map((point) => ({
-                x: item.x + (point.x - item.bounds.minX) * item.scale,
-                y: item.y + (point.y - item.bounds.minY) * item.scale,
-              }));
-              const centerX = item.x + item.width / 2;
-              const centerY = item.y + item.height / 2;
-              const labelSize = Math.max(8, Math.min(13, Math.min(item.width, item.height) / 7));
-              const dimsSize = Math.max(7, labelSize - 1);
+      <RemnantFinderModal
+        open={remnantsOpen}
+        onClose={() => setRemnantsOpen(false)}
+        project={project}
+        unplacedParts={unplacedParts}
+      />
 
-              return (
-                <g
-                  key={item.part.id}
-                  className={`unplaced-item${bufferDragPartId === item.part.id ? ' dragging' : ''}`}
-                  onMouseDown={(event) => beginDrag(event, item)}
-                >
-                  <polygon className="unplaced-fill" points={pointString(points)} />
-                  <polygon className="unplaced-stroke" points={pointString(points)} />
-                  <text x={centerX} y={centerY - labelSize * 0.25} textAnchor="middle" fontSize={labelSize}>{previewLabel(item.part.name)}</text>
-                  <text x={centerX} y={centerY + dimsSize} textAnchor="middle" fontSize={dimsSize}>{item.part.dimsLabel} мм</text>
-                </g>
-              );
-            })}
-          </svg>
+      <aside
+        className={`unplaced-panel${unplacedDropVisible ? ' drop-target' : ''}${open ? '' : ' is-rail'}`}
+        style={{ width: open ? PANEL_WIDTH : RAIL_WIDTH }}
+        aria-label="Нерозміщені деталі"
+      >
+        {open ? (
+          <>
+            <header className="unplaced-head">
+              <Inbox className="w-4 h-4 shrink-0 text-[#7a5a2e]" />
+              <h3>Нерозміщені</h3>
+              <span className="unplaced-count">{unplacedParts.length}</span>
+              <button
+                type="button"
+                className="unplaced-toggle"
+                title="Згорнути колонку"
+                onClick={toggle}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </header>
+
+            {unplacedReason && (
+              <p className="unplaced-reason" title={unplacedReason}>{unplacedReason}</p>
+            )}
+
+            <div className="unplaced-list custom-scrollbar" ref={listRef}>
+              {unplacedParts.map((part) => {
+                const bounds = polygonBounds(part.points);
+                const widthMm = Math.max(bounds.maxX - bounds.minX, 1);
+                const heightMm = Math.max(bounds.maxY - bounds.minY, 1);
+                const points = part.points.map((point) => ({
+                  x: point.x - bounds.minX,
+                  y: point.y - bounds.minY,
+                }));
+
+                return (
+                  <article
+                    key={part.id}
+                    className={`unplaced-card${bufferDragPartId === part.id ? ' dragging' : ''}`}
+                    title={`${part.name} · ${part.dimsLabel} мм — перетягніть на аркуш`}
+                  >
+                    <svg
+                      className="unplaced-thumb"
+                      style={{ height: THUMB_HEIGHT }}
+                      viewBox={`0 0 ${widthMm} ${heightMm}`}
+                      preserveAspectRatio="xMidYMid meet"
+                      onMouseDown={(event) => beginDrag(event, part)}
+                    >
+                      <polygon className="unplaced-fill" points={pointString(points)} />
+                      <polygon className="unplaced-stroke" points={pointString(points)} />
+                    </svg>
+                    <div className="unplaced-card-text">
+                      <strong>{part.name}</strong>
+                      <span>{part.dimsLabel} мм</span>
+                    </div>
+                  </article>
+                );
+              })}
+
+              {!unplacedParts.length && (
+                <div className="unplaced-empty drop-empty">
+                  Відпустіть деталь тут, щоб повернути її в нерозміщені
+                </div>
+              )}
+            </div>
+
+            {unplacedParts.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setRemnantsOpen(true)}
+                className="unplaced-remnants"
+                title="Спитати склад, які залишки цього матеріалу є, і які з деталей у них влазять"
+              >
+                <PackageSearch className="w-3.5 h-3.5" /> Підібрати залишки
+              </button>
+            )}
+          </>
         ) : (
-          <div className="unplaced-empty drop-empty">Відпустіть деталь тут, щоб повернути її у нерозміщені</div>
+          <button
+            type="button"
+            className="unplaced-rail"
+            onClick={toggle}
+            title={`Нерозміщені деталі: ${unplacedParts.length} шт. — розгорнути`}
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <Inbox className="w-4 h-4" />
+            <span className="unplaced-count">{unplacedParts.length}</span>
+            <span className="unplaced-rail-label">Нерозміщені</span>
+          </button>
         )}
-      </section>
-      {dragPreview && (
-        <BufferDragGhost preview={dragPreview} />
-      )}
+      </aside>
+
+      {dragPreview && <BufferDragGhost preview={dragPreview} />}
     </>
   );
 }
 
-function BufferDragGhost({ preview }: { preview: BufferDragPreview }) {
-  const { item } = preview;
-  const points = item.part.points.map((point) => ({
-    x: (point.x - item.bounds.minX) * item.scale,
-    y: (point.y - item.bounds.minY) * item.scale,
-  }));
-  const centerX = item.width / 2;
-  const centerY = item.height / 2;
-  const labelSize = Math.max(8, Math.min(13, Math.min(item.width, item.height) / 7));
-  const dimsSize = Math.max(7, labelSize - 1);
-
+function BufferDragGhost({ preview }: { preview: DragPreview }) {
   return (
     <svg
       className="buffer-drag-ghost"
       style={{
-        left: preview.clientX - preview.offsetX * preview.screenScale,
-        top: preview.clientY - preview.offsetY * preview.screenScale,
-        width: item.width * preview.screenScale,
-        height: item.height * preview.screenScale,
+        left: preview.clientX - preview.offsetX,
+        top: preview.clientY - preview.offsetY,
+        width: preview.widthMm * preview.scale,
+        height: preview.heightMm * preview.scale,
       }}
-      viewBox={`0 0 ${item.width} ${item.height}`}
+      viewBox={`0 0 ${preview.widthMm} ${preview.heightMm}`}
+      preserveAspectRatio="none"
       aria-hidden="true"
     >
-      <polygon className="unplaced-fill" points={pointString(points)} />
-      <polygon className="unplaced-stroke" points={pointString(points)} />
-      <text x={centerX} y={centerY - labelSize * 0.25} textAnchor="middle" fontSize={labelSize}>{previewLabel(item.part.name)}</text>
-      <text x={centerX} y={centerY + dimsSize} textAnchor="middle" fontSize={dimsSize}>{item.part.dimsLabel} мм</text>
+      <polygon className="unplaced-fill" points={pointString(preview.points)} />
+      <polygon className="unplaced-stroke" points={pointString(preview.points)} />
     </svg>
   );
 }
-
