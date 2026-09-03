@@ -152,19 +152,7 @@ label { display: block; font-size: 12px; color: var(--text-secondary); margin-bo
 .canvas-context-menu button { width: 100%; text-align: left; padding: 7px 10px; border-color: transparent; background: transparent; border-radius: 2px; }
 .canvas-context-menu button:hover { background: var(--bg-panel-hover); border-color: var(--border-color-light); }
 .canvas-context-menu .danger-menu-item { color: #982f25; }
-.slab-magnifier-window { position: fixed; z-index: 38; width: min(560px, calc(100vw - 36px)); height: min(430px, calc(100vh - 36px)); min-width: 360px; min-height: 260px; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 2px; box-shadow: 0 14px 40px rgba(31,45,58,.22); overflow: hidden; resize: both; }
-.slab-magnifier-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--border-color); cursor: move; user-select: none; }
-.slab-magnifier-header button { width: 28px; min-width: 28px; height: 28px; padding: 0; display: grid; place-items: center; }
-.slab-magnifier-zoom { display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 10px; border-bottom: 1px solid var(--border-color); background: var(--bg-panel); }
-.slab-magnifier-zoom button { min-width: 40px; padding: 5px 8px; }
-.slab-magnifier-zoom button.active { background: #bfd2df; }
-.slab-magnifier-body { position: relative; flex: 1 1 auto; min-height: 0; padding: 10px; background: var(--bg-main); }
-.slab-magnifier-view { width: 100%; height: 100%; display: block; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 2px; }
-.slab-magnifier-part text { fill: #102536; font-size: 22px; font-weight: 700; paint-order: stroke; stroke: rgba(248,251,253,.8); stroke-width: 4px; pointer-events: none; }
-.slab-magnifier-map { position: absolute; right: 18px; bottom: 18px; padding: 6px; border: 1px solid rgba(45,79,108,.45); border-radius: 2px; background: rgba(248,251,253,.88); box-shadow: 0 8px 18px rgba(31,45,58,.18); }
-.slab-magnifier-map svg { display: block; cursor: crosshair; }
-.slab-magnifier-map polygon { fill: rgba(114,147,171,.32); stroke: #2d4f6c; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
-.slab-magnifier-map-window { fill: rgba(31,120,180,.14); stroke: #1f78b4; stroke-width: 2; vector-effect: non-scaling-stroke; }
+/* .slab-magnifier-* — стилі лупи видалені 03.09.2026 разом із компонентом */
 .angle-editor-popover { position: fixed; z-index: 121; width: 180px; padding: 8px; background: #f8fbfd; border: 1px solid #9db1c0; border-radius: 2px; box-shadow: 0 14px 32px rgba(31,45,58,.22); }
 .angle-editor-popover label { margin-bottom: 6px; }
 .angle-editor-popover div { display: grid; grid-template-columns: 1fr auto; gap: 6px; }

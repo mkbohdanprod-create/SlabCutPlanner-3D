@@ -3,8 +3,6 @@ import type { DetailPart, Point, Project } from '../../domain/types';
 import { computeEstimate, computeDetailEstimate, CATEGORY_LABELS } from '../estimate';
 import { DEFAULT_SERVICE_CATALOG } from '../../domain/services';
 import { effectiveRules } from '../../domain/serviceMapping';
-import { calculateCommercialQuote } from '../pricing';
-import { defaultCommercialQuoteSettings } from '../../domain/defaults';
 import { extractProductionFacts, sumFacts } from '../productionFacts';
 
 // Тестовий проєкт: прямокутна стільниця 1000×600 з керамограніту,
@@ -49,7 +47,6 @@ const project = (overrides: Record<string, unknown> = {}): Project => ({
   products: [],
   slabs: [{ id: 'slab_1', width: 3200, height: 1600, thickness: 20, material: 'Керамограніт', decor: '', comment: '', minMargin: 10 }],
   placements: [{ id: 'pl_1', slabId: 'slab_1', partId: 'part_1' }],
-  commercialQuote: defaultCommercialQuoteSettings,
   ...overrides,
 } as unknown as Project);
 
@@ -59,7 +56,11 @@ const project = (overrides: Record<string, unknown> = {}): Project => ({
  * Вбудований каталог застосунку цін не має: гроші дає 1С за кодом
  * номенклатури (domain/services.ts). Але математику КІЛЬКОСТЕЙ зручно
  * перевіряти саме через суму, тому потрібні числа задаються тут явно —
- * і заразом це перевіряє шлях 'manual' (ціна з каталогу, коли 1С мовчить).
+ * і заразом це перевіряє шлях 'manual' — ціну з каталогу. З 03.09.2026
+ * ручна ціна живе ТІЛЬКИ в режимі калібрування (рішення власника, аудит
+ * Е-2), тому розрахунки нижче явно вмикають manualPricing: без нього
+ * кошторис коштує нуль — і це правильна поведінка, окремо перевірена
+ * тестом «поза калібруванням ручних цін не видно».
  */
 const withPrices = (prices: Record<string, number>) => {
   const catalog = { ...DEFAULT_SERVICE_CATALOG };
@@ -76,7 +77,7 @@ const TEST_CATALOG = withPrices({
 });
 
 describe('computeEstimate', () => {
-  const result = computeEstimate(project(), [part()], { details, catalog: TEST_CATALOG });
+  const result = computeEstimate(project(), [part()], { details, catalog: TEST_CATALOG, manualPricing: true });
 
   it('прямий різ береться з периметра, а не з габаритів', () => {
     // 2*(1000+600) = 3200 мм = 3.2 м × 200 ₴ = 640 ₴
@@ -102,6 +103,31 @@ describe('computeEstimate', () => {
     expect(line?.quantity).toBe(0.6);
     // 0.6 × 6000 = 3600, а не 0.72 × 6000 = 4320
     expect(line?.total).toBe(3600);
+  });
+
+  it('поза режимом калібрування ручних цін кошторис не бачить', () => {
+    // Рішення власника 03.09.2026 (аудит Е-2): ручна ціна — це режим
+    // калібрування, у звичайній роботі джерело ціни одне, 1С. Кількості
+    // при цьому лишаються ті самі: зникають гроші, а не робота.
+    const plain = computeEstimate(project(), [part()], { details, catalog: TEST_CATALOG });
+    const line = plain.lines.find((l) => l.serviceId === 'CUT_STRAIGHT');
+    expect(line?.quantity).toBe(3.2);
+    expect(line?.unitPrice).toBe(0);
+    expect(line?.priceSource).toBe('none');
+    expect(plain.total).toBe(0);
+  });
+
+  it('у калібруванні ручна ціна перекриває 1С, а ціна 1С лишається поряд', () => {
+    const erpPrices = { [DEFAULT_SERVICE_CATALOG.MATERIAL_CERAMIC.externalId ?? 'none']: 1000 };
+    const calibrated = computeEstimate(project(), [part()], {
+      details, catalog: TEST_CATALOG, erpPrices, manualPricing: true,
+    });
+    const line = calibrated.lines.find((l) => l.serviceId === 'MATERIAL_CERAMIC');
+    expect(line?.priceSource).toBe('manual');
+    expect(line?.unitPrice).toBe(6000);
+    if (DEFAULT_SERVICE_CATALOG.MATERIAL_CERAMIC.externalId) {
+      expect(line?.erpUnitPrice).toBe(1000);
+    }
   });
 
   it('сума збігається із сумою рядків і сумою груп', () => {
@@ -142,53 +168,10 @@ describe('поведінка при поламаних налаштування�
   });
 });
 
-describe('кошторис і КП рахують з однієї геометрії', () => {
-  const proj = project();
-  const parts = [part()];
-  const facts = extractProductionFacts(proj, parts, { details });
-  const quote = calculateCommercialQuote(proj, parts, details);
-
-  it('площа деталей однакова', () => {
-    expect(quote.metrics.detailAreaM2).toBe(sumFacts(facts, 'detail_area'));
-  });
-
-  it('задіяні сляби однакові', () => {
-    expect(quote.metrics.usedSlabs).toBe(sumFacts(facts, 'slabs_used'));
-  });
-
-  it('різ пилою більше не включає непрямі ділянки', () => {
-    // Раніше sawCutM дорівнював повному периметру і дублював водяну різку.
-    expect(quote.metrics.sawCutM).toBe(sumFacts(facts, 'saw_cut'));
-  });
-
-  it('водяна різка — це метри великих вирізів, малі отвори туди не входять', () => {
-    expect(quote.metrics.waterjetCutM).toBe(
-      sumFacts(facts, 'waterjet_cut') + sumFacts(facts, 'cutout_perimeter') + sumFacts(facts, 'hole_large'),
-    );
-  });
-
-  it('малі отвори не зникають із КП, а йдуть окремим рядком у штуках', () => {
-    expect(quote.metrics.holeCount).toBe(1);
-    expect(quote.lines.find((line) => line.id === 'holes')?.quantity).toBe(1);
-  });
-
-  it('метри торця за профілями збігаються', () => {
-    expect(quote.metrics.edgeLengths.r2_top).toBe(sumFacts(facts, 'edge', 'r2_top'));
-  });
-
-  it('на деталі зі зрізом пила і вода не перетинаються', () => {
-    const cut: Point[] = [
-      { x: 0, y: 0 }, { x: 700, y: 0 }, { x: 1000, y: 300 },
-      { x: 1000, y: 600 }, { x: 0, y: 600 },
-    ];
-    const p = [part({ points: cut, holes: [] })];
-    const q = calculateCommercialQuote(proj, p, details);
-    const f = extractProductionFacts(proj, p, { details });
-    const perimeterM = (700 + Math.hypot(300, 300) + 300 + 1000 + 600) / 1000;
-    expect(q.metrics.sawCutM + q.metrics.waterjetCutM).toBeCloseTo(perimeterM, 3);
-    expect(q.metrics.sawCutM).toBe(sumFacts(f, 'saw_cut'));
-  });
-});
+// Блок «кошторис і КП рахують з однієї геометрії» видалено 03.09.2026
+// разом із рушієм комерційної пропозиції (engines/pricing.ts). Він звіряв
+// метрики КП із виробничими фактами; фактів це не стосується — вони
+// перевіряються у productionFacts.test.ts.
 
 // ── Розріз по одній деталі ───────────────────────────────────────────
 

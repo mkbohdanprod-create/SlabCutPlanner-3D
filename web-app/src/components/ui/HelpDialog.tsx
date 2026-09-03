@@ -208,13 +208,7 @@ export function HelpDialog() {
                       <p className="text-sm text-slate-600 m-0">Видаляє обраний (виділений кліком) ручний розмір. Аналог клавіші Delete.</p>
                     </div>
                   </div>
-                  <div className="flex gap-4 p-4 rounded-lg border border-slate-100 bg-slate-50 shadow-sm">
-                    <div className="w-10 h-10 shrink-0 bg-slate-200 rounded flex items-center justify-center text-slate-500 shadow-sm"><Search className="w-5 h-5" /></div>
-                    <div>
-                      <h3 className="text-base font-bold text-slate-800 m-0 mb-1">Лупа</h3>
-                      <p className="text-sm text-slate-600 m-0">Відкриває додаткове вікно збільшення для точної роботи з дрібними деталями та прив'язками на великих слябах.</p>
-                    </div>
-                  </div>
+                  {/* Картка «Лупа» видалена 03.09.2026 разом із самою лупою. */}
                 </div>
               </div>
             )}

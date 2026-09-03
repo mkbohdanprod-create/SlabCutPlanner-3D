@@ -56,6 +56,12 @@ export interface EstimateLine {
   unitPrice: number;
   /** Звідки взялась ціна рядка — див. EstimatePriceSource */
   priceSource: EstimatePriceSource;
+  /**
+   * Ціна 1С, коли її перекрила ручна (тобто лише в режимі калібрування).
+   * Тримаємо поряд, щоб було з чим порівняти — так само, як у
+   * «Прорахунку» (QuoteCalcLine.erpUnitPrice).
+   */
+  erpUnitPrice?: number;
   total: number;
   category: ServiceCategory;
   /** Код в обліковій системі, якщо керівник його заповнив */
@@ -104,6 +110,20 @@ export interface EstimateOptions {
    * показують одне число.
    */
   erpPrices?: Record<string, number>;
+  /**
+   * Режим калібрування цін — той самий прапорець, що у «Прорахунку»
+   * (useSettingsStore.quoteManualPricing).
+   *
+   * Рішення власника 03.09.2026 (аудит, питання Е-2): ручна ціна існує
+   * ТІЛЬКИ в режимі калібрування; у звичайній роботі джерело ціни одне —
+   * 1С. Вимкнено — цін з локального каталогу рушій не бачить узагалі, і
+   * рядок без відповіді 1С чесно лишається 'none', а не мовчазним нулем
+   * (чи гіршим — старою ціною з localStorage конкретного браузера).
+   * Увімкнено — ручна ціна перекриває 1С, а ціна 1С зберігається поряд
+   * для порівняння. Ця сама угода вже діяла в quoteCalc.ts:171–199;
+   * тепер обидва рушії читають ціну однаково.
+   */
+  manualPricing?: boolean;
 }
 
 export const CATEGORY_LABELS: Record<ServiceCategory, string> = {
@@ -145,15 +165,18 @@ function buildLine(
   service: ServiceDefinition,
   entry: { quantity: number; ruleIds: string[]; factKinds: ProductionFactKind[]; refs: FactRef[] },
   erpPrices: Record<string, number>,
+  manualPricing = false,
 ): EstimateLine {
   const quantity = Math.round(entry.quantity * 1000) / 1000;
   const erpPrice = service.externalId ? erpPrices[service.externalId] : undefined;
-  // Ціна з каталогу підхоплюється тільки там, де 1С мовчить, і тільки
-  // якщо її справді вписали: нуль означає «не задано», а не «безкоштовно».
-  const manualPrice = service.price > 0 ? service.price : undefined;
-  const unitPrice = erpPrice ?? manualPrice ?? 0;
-  const priceSource: EstimatePriceSource = erpPrice !== undefined ? 'erp'
-    : manualPrice !== undefined ? 'manual' : 'none';
+  // Ручна ціна перемагає — але тільки при ввімкненому калібруванні і
+  // тільки якщо її справді ввели. Нуль означає «не задано», а не
+  // «безкоштовно». Поза калібруванням локального прайсу тут немає
+  // взагалі: єдине джерело ціни — 1С (рішення власника 03.09.2026).
+  const manualPrice = manualPricing && service.price > 0 ? service.price : undefined;
+  const unitPrice = manualPrice ?? erpPrice ?? 0;
+  const priceSource: EstimatePriceSource = manualPrice !== undefined ? 'manual'
+    : erpPrice !== undefined ? 'erp' : 'none';
   return {
     serviceId: service.id,
     name: service.name,
@@ -161,6 +184,7 @@ function buildLine(
     quantity,
     unitPrice,
     priceSource,
+    ...(priceSource === 'manual' && erpPrice !== undefined ? { erpUnitPrice: erpPrice } : {}),
     total: round2(quantity * unitPrice),
     category: service.category,
     externalId: service.externalId,
@@ -179,6 +203,7 @@ export function computeEstimate(
   const catalog = options.catalog ?? DEFAULT_SERVICE_CATALOG;
   const rules = options.rules ?? DEFAULT_MAPPING_RULES;
   const erpPrices = options.erpPrices ?? {};
+  const manualPricing = options.manualPricing ?? false;
   const material = project.projectMaterial as MaterialType | undefined;
 
   const facts = extractProductionFacts(project, parts, { details: options.details });
@@ -195,7 +220,7 @@ export function computeEstimate(
       missingServiceIds.push(entry.serviceId);
       return;
     }
-    lines.push(buildLine(service, entry, erpPrices));
+    lines.push(buildLine(service, entry, erpPrices, manualPricing));
   });
 
   lines.sort((a, b) => {
@@ -274,6 +299,7 @@ export function computeDetailEstimate(
   const catalog = options.catalog ?? DEFAULT_SERVICE_CATALOG;
   const rules = options.rules ?? DEFAULT_MAPPING_RULES;
   const erpPrices = options.erpPrices ?? {};
+  const manualPricing = options.manualPricing ?? false;
   const material = project.projectMaterial as MaterialType | undefined;
 
   const allFacts = extractProductionFacts(project, parts, { details: options.details });
@@ -289,7 +315,7 @@ export function computeDetailEstimate(
       missingServiceIds.push(entry.serviceId);
       return;
     }
-    lines.push(buildLine(service, entry, erpPrices));
+    lines.push(buildLine(service, entry, erpPrices, manualPricing));
   });
 
   lines.sort((a, b) => a.name.localeCompare(b.name, 'uk'));

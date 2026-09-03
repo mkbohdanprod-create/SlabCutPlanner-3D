@@ -424,47 +424,15 @@ export type EdgeProfileType =
  */
 export type EdgeProfileSelection = Record<string, EdgeProfileType | EdgeTreatment | undefined>;
 
-export type CommercialMaterialMode = 'slab' | 'area';
-export type CommercialGluePricingMode = 'linear' | 'element';
-
-export interface CommercialManualLine {
-  id: string;
-  name: string;
-  quantity: number;
-  unit: string;
-  unitPrice: number;
-  visible: boolean;
-}
-
-export interface CommercialLineOverride {
-  quantity?: number;
-  unitPrice?: number;
-  visible?: boolean;
-}
-
-export interface CommercialQuoteSettings {
-  materialMode: CommercialMaterialMode;
-  currency: string;
-  slabPrice: number;
-  squareMeterPrice: number;
-  sawCutPricePerM: number;
-  waterjetCutPricePerM: number;
-  /**
-   * Ціна за один отвір до 100 мм. Такі отвори рахуються штуками, а не
-   * метрами (прайс 195310), тому в метри водяної різки не входять і
-   * потребують власного рядка — інакше вони мовчки зникають із КП.
-   */
-  holePricePerPcs: number;
-  edgePrices: Partial<Record<EdgeProfileType, number>>;
-  gluePricingMode: CommercialGluePricingMode;
-  gluePricePerM: number;
-  gluePricePerElement: number;
-  manualLines: CommercialManualLine[];
-  lineOverrides: Record<string, CommercialLineOverride>;
-  adjustmentType: 'discount' | 'markup';
-  adjustmentPercent: number;
-  includeInCuttingPdf: boolean;
-}
+// ── Комерційна пропозиція (видалена 03.09.2026) ────────────────────
+//  Типи CommercialMaterialMode / CommercialGluePricingMode /
+//  CommercialManualLine / CommercialLineOverride / CommercialQuoteSettings
+//  прибрані разом із рушієм engines/pricing.ts і діалогом
+//  CommercialQuoteDialog за рішенням власника (аудит 02.09, питання Е-2).
+//  Перевірено перед видаленням: «Прорахунок» (quoteCalc/QuotePanel/
+//  quotePdf) не читав із них нічого — жодного імпорту й жодної згадки
+//  project.commercialQuote. Старі файли проєктів із полем commercialQuote
+//  відкриваються як були: зайве поле просто ігнорується.
 
 export interface CutAllowances {
   detailLength: number;
@@ -1039,7 +1007,6 @@ export interface Project {
   versions: VersionEntry[];
   updatedAt: string;
   allowances: CutAllowances;
-  commercialQuote: CommercialQuoteSettings;
   assembly?: AssemblyState;
   /** Прорахунок для клієнта (вкладка «Прорахунок») — окремий документ зі своєю математикою */
   quoteCalc?: import('./quoteCalc').QuoteCalcDoc;

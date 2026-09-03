@@ -30,6 +30,10 @@ export function EstimatePanel() {
   const mappingOverrides = useSettingsStore((s) => s.mappingOverrides);
   const customRules = useSettingsStore((s) => s.customRules);
   const getRules = useSettingsStore((s) => s.getRules);
+  // Режим калібрування — той самий прапорець, що у «Прорахунку».
+  // Поза ним ручних цін з локального каталогу кошторис не бачить:
+  // єдине джерело ціни — 1С (рішення власника 03.09.2026, аудит Е-2).
+  const manualPricing = useSettingsStore((s) => s.quoteManualPricing);
 
   const [grouped, setGrouped] = useState(false);
 
@@ -51,11 +55,11 @@ export function EstimatePanel() {
   // кодів, за якими є що питати.
   const draft = useMemo(() => {
     const details = getAllProjectDetails(project);
-    return computeEstimate(project, parts, { details, catalog, rules: getRules() });
+    return computeEstimate(project, parts, { details, catalog, rules: getRules(), manualPricing });
     // getRules читає mappingOverrides і customRules — тримаємо їх у залежностях
     // явно, інакше зміна прив'язок не перерахує кошторис.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, parts, catalog, mappingOverrides, customRules]);
+  }, [project, parts, catalog, mappingOverrides, customRules, manualPricing]);
 
   const priceItems = useMemo(() => estimatePriceRequests(draft.lines), [draft.lines]);
   // Контрагент — той самий, що у «Прорахунку»: знижка в 1С рахується за
@@ -66,10 +70,10 @@ export function EstimatePanel() {
   const estimate = useMemo(() => {
     const details = getAllProjectDetails(project);
     return computeEstimate(project, parts, {
-      details, catalog, rules: getRules(), erpPrices: erp.unitPrices,
+      details, catalog, rules: getRules(), erpPrices: erp.unitPrices, manualPricing,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, parts, catalog, mappingOverrides, customRules, erp.unitPrices]);
+  }, [project, parts, catalog, mappingOverrides, customRules, erp.unitPrices, manualPricing]);
 
   const pricesLoading = erp.state === 'loading';
   // Рядки, за якими грошей немає: або код 1С не заповнений, або 1С за ним

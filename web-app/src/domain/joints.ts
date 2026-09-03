@@ -77,10 +77,19 @@ export function jointAnchorPoints(shape: string | undefined, g: JointShapeFields
   return undefined;
 }
 
-/** Увігнуті (270°) кути форми — там скруглення додає матеріал, а не зрізає. */
-export function reflexCornerIds(shape: string | undefined): string[] {
+/**
+ * Увігнуті (270°) кути форми — там скруглення додає матеріал, а не зрізає.
+ *
+ * У ЛІВОЇ Г-подібної увігнута вершина — `D`, а не `C` (03.09.2026): обхід
+ * дзеркальний, і рушій це вже знає (`geometry.ts`, гілка `BL`, `reflexIds:
+ * ['D']`). Доти ця функція завжди віддавала `C`, тому в редакторі маркер
+ * стику на лівій Г з'являвся на опуклому куті, а на справжньому увігнутому
+ * його не було. Другий аргумент — та сама ознака дзеркала, що й усюди:
+ * `mirrorL` чернетки або `cornerOrientation === 'BL'` деталі.
+ */
+export function reflexCornerIds(shape: string | undefined, mirrored = false): string[] {
   if (shape === 'П-подібна') return ['D', 'E'];
-  if (shape === 'Г-подібна') return ['C'];
+  if (shape === 'Г-подібна') return mirrored ? ['D'] : ['C'];
   return [];
 }
 
@@ -315,4 +324,180 @@ export function manualJointPosition(
   // де від'ємним відступом позначали «в інший бік».
   const requested = base + inward * Math.abs(joint.offset);
   return { requested, snapped: snapJointPosition(anchors, corners, joint.axis, requested) };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ОДИН ВИД СТИКУ (03.09.2026, рішення власника за розбором «Одна
+   математика деталі»).
+
+   Було три сутності, що описували те саме — лінію різу на деталі:
+     • `jointDirection`          — кутовий стик Г-подібної;
+     • `jointOmega/LambdaDirection` — стики П-подібної;
+     • `manualJoints`            — довільні стики на будь-якій формі.
+   Кожна мала свій шлях у рушії, свою математику позиції і свою (або
+   жодну) перевірку на радіус. Наслідки бачила фокус-група: на Г стик
+   лягав точно по дотичній дуги, кутовий стик мовчки зникав, якщо на
+   деталі був ще й довільний, а шматки після старого різу не мали імен
+   сторін — тому кромки на них малювались навмання.
+
+   Рішення власника: **лишаються тільки довільні стики**, з перевіркою,
+   щоб різ не потрапляв на радіус. Ця функція перекладає старі описи в
+   довільні — щоб і збережені проєкти, і чужий імпорт поводились так
+   само, як щойно намальована деталь.
+
+   Позиції взяті з тих самих формул, за якими різав старий код, тому на
+   деталі без радіусів результат збігається до міліметра. Там, де радіус
+   є, спільна перевірка `snapJointPosition` відсуне стик із дуги — саме
+   те, чого раніше не робила гілка Г.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/** Опис стику у вигляді, який розуміє рушій: вісь і відступ від початку. */
+export interface LegacyJointSource {
+  jointDirection?: 'vertical' | 'horizontal';
+  jointOmegaDirection?: 'vertical' | 'horizontal';
+  jointLambdaDirection?: 'vertical' | 'horizontal';
+  outerWidth?: number;
+  outerHeight?: number;
+  innerHorizontal?: number;
+  innerVertical?: number;
+  width?: number;
+  height?: number;
+  innerCutWidth?: number;
+  innerCutDepth?: number;
+  innerCutOffset?: number;
+  leftLegHeight?: number;
+  rightLegHeight?: number;
+}
+
+export interface ManualJointLike {
+  id: string;
+  axis: 'vertical' | 'horizontal';
+  anchorCorner?: string;
+  offset: number;
+  jointType?: string;
+}
+
+export function legacyJointsToManual(
+  shape: string | undefined,
+  g: LegacyJointSource | undefined,
+): ManualJointLike[] {
+  if (!g) return [];
+  const out: ManualJointLike[] = [];
+
+  if (shape === 'Г-подібна' && g.jointDirection) {
+    const outerHeight = g.outerHeight ?? 1200;
+    const innerHorizontal = g.innerHorizontal ?? 900;
+    const innerVertical = g.innerVertical ?? 500;
+    // Ті самі формули, що в старій гілці «два прямокутники»:
+    // вертикальний різ по внутрішньому ребру, горизонтальний — по лінії,
+    // що відділяє смугу вирізу.
+    out.push({
+      id: 'legacy-corner',
+      axis: g.jointDirection,
+      offset: g.jointDirection === 'vertical' ? innerHorizontal : outerHeight - innerVertical,
+    });
+  }
+
+  if (shape === 'П-подібна') {
+    const height = g.height ?? 1200;
+    const leftH = g.leftLegHeight ?? height;
+    const rightH = g.rightLegHeight ?? height;
+    const cutW = g.innerCutWidth ?? 600;
+    const cutD = g.innerCutDepth ?? 300;
+    const cutOff = g.innerCutOffset ?? 300;
+    const topBarHeight = Math.max(0, Math.max(leftH, rightH) - cutD);
+    if (g.jointOmegaDirection) {
+      out.push({
+        id: 'legacy-omega',
+        axis: g.jointOmegaDirection,
+        offset: g.jointOmegaDirection === 'vertical' ? cutOff : topBarHeight,
+      });
+    }
+    if (g.jointLambdaDirection) {
+      out.push({
+        id: 'legacy-lambda',
+        axis: g.jointLambdaDirection,
+        offset: g.jointLambdaDirection === 'vertical' ? cutOff + cutW : topBarHeight,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Усі стики деталі одним списком: спершу перекладені старі, потім довільні.
+ *
+ * Дублі рушій знімає сам (`manualJointCuts`), тому якщо той самий різ
+ * описаний і старим полем, і довільним стиком — він лишиться один.
+ */
+export function allJointsOf(
+  shape: string | undefined,
+  g: (LegacyJointSource & { manualJoints?: ManualJointLike[] }) | undefined,
+): ManualJointLike[] {
+  if (!g) return [];
+  return [...legacyJointsToManual(shape, g), ...(g.manualJoints ?? [])];
+}
+
+/**
+ * Стабільні id для стиків, які ставляться «формою» — прапорцями Г і
+ * кутовим меню П. Раніше вони жили окремими полями (`jointDirection`,
+ * `jointOmega/LambdaDirection`) і були невидимі в панелі «Стики»: саме
+ * тому фокус-група бачила дві лінії й не могла прибрати зайву. Тепер це
+ * звичайні довільні стики — просто з упізнаваними id, щоб прапорець умів
+ * себе зняти.
+ */
+export const SHAPE_JOINT_ID = {
+  corner: 'shape-corner',
+  omega: 'shape-omega',
+  lambda: 'shape-lambda',
+} as const;
+
+export type ShapeJointKind = keyof typeof SHAPE_JOINT_ID;
+
+/** Позиція «формового» стику за тими самими формулами, що й у старому коді. */
+function shapeJointOffset(
+  kind: ShapeJointKind,
+  axis: 'vertical' | 'horizontal',
+  g: LegacyJointSource,
+): number {
+  if (kind === 'corner') {
+    const outerHeight = g.outerHeight ?? 1200;
+    const innerHorizontal = g.innerHorizontal ?? 900;
+    const innerVertical = g.innerVertical ?? 500;
+    return axis === 'vertical' ? innerHorizontal : outerHeight - innerVertical;
+  }
+  const height = g.height ?? 1200;
+  const leftH = g.leftLegHeight ?? height;
+  const rightH = g.rightLegHeight ?? height;
+  const cutW = g.innerCutWidth ?? 600;
+  const cutD = g.innerCutDepth ?? 300;
+  const cutOff = g.innerCutOffset ?? 300;
+  const topBarHeight = Math.max(0, Math.max(leftH, rightH) - cutD);
+  if (axis === 'horizontal') return topBarHeight;
+  return kind === 'omega' ? cutOff : cutOff + cutW;
+}
+
+/**
+ * Поставити або зняти «формовий» стик, повернувши новий список довільних.
+ * `direction: undefined` — зняти.
+ */
+export function setShapeJoint(
+  current: ManualJointLike[] | undefined,
+  kind: ShapeJointKind,
+  direction: 'vertical' | 'horizontal' | undefined,
+  g: LegacyJointSource,
+): ManualJointLike[] {
+  const id = SHAPE_JOINT_ID[kind];
+  const rest = (current ?? []).filter((joint) => joint.id !== id);
+  if (!direction) return rest;
+  return [...rest, { id, axis: direction, offset: shapeJointOffset(kind, direction, g) }];
+}
+
+/** Напрямок «формового» стику, якщо він стоїть. */
+export function shapeJointDirection(
+  current: ManualJointLike[] | undefined,
+  kind: ShapeJointKind,
+): 'vertical' | 'horizontal' | undefined {
+  return (current ?? []).find((joint) => joint.id === SHAPE_JOINT_ID[kind])?.axis;
 }

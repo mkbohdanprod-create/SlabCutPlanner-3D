@@ -1,5 +1,5 @@
 import type { DetailPart, Placement, Project } from '../domain/types';
-import { DEFAULT_ALLOWANCES, defaultCommercialQuoteSettings, mergeBuiltinEdgeProfiles, referenceData } from '../domain/defaults';
+import { DEFAULT_ALLOWANCES, mergeBuiltinEdgeProfiles, referenceData } from '../domain/defaults';
 import { explodeDetails } from '../engines/geometry';
 import { detectConflicts } from '../engines/packing';
 import { EDGE_KIND_LABEL, parseAdditionSlot, toSlot } from '../domain/ids';
@@ -82,16 +82,6 @@ export function normalizeProject(rawProject: Project): Project {
     textureFrames: project.textureFrames ?? [], 
     manualDimensions: project.manualDimensions ?? [], 
     allowances: { ...DEFAULT_ALLOWANCES, ...(project.allowances ?? {}) },
-    commercialQuote: {
-      ...defaultCommercialQuoteSettings,
-      ...(project.commercialQuote ?? {}),
-      edgePrices: {
-        ...defaultCommercialQuoteSettings.edgePrices,
-        ...(project.commercialQuote?.edgePrices ?? {}),
-      },
-      manualLines: project.commercialQuote?.manualLines ?? [],
-      lineOverrides: project.commercialQuote?.lineOverrides ?? {},
-    }
   };
 }
 

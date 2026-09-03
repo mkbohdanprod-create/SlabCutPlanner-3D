@@ -34,6 +34,8 @@ export interface ContourEdge {
 
 type BaseDims = {
   kind?: string;
+  /** Ліва Г-подібна: виріз ліворуч-унизу (див. domain/types, mirrorL). */
+  mirrorL?: boolean;
   width?: number;
   height?: number;
   outerWidth?: number;
@@ -59,6 +61,21 @@ export function edgeNamedContour(detail: BaseDims): EdgeNamedPoint[] | undefined
     const height = detail.outerHeight || 1200;
     const iw = detail.innerHorizontal || 600;
     const ih = detail.innerVertical || 600;
+    /* ЛІВА Г (03.09.2026): виріз ліворуч-унизу. Обхід той самий, що в
+       `shapeBuilder.getDetailPointsAndBounds`, `joints.jointAnchorPoints`
+       і `geometry.lShapePoints('BL')` — усі копії контуру мають лежати
+       однаково, інакше стик, кут і кромка стають на дзеркально не те
+       ребро. У лівої Г увігнута вершина — D, а не C. */
+    if (detail.mirrorL) {
+      return [
+        { id: 'start', closeId: 'F', x: 0, y: 0 } as EdgeNamedPoint,
+        { id: 'A', x: width, y: 0 } as EdgeNamedPoint,
+        { id: 'B', x: width, y: height } as EdgeNamedPoint,
+        { id: 'C', x: iw, y: height } as EdgeNamedPoint,
+        { id: 'D', x: iw, y: height - ih } as EdgeNamedPoint,
+        { id: 'E', x: 0, y: height - ih } as EdgeNamedPoint,
+      ];
+    }
     return [
       { id: 'start', closeId: 'F', x: 0, y: 0 } as EdgeNamedPoint,
       { id: 'A', x: width, y: 0 } as EdgeNamedPoint,

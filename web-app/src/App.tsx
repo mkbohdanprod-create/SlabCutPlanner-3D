@@ -8,13 +8,12 @@ import { MobileBottomNav } from './components/mobile/MobileBottomNav';
 import { MobileSheet } from './components/mobile/MobileSheet';
 import { HeaderToolbar } from './components/ui/HeaderToolbar';
 import { AppStatusBar } from './components/ui/AppStatusBar';
-import { Scissors, FolderOpen, Loader2, UserCircle, Save, Image, Download, FileText, Plus, Box, Calculator, Trash, Eye, LayoutDashboard, Layers, Settings2, ZoomIn, LogOut, Edit2, Play, Undo2, Redo2 } from 'lucide-react';
+import { Scissors, FolderOpen, Loader2, UserCircle, Save, Image, Download, FileText, Plus, Box, Trash, Eye, LayoutDashboard, Layers, Settings2, ZoomIn, LogOut, Edit2, Play, Undo2, Redo2 } from 'lucide-react';
 import { downloadTextFile } from './utils/file';
 import { exportProjectPng } from './utils/export';
 import { PdfExportDialog } from './components/ui/PdfExportDialog';
 import { LanguageDomTranslator } from './components/ui/LanguageDomTranslator';
 import { ProjectsDashboard } from './components/ui/ProjectsDashboard';
-import { CommercialQuoteDialog } from './components/ui/CommercialQuoteDialog';
 import { HelpDialog } from './components/ui/HelpDialog';
 import { useAuth } from './components/auth/AuthContext';
 import { LoginModal } from './components/auth/LoginModal';
@@ -58,6 +57,7 @@ function App() {
   useEffect(() => {
     if (isMobile && mainView === 'split') setMainView(splitLeftView);
   }, [isMobile, mainView, splitLeftView, setMainView]);
+
   const set3dAssemblyMode = useUIStore((s) => s.set3dAssemblyMode);
   const updateProjectHeader = useProjectStore((s) => s.updateProjectHeader);
   const initialize = useProjectStore(s => s.initialize);
@@ -72,7 +72,7 @@ function App() {
   const setUiLanguage = useProjectStore((s) => s.setUiLanguage);
   const language = useProjectStore((s) => s.project.uiLanguage);
   const [isProjectsOpen, setIsProjectsOpen] = useState(false);
-  const { isQuoteOpen, setIsQuoteOpen, isEdgeProfileSettingsOpen, setIsEdgeProfileSettingsOpen } = useUIStore();
+  const { isEdgeProfileSettingsOpen, setIsEdgeProfileSettingsOpen } = useUIStore();
   const [isHeaderEditOpen, setIsHeaderEditOpen] = useState(false);
   const [isLangOpen, setIsLangOpen] = useState(false);
   const [isSaveOpen, setIsSaveMenuOpen] = useState(false);
@@ -528,17 +528,6 @@ function App() {
                     <Box className="w-4 h-4 shrink-0" />
                     Експортувати DXF
                   </button>
-                  <div className="h-px bg-slate-200 my-1 mx-2"></div>
-                  <button
-                    onClick={() => {
-                      setIsQuoteOpen(true);
-                      setIsExportMenuOpen(false);
-                    }}
-                    className="px-4 py-2 text-sm text-left hover:bg-slate-100 transition-colors shadow-none !border-none !text-slate-700 !bg-transparent flex items-center gap-2"
-                  >
-                    <Calculator className="w-4 h-4 shrink-0" />
-                    Комерційна пропозиція
-                  </button>
                 </div>
               </>
             )}
@@ -636,7 +625,6 @@ function App() {
       </header>
       
       <ProjectsDashboard isOpen={isProjectsOpen} onClose={() => setIsProjectsOpen(false)} />
-      <CommercialQuoteDialog open={isQuoteOpen} onClose={() => setIsQuoteOpen(false)} />
       <PdfExportDialog open={pdfDialogOpen} project={project} parts={useProjectStore.getState().parts} onClose={() => setPdfDialogOpen(false)} />
       <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
       <HelpDialog />
@@ -774,8 +762,10 @@ function App() {
             onOpenTools={() => setToolsOpen((v) => !v)}
             toolsOpen={toolsOpen}
           />
+          {/* Шухляда не живе поверх редактора виробу: відкрили редактор
+              з неї — вона своє зробила і ховається (власник 01.09) */}
           <MobileSheet
-            open={toolsOpen}
+            open={toolsOpen && !isProductEditorMode && !isAddProductMode}
             title="Деталі та слеби"
             onClose={() => setToolsOpen(false)}
           >

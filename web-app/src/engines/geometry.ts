@@ -6,7 +6,7 @@ import { radiusElementSpecs } from '../domain/radiusElement';
 
 import { DEFAULT_ALLOWANCES } from '../domain/defaults';
 import { SIDE_SEGMENT_INDEXES } from '../domain/constants';
-import { manualJointPosition, jointAnchorPoints, reflexJointShift, snapJointPosition } from '../domain/joints';
+import { allJointsOf, manualJointPosition, jointAnchorPoints, snapJointPosition } from '../domain/joints';
 import { metalProfileById, pieceWeightKg } from '../domain/metalProfiles';
 import { EDGE_KIND_LABEL } from '../domain/ids';
 
@@ -76,14 +76,6 @@ function rectPoints(width: number, height: number): Point[] {
 function offsetPoints(points: Point[], x: number, y: number): Point[] {
   return points.map((point) => ({ x: point.x + x, y: point.y + y }));
 }
-
-function scalePoints(points: Point[], width: number, height: number, nextWidth: number, nextHeight: number): Point[] {
-  const safeWidth = Math.max(width, 1);
-  const safeHeight = Math.max(height, 1);
-  return points.map((point) => ({ x: (point.x / safeWidth) * nextWidth, y: (point.y / safeHeight) * nextHeight }));
-}
-
-
 
 /** Returns signed polygon area so offset normals follow the contour direction. */
 function signedPolygonArea(points: Point[]) {
@@ -1439,14 +1431,6 @@ function splitMeta(textureGroupLabel: string, textureOffsetX: number, textureOff
   return { textureGroupLabel, textureOffsetX, textureOffsetY, sideAliases, sideSegments, isSplitSegment: true };
 }
 
-function verticalSegment(x: number, y: number, length: number) {
-  return { start: { x, y }, end: { x, y: y + length } };
-}
-
-function horizontalSegment(x: number, y: number, length: number) {
-  return { start: { x, y }, end: { x: x + length, y } };
-}
-
 function centeredCircleHole(width: number, height: number, diameter: number) {
   const size = Math.max(8, Math.min(diameter, width - 8, height - 8));
   return offsetPoints(circlePoints(size, 28), (width - size) / 2, (height - size) / 2);
@@ -1481,37 +1465,6 @@ function buildSlotSinkRectPart(
     undefined,
     allowanceRectMeta(nominalWidth, nominalHeight, padX, padY, meta),
   );
-}
-
-function buildAllowanceLPart(
-  detail: Detail,
-  name: string,
-  nominalWidth: number,
-  nominalHeight: number,
-  nominalInnerHorizontal: number,
-  nominalInnerVertical: number,
-  orientation: 'TL' | 'TR' | 'BL' | 'BR',
-  parentLabel: string,
-  meta?: PartLayoutMeta,
-) {
-  const layout = lShapeWithAllowances(nominalWidth, nominalHeight, nominalInnerHorizontal, nominalInnerVertical, orientation);
-
-  // Радіуси, фаски та Г-зарізи, приписані цьому сегменту, накладаються на контур так само,
-  // як і для цілої Г-подібної деталі (гілка `wholeDetail`). Раніше цей крок був пропущений:
-  // сегмент будувався по «голому» контуру, і обробка кутів мовчки зникала з розкрою.
-  const complexLayout = buildComplexPolygonPoints(layout.points, meta?.mappedCorners, L_CORNER_IDS, L_SIDE_IDS);
-
-  // Вирізи, приписані цьому сегменту, теж треба прорізати — раніше Г-подібний сегмент
-  // отворів не мав узагалі, тому виріз, що потрапив на нього, зникав із розкрою.
-  const holes = buildHolesFromCutouts(meta?.mappedCutouts, complexLayout.points, layout.width, layout.height, layout.shiftX, layout.shiftY);
-
-  const part = buildPart(detail, name, L_PART_SHAPE, complexLayout.points, layout.width, layout.height, true, parentLabel, undefined, undefined, {
-    ...(meta ?? {}),
-    nominalPoints: layout.nominalPoints,
-    holes: holes.length ? holes : undefined,
-  });
-  if (meta?.mappedCorners) part.sideSegments = complexLayout.sideSegments;
-  return part;
 }
 
 function buildSinkPolygonPart(
@@ -1843,86 +1796,6 @@ function originalCornerPoints(detail: Detail): { points: Record<string, Point>; 
 }
 
 /**
- * Зіставляє кути, задані на ЦІЛОМУ виробі, з вершинами сегмента після розрізу стиками.
- *
- * `polygon` — вершини сегмента в координатах ОРИГІНАЛЬНОЇ форми.
- * `cornerIds` — імена, під якими побудова контуру чекає ці вершини (той самий порядок).
- *
- * Раніше зіставлення робилось лише з чотирма рогами описуючого прямокутника, тому на
- * Г-подібному сегменті кути, що лежать на внутрішньому вирізі, мовчки губилися.
- */
-function mapCornersToPolygon(
-  detail: Detail,
-  polygon: Point[],
-  cornerIds: string[],
-): Record<string, import('../domain/types').CornerProcessing> | undefined {
-  const corners = detail.geometry?.corners;
-  if (!corners) return undefined;
-  const origin = originalCornerPoints(detail);
-  if (!origin) return undefined;
-
-  const mapped: Record<string, import('../domain/types').CornerProcessing> = {};
-
-  polygon.forEach((vertex, index) => {
-    const targetId = cornerIds[index];
-    if (!targetId) return;
-    for (const [id, pt] of Object.entries(origin.points)) {
-      if (Math.abs(pt.x - vertex.x) >= 0.1 || Math.abs(pt.y - vertex.y) >= 0.1) continue;
-      const corner = corners[id];
-      if (!corner) return;
-      // Увігнутий кут позначаємо явно: прямокутна побудова контуру не бачить сусідніх
-      // сторін і без підказки зрізала б ріг замість того, щоб додати матеріал.
-      mapped[targetId] = origin.reflexIds.includes(id) ? { ...corner, reflex: true } : corner;
-      return;
-    }
-  });
-
-  // [CORNER-DEBUG] тимчасово: побачити, який кут якій вершині сегмента дістається
-  if (Object.keys(corners).length) {
-    console.log('[CORNER-DEBUG] сегмент', polygon.map((p) => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '),
-      '\n  задані кути:', Object.entries(corners).map(([k, v]) => `${k}:${v?.type ?? '?'}`),
-      '\n  опорні точки:', Object.entries(origin.points).map(([k, p]) => `${k}(${Math.round(p.x)},${Math.round(p.y)})`),
-      '\n  ПРИПИСАНО:', Object.keys(mapped));
-  }
-
-  return Object.keys(mapped).length > 0 ? mapped : undefined;
-}
-
-/** Окремий випадок `mapCornersToPolygon` для прямокутного сегмента. */
-function mapCornersToRect(detail: Detail, rectX: number, rectY: number, rectW: number, rectH: number): Record<string, import('../domain/types').CornerProcessing> | undefined {
-  return mapCornersToPolygon(
-    detail,
-    [
-      { x: rectX, y: rectY },
-      { x: rectX + rectW, y: rectY },
-      { x: rectX + rectW, y: rectY + rectH },
-      { x: rectX, y: rectY + rectH },
-    ],
-    ['DA', 'AB', 'BC', 'CD'],
-  );
-}
-
-function mapCutoutsToRect(detail: Detail, rectX: number, rectY: number, rectW: number, rectH: number): Record<string, import('../domain/types').SurfaceCutout> | undefined {
-  if (!detail.geometry?.cutouts) return undefined;
-  const mapped: Record<string, import('../domain/types').SurfaceCutout> = {};
-  for (const [id, cutout] of Object.entries(detail.geometry.cutouts)) {
-    if (cutout.x >= rectX && cutout.x <= rectX + rectW && cutout.y >= rectY && cutout.y <= rectY + rectH) {
-      mapped[id] = { ...cutout, x: cutout.x - rectX, y: cutout.y - rectY };
-    }
-  }
-  // [CUTOUT-DEBUG] тимчасово: чому виріз опиняється не там
-  if (Object.keys(detail.geometry.cutouts).length) {
-    const all = Object.entries(detail.geometry.cutouts)
-      .map(([k, c]: any) => `${k}(${Math.round(c.x)},${Math.round(c.y)} ${c.shape ?? '?'} bind:${c.bindCorner ?? '—'})`);
-    console.log('[CUTOUT-DEBUG] сегмент x=', Math.round(rectX), 'y=', Math.round(rectY),
-      'w=', Math.round(rectW), 'h=', Math.round(rectH),
-      '\n  усі вирізи:', all,
-      '\n  ПРИПИСАНО:', Object.keys(mapped));
-  }
-  return Object.keys(mapped).length > 0 ? mapped : undefined;
-}
-
-/**
  * Точка ВСЕРЕДИНІ контуру на лінії різу — з неї хорда піде в обидва боки.
  * Довільний стик не спирається на кут, тому початок різу треба знайти самим.
  */
@@ -1938,12 +1811,38 @@ function interiorPointOnLine(ring: Point[], axis: 'vertical' | 'horizontal', pos
       const t = (position - ca) / (cb - ca);
       crossings.push(axis === 'vertical' ? a.y + (b.y - a.y) * t : a.x + (b.x - a.x) * t);
     }
+    /*
+     * РЕБРО, ЩО ЛЕЖИТЬ НА ЛІНІЇ РІЗУ (03.09.2026).
+     *
+     * У П-подібної стик іде рівно по внутрішньому ребру вирізу, у Г — по
+     * внутрішньому ребру кута. Таке ребро лінію не «перетинає», тому в
+     * список воно не потрапляло — і середина рахувалась між двома
+     * далекими перетинами, тобто ЗА межами матеріалу, на самій межі.
+     * Різ від такої точки давав виродження: замість трьох шматків
+     * виходило два (спіймано сторожем «омега + лямбда»).
+     * Кінці такого ребра — теж межі інтервалів, тому додаємо їх.
+     */
+    if (Math.abs(ca - position) < 0.01 && Math.abs(cb - position) < 0.01) {
+      crossings.push(axis === 'vertical' ? a.y : a.x);
+      crossings.push(axis === 'vertical' ? b.y : b.x);
+    }
   }
 
   if (crossings.length < 2) return undefined;
   crossings.sort((p, q) => p - q);
-  const mid = (crossings[0] + crossings[1]) / 2;
-  return axis === 'vertical' ? { x: position, y: mid } : { x: mid, y: position };
+
+  // Беремо середину ПЕРШОГО інтервалу, який справді лежить у матеріалі.
+  // Раніше бралась середина перших двох перетинів без перевірки — на
+  // формах із вирізом це могла бути точка на межі або поза деталлю.
+  for (let i = 0; i + 1 < crossings.length; i++) {
+    const mid = (crossings[i] + crossings[i + 1]) / 2;
+    if (Math.abs(crossings[i + 1] - crossings[i]) < 0.01) continue;
+    const candidate = axis === 'vertical' ? { x: position, y: mid } : { x: mid, y: position };
+    if (isPointInRing(ring, candidate)) return candidate;
+  }
+
+  const fallback = (crossings[0] + crossings[1]) / 2;
+  return axis === 'vertical' ? { x: position, y: fallback } : { x: fallback, y: position };
 }
 
 /** Текст попереджень про зміщені стики — рушій складає їх під час розкрою. */
@@ -2018,8 +1917,12 @@ function contourForDetail(detail: Detail): Point[] | undefined {
 
 /** Перетворює довільні стики деталі на різи контуру. */
 function manualJointCuts(detail: Detail, ring: Point[]): JointCut[] {
-  const joints = detail.geometry?.manualJoints;
-  if (!joints?.length) return [];
+  // ОДИН ВИД СТИКУ (03.09.2026, рішення власника). Старі описи — кутовий
+  // стик Г і омега/лямбда П — перекладаються в довільні тут, на вході в
+  // рушій. Далі шлях один на всіх: спільна позиція, спільна перевірка на
+  // радіус, ніж по готовому контуру, імена сторін від оригіналу.
+  const joints = allJointsOf(detail.shape, detail.geometry);
+  if (!joints.length) return [];
 
   // Опорні точки беремо спільною функцією: вона знає і прямокутник теж,
   // а саме на прямокутних деталях довільні стики й потрібні найчастіше.
@@ -2194,7 +2097,7 @@ function explodeDetails(details: Detail[]): DetailPart[] {
       // Довільні стики працюють на будь-якій формі: ріжемо готовий контур
       // так само, як і стики на увігнутих кутах. Потрібні, коли деталь більша
       // за сляб або коли ріжемо із залишку.
-      if (g.manualJoints?.length && !wholeDetail) {
+      if (allJointsOf(detail.shape, g).length && !wholeDetail) {
         const contour = contourForDetail(detail);
         const cuts = contour ? manualJointCuts(detail, contour) : [];
         if (contour && cuts.length) {
@@ -2382,8 +2285,6 @@ function explodeDetails(details: Detail[]): DetailPart[] {
         const nominalOH = g.outerHeight ?? 1200;
         const nominalIH = g.innerHorizontal ?? 900;
         const nominalIV = g.innerVertical ?? 500;
-        const ih = Math.min(g.innerHorizontal ?? 900, nominalOW - 20);
-        const iv = Math.min(g.innerVertical ?? 500, nominalOH - 20);
         if (wholeDetail) {
           const layout = lShapeWithAllowances(nominalOW, nominalOH, nominalIH, nominalIV, g.cornerOrientation);
           const complexLayout = buildComplexPolygonPoints(
@@ -2403,73 +2304,40 @@ function explodeDetails(details: Detail[]): DetailPart[] {
           main.sideSegments = complexLayout.sideSegments;
           pushPartWithEdges(parts, detail, main);
         } else {
-          const firstLabel = splitLabel(parentLabel, 1);
-          const secondLabel = splitLabel(parentLabel, 2);
-          // Г-форма ріжеться не контуром, а двома прямокутниками з номіналів,
-          // тому довжину шва тут рахуємо аналітично — по спільному ребру цих
-          // прямокутників. Без цього кутовий стик Г-виробу лишався б без
-          // склейки й пропилу в кошторисі (SC-02).
-          const beforeL = parts.length;
-          const seamL: JointSeam[] = [{
-            lengthMm: g.jointDirection === 'vertical'
-              ? Math.max(0, nominalOH - iv)
-              : Math.min(ih, nominalOW),
-          }];
-          if (g.jointDirection === 'vertical') {
-            const m1 = splitMeta(parentLabel, 0, 0, { E: 'C', F: 'D' });
-            m1.mappedCorners = mapCornersToRect(detail, 0, 0, ih, nominalOH);
-            m1.mappedCutouts = mapCutoutsToRect(detail, 0, 0, ih, nominalOH);
-            const first = buildSlotSinkRectPart(detail, firstLabel, ih, nominalOH, firstLabel, m1);
-            first.sideSegments = {
-              E: verticalSegment(first.width, Math.max(0, first.height - iv), iv),
-              F: horizontalSegment(0, first.height, Math.min(first.width, ih)),
-            };
-            const m2 = splitMeta(parentLabel, first.width, 0);
-            m2.mappedCorners = mapCornersToRect(detail, first.width, 0, Math.max(nominalOW - ih, 1), Math.max(nominalOH - iv, 1));
-            m2.mappedCutouts = mapCutoutsToRect(detail, first.width, 0, Math.max(nominalOW - ih, 1), Math.max(nominalOH - iv, 1));
-            const second = buildSlotSinkRectPart(detail, secondLabel, Math.max(nominalOW - ih, 1), Math.max(nominalOH - iv, 1), secondLabel, m2);
-            pushPartWithEdges(parts, detail, first, [
-              { side: 'A', length: nominalOH, horizontal: false },
-              { side: 'B', length: ih, horizontal: true },
-              { side: 'E', length: iv, horizontal: false },
-              { side: 'F', length: ih, horizontal: true },
-            ]);
-            pushPartWithEdges(parts, detail, second, [
-              { side: 'B', length: Math.max(nominalOW - ih, 1), horizontal: true },
-              { side: 'C', length: Math.max(nominalOH - iv, 1), horizontal: false },
-              { side: 'D', length: Math.max(nominalOW - ih, 1), horizontal: true },
-            ]);
-          } else {
-            const firstHeight = Math.max(nominalOH - iv, 1);
-            const nominalFirstHeight = Math.max(nominalOH - iv, 1);
-            const m1 = splitMeta(parentLabel, 0, 0);
-            m1.mappedCorners = mapCornersToRect(detail, 0, 0, nominalOW, firstHeight);
-            m1.mappedCutouts = mapCutoutsToRect(detail, 0, 0, nominalOW, firstHeight);
-            const first = buildSlotSinkRectPart(detail, firstLabel, nominalOW, firstHeight, firstLabel, m1);
-            first.sideSegments = {
-              D: horizontalSegment(ih, first.height, Math.max(nominalOW - ih, 1)),
-            };
-            const m2 = splitMeta(parentLabel, 0, first.height, { E: 'C', F: 'D' });
-            m2.mappedCorners = mapCornersToRect(detail, 0, first.height, ih, iv);
-            m2.mappedCutouts = mapCutoutsToRect(detail, 0, first.height, ih, iv);
-            const second = buildSlotSinkRectPart(detail, secondLabel, ih, iv, secondLabel, m2);
-            second.sideSegments = {
-              E: verticalSegment(second.width, 0, Math.min(second.height, iv)),
-              F: horizontalSegment(0, second.height, Math.min(second.width, ih)),
-            };
-            pushPartWithEdges(parts, detail, first, [
-              { side: 'A', length: nominalFirstHeight, horizontal: false },
-              { side: 'B', length: nominalOW, horizontal: true },
-              { side: 'C', length: nominalFirstHeight, horizontal: false },
-              { side: 'D', length: Math.max(nominalOW - ih, 1), horizontal: true },
-            ]);
-            pushPartWithEdges(parts, detail, second, [
-              { side: 'A', length: iv, horizontal: false },
-              { side: 'E', length: iv, horizontal: false },
-              { side: 'F', length: ih, horizontal: true },
-            ]);
-          }
-          attachJointSeams(parts, beforeL, seamL);
+          /*
+           * СТИК НЕ ВДАВСЯ (03.09.2026). Тут жила стара математика Г —
+           * різ «двома прямокутниками з номіналів» на 68 рядків: власні
+           * імена сторін, власне мапування кутів і вирізів на прямокутник,
+           * аналітична довжина шва і НУЛЬ перевірок на радіус. Саме вона
+           * давала різні площі залежно від напрямку стику, стик по дотичній
+           * дуги і кромки на лініях різу.
+           *
+           * За рішенням власника (03.09.2026) стик тепер один — довільний,
+           * і ріже його спільний ніж вище (гілка `allJointsOf`). Сюди
+           * потрапляємо тільки якщо ніж НЕ спрацював: лінія не перетнула
+           * матеріал або дала менше двох шматків.
+           *
+           * У такому разі чесно віддаємо ЦІЛУ деталь і кажемо про це вголос.
+           * Мовчки перемикатись на іншу математику — рівно те, від чого ми
+           * пішли: цех отримував шматки, порахувані не тим кодом.
+           */
+          const layout = lShapeWithAllowances(nominalOW, nominalOH, nominalIH, nominalIV, g.cornerOrientation);
+          const complexLayout = buildComplexPolygonPoints(
+            layout.points,
+            detail.geometry?.corners,
+            ['start', 'A', 'B', 'C', 'D', 'E'],
+            ['A', 'B', 'C', 'D', 'E', 'F']
+          );
+          const wholeHoles = buildHolesFromCutouts(g.cutouts, complexLayout.points, layout.width, layout.height, layout.shiftX, layout.shiftY);
+          const main = buildPart(detail, parentLabel, 'Г-подібна', complexLayout.points, layout.width, layout.height, true, parentLabel, undefined, undefined, {
+            nominalPoints: layout.nominalPoints,
+            holes: wholeHoles.length ? wholeHoles : undefined,
+          });
+          main.sideSegments = complexLayout.sideSegments;
+          pushPartWithEdges(parts, detail, main);
+          const notice = `Деталь «${detail.label}»: стик не вдалося застосувати (лінія не перетинає матеріал або дає менше двох шматків) — деталь пішла в розкрій ЦІЛОЮ. Перевірте відступ стику.`;
+          if (!jointNotices.includes(notice)) jointNotices.push(notice);
+          console.warn('[СТИК]', notice);
         }
         continue;
       }
@@ -2479,8 +2347,6 @@ function explodeDetails(details: Detail[]): DetailPart[] {
         const cutW = g.innerCutWidth ?? 600;
         const cutD = g.innerCutDepth ?? 300;
         const offset = g.innerCutOffset ?? 200;
-        const actualSplitWidth = (value: number) => Math.max(1, value + Math.max(0, activeAllowances.detailLength) * 2);
-        const actualSplitHeight = (value: number) => Math.max(1, value + Math.max(0, activeAllowances.detailWidth) * 2);
         const side = g.innerCutSide ?? 'bottom';
         const leftH = g.leftLegHeight ?? nominalH;
         const rightH = g.rightLegHeight ?? nominalH;
@@ -2500,210 +2366,44 @@ function explodeDetails(details: Detail[]): DetailPart[] {
           });
           main.sideSegments = complexLayout.sideSegments;
           pushPartWithEdges(parts, detail, main);
-        } else if (side === 'bottom' || side === 'top') {
-          const firstLabel = splitLabel(parentLabel, 1);
-          const secondLabel = splitLabel(parentLabel, 2);
-          const thirdLabel = splitLabel(parentLabel, 3);
-          const rightWidth = Math.max(nominalW - offset - cutW, 1);
-          const topHeight = Math.max(nominalH - cutD, 1);
-          const nominalRightWidth = rightWidth;
-          const nominalTopHeight = topHeight;
-          const omega = g.jointOmegaDirection;
-          const lambda = g.jointLambdaDirection;
-          const leftLegSpecs: EdgeSpec[] = [
-            { side: 'A', length: nominalH, horizontal: false },
-            { side: 'B', length: offset, horizontal: true },
-            { side: 'G', length: cutD, horizontal: false },
-            { side: 'H', length: offset, horizontal: true },
-          ];
-          const bridgeSpecs: EdgeSpec[] = [
-            { side: 'B', length: cutW, horizontal: true },
-            { side: 'F', length: cutW, horizontal: true },
-          ];
-          const rightLegSpecs: EdgeSpec[] = [
-            { side: 'B', length: nominalRightWidth, horizontal: true },
-            { side: 'C', length: nominalH, horizontal: false },
-            { side: 'D', length: nominalRightWidth, horizontal: true },
-            { side: 'E', length: cutD, horizontal: false },
-          ];
-          const topSpecs: EdgeSpec[] = [
-            { side: 'A', length: nominalTopHeight, horizontal: false },
-            { side: 'B', length: nominalW, horizontal: true },
-            { side: 'C', length: nominalTopHeight, horizontal: false },
-            { side: 'F', length: cutW, horizontal: true },
-          ];
-          const leftFootSpecs: EdgeSpec[] = [
-            { side: 'A', length: cutD, horizontal: false },
-            { side: 'G', length: cutD, horizontal: false },
-            { side: 'H', length: offset, horizontal: true },
-          ];
-          const rightFootSpecs: EdgeSpec[] = [
-            { side: 'C', length: cutD, horizontal: false },
-            { side: 'D', length: nominalRightWidth, horizontal: true },
-            { side: 'E', length: cutD, horizontal: false },
-          ];
-          const leftWidth = actualSplitWidth(offset);
-          const middleWidth = actualSplitWidth(cutW);
-          const rightX = leftWidth + middleWidth;
-          const topY = actualSplitHeight(topHeight);
-          const markRect = (name: string, nominalW: number, nominalH: number, parentLabel: string, x: number, y: number, sideAliases?: Record<string, 'A' | 'B' | 'C' | 'D'>) => {
-            const mappedCorners = mapCornersToRect(detail, x, y, nominalW, nominalH);
-            const mappedCutouts = mapCutoutsToRect(detail, x, y, nominalW, nominalH);
-            const meta = splitMeta(parentLabel, x, y, sideAliases);
-            meta.mappedCorners = mappedCorners;
-            meta.mappedCutouts = mappedCutouts;
-            const part = buildSlotSinkRectPart(detail, name, nominalW, nominalH, parentLabel, meta);
-            const sideSegments: Record<string, { start: Point; end: Point }> = {};
-            if (sideAliases?.E) sideSegments.E = verticalSegment(Math.max(0, rightX - x), Math.max(0, part.height - cutD), Math.min(cutD, part.height));
-            if (sideAliases?.F) sideSegments.F = horizontalSegment(Math.max(0, leftWidth - x), part.height, Math.min(cutW, part.width));
-            if (sideAliases?.G) sideSegments.G = verticalSegment(Math.max(0, leftWidth - x), Math.max(0, part.height - cutD), Math.min(cutD, part.height));
-            if (sideAliases?.H) sideSegments.H = horizontalSegment(0, part.height, Math.min(leftWidth, part.width));
-            part.sideSegments = Object.keys(sideSegments).length ? sideSegments : undefined;
-            return part;
-          };
-
-          const markL = (name: string, nominalW: number, nominalH: number, innerW: number, innerH: number, orient: 'TL' | 'TR' | 'BL' | 'BR', parentLabel: string, x: number, y: number, sideAliases?: Record<string, 'A' | 'B' | 'C' | 'D'>) => {
-            // Сегмент Г-подібний, тому зіставляти треба з його ВЛАСНИМИ шістьма вершинами,
-            // а не з чотирма рогами описуючого прямокутника: кути на внутрішньому вирізі
-            // (як-от скруглення) інакше не збігаються з жодним рогом і губляться.
-            const segmentVertices = lShapePoints(nominalW, nominalH, innerW, innerH, orient)
-              .map((p) => ({ x: p.x + x, y: p.y + y }));
-            const mappedCorners = mapCornersToPolygon(detail, segmentVertices, L_CORNER_IDS);
-            const mappedCutouts = mapCutoutsToRect(detail, x, y, nominalW, nominalH);
-            const meta = splitMeta(parentLabel, x, y, sideAliases);
-            meta.mappedCorners = mappedCorners;
-            meta.mappedCutouts = mappedCutouts;
-            const part = buildAllowanceLPart(detail, name, nominalW, nominalH, innerW, innerH, orient, parentLabel, meta);
-            return part;
-          };
-
-          // ── Різ готового контуру ────────────────────────────────────────────
-          // Будуємо повний контур виробу з усіма радіусами, фасками й Г-зарізами
-          // і ріжемо його хордами стиків. Форма шматка виходить сама.
-          //
-          // Правило радіуса: лінія стику не має перетинати дугу увігнутого кута —
-          // деталь звузилась би там у нуль, і вістря лопнуло б при різі. Тому стик
-          // відсувається рівно на радіус, а вбік — за вибором користувача.
-          const nominalContour = uShapePoints(nominalW, nominalH, cutW, cutD, offset, side, leftH, rightH);
-          const processedContour = buildComplexPolygonPoints(
-            nominalContour,
+        } else {
+          /*
+           * СТИК НЕ ВДАВСЯ або його немає (03.09.2026).
+           *
+           * Тут жила стара математика П: вісім гілок різу «прямокутниками
+           * з номіналів» (омега/лямбда в усіх комбінаціях) плюс окремий
+           * шлях для вирізу збоку, який давав три прямокутники ЗОВСІМ без
+           * імен сторін — тому на них не малювались кромки і не
+           * переносились кути з вирізами. Разом ≈200 рядків.
+           *
+           * За рішенням власника (03.09.2026) стик один — довільний, і
+           * ріже його спільний ніж вище (гілка `allJointsOf`; омега та
+           * лямбда перекладаються в довільні в `legacyJointsToManual`).
+           * Сюди потрапляємо лише тоді, коли різати нема чим або ніж не
+           * спрацював.
+           *
+           * Віддаємо ЦІЛУ деталь і кажемо про це вголос. Якщо менеджер
+           * зняв «деталь цілком», але стику не поставив — деталь поїде
+           * цілою, і він побачить чому, а не отримає мовчки три
+           * прямокутники, яких не просив.
+           */
+          const layout = uShapeWithAllowances(nominalW, nominalH, cutW, cutD, offset, side, leftH, rightH);
+          const complexLayout = buildComplexPolygonPoints(
+            layout.points,
             detail.geometry?.corners,
             U_CORNER_IDS,
             U_SIDE_IDS,
           );
-
-          const jointCuts: JointCut[] = [];
-          const addJointCut = (
-            direction: 'vertical' | 'horizontal' | undefined,
-            cornerX: number,
-            cornerY: number,
-            shift: number,
-            outwardX: number,
-          ) => {
-            if (!direction) return;
-            jointCuts.push(
-              direction === 'vertical'
-                ? { start: { x: cornerX + shift, y: cornerY }, dir: { x: 0, y: -1 } }
-                : { start: { x: cornerX, y: cornerY + shift }, dir: { x: outwardX, y: 0 } },
-            );
-          };
-
-          // Зсув з дуги рахує спільна `reflexJointShift` — та сама, якою 3D малює
-          // цю ж лінію. Своя копія тут означала б, що модель показує одне, а різ
-          // іде по іншому.
-          const corners = detail.geometry?.corners;
-          addJointCut(omega, offset, topHeight, reflexJointShift(corners, 'E', [cutW, cutD], g.jointOmegaRadiusSide), -1);
-          addJointCut(lambda, offset + cutW, topHeight, reflexJointShift(corners, 'D', [cutW, cutD], g.jointLambdaRadiusSide), 1);
-          jointCuts.push(...manualJointCuts(detail, processedContour.points));
-
-          const jointSeams: JointSeam[] = [];
-          const jointRings = jointCuts.length
-            ? splitContourByJoints(processedContour.points, jointCuts, jointSeams)
-            : [];
-
-          if (jointRings.length >= 2) {
-            const before = parts.length;
-            pushRingParts(parts, detail, jointRings, parentLabel);
-            attachJointSeams(parts, before, jointSeams);
-          } else if (omega === 'vertical' && lambda === 'vertical') {
-            pushPartWithEdges(parts, detail, markRect(firstLabel, offset, nominalH, firstLabel, 0, 0, { G: 'C', H: 'D' }), leftLegSpecs);
-            pushPartWithEdges(parts, detail, markRect(secondLabel, cutW, topHeight, secondLabel, leftWidth, 0, { F: 'D' }), bridgeSpecs);
-            pushPartWithEdges(parts, detail, markRect(thirdLabel, rightWidth, nominalH, thirdLabel, rightX, 0, { E: 'A' }), rightLegSpecs);
-          } else if (omega === 'horizontal' && lambda === 'horizontal') {
-            pushPartWithEdges(parts, detail, markRect(firstLabel, nominalW, topHeight, firstLabel, 0, 0, { F: 'D' }), topSpecs);
-            pushPartWithEdges(parts, detail, markRect(secondLabel, offset, cutD, secondLabel, 0, topY, { G: 'C', H: 'D' }), leftFootSpecs);
-            pushPartWithEdges(parts, detail, markRect(thirdLabel, rightWidth, cutD, thirdLabel, rightX, topY, { E: 'A' }), rightFootSpecs);
-          } else if (omega === 'vertical' && lambda === 'horizontal') {
-            pushPartWithEdges(parts, detail, markRect(firstLabel, offset, nominalH, firstLabel, 0, 0, { G: 'C', H: 'D' }), leftLegSpecs);
-            pushPartWithEdges(parts, detail, markRect(secondLabel, Math.max(cutW + rightWidth, 1), topHeight, secondLabel, leftWidth, 0, { F: 'D' }), [
-              { side: 'B', length: Math.max(cutW + nominalRightWidth, 1), horizontal: true },
-              { side: 'C', length: nominalTopHeight, horizontal: false },
-              { side: 'F', length: cutW, horizontal: true },
-            ]);
-            pushPartWithEdges(parts, detail, markRect(thirdLabel, rightWidth, cutD, thirdLabel, rightX, topY, { E: 'A' }), rightFootSpecs);
-          } else if (omega === 'horizontal' && lambda === 'vertical') {
-            pushPartWithEdges(parts, detail, markRect(firstLabel, offset, cutD, firstLabel, 0, topY, { G: 'C', H: 'D' }), leftFootSpecs);
-            pushPartWithEdges(parts, detail, markRect(secondLabel, Math.max(offset + cutW, 1), topHeight, secondLabel, 0, 0, { F: 'D' }), [
-              { side: 'A', length: nominalTopHeight, horizontal: false },
-              { side: 'B', length: Math.max(offset + cutW, 1), horizontal: true },
-              { side: 'F', length: cutW, horizontal: true },
-            ]);
-            pushPartWithEdges(parts, detail, markRect(thirdLabel, rightWidth, nominalH, thirdLabel, rightX, 0, { E: 'A' }), rightLegSpecs);
-          } else if (omega === 'vertical') {
-            pushPartWithEdges(parts, detail, markRect(firstLabel, offset, nominalH, firstLabel, 0, 0, { G: 'C', H: 'D' }), leftLegSpecs);
-            const second = markL(secondLabel, Math.max(nominalW - offset, 1), nominalH, cutW, cutD, 'BL', secondLabel, leftWidth, 0);
-            pushPartWithEdges(parts, detail, second, [
-              { side: 'B', length: Math.max(cutW + nominalRightWidth, 1), horizontal: true },
-              { side: 'C', length: nominalH, horizontal: false },
-              { side: 'D', length: nominalRightWidth, horizontal: true },
-              { side: 'E', length: cutD, horizontal: false },
-              { side: 'F', length: cutW, horizontal: true },
-            ]);
-          } else if (lambda === 'vertical') {
-            const first = markL(firstLabel, Math.max(offset + cutW, 1), nominalH, offset, cutD, 'BR', firstLabel, 0, 0);
-            pushPartWithEdges(parts, detail, first, [
-              { side: 'A', length: nominalH, horizontal: false },
-              { side: 'B', length: Math.max(offset + cutW, 1), horizontal: true },
-              { side: 'F', length: cutW, horizontal: true },
-              { side: 'G', length: cutD, horizontal: false },
-              { side: 'H', length: offset, horizontal: true },
-            ]);
-            pushPartWithEdges(parts, detail, markRect(secondLabel, rightWidth, nominalH, secondLabel, rightX, 0, { E: 'A' }), rightLegSpecs);
-          } else if (omega === 'horizontal') {
-            pushPartWithEdges(parts, detail, markRect(firstLabel, offset, cutD, firstLabel, 0, topY, { G: 'C', H: 'D' }), leftFootSpecs);
-            const second = markL(secondLabel, nominalW, nominalH, Math.max(offset + cutW, 1), cutD, 'BL', secondLabel, 0, 0);
-            pushPartWithEdges(parts, detail, second, [
-              { side: 'A', length: nominalTopHeight, horizontal: false },
-              { side: 'B', length: nominalW, horizontal: true },
-              { side: 'C', length: nominalH, horizontal: false },
-              { side: 'D', length: nominalRightWidth, horizontal: true },
-              { side: 'E', length: cutD, horizontal: false },
-              { side: 'F', length: cutW, horizontal: true },
-            ]);
-          } else if (lambda === 'horizontal') {
-            const first = markL(firstLabel, nominalW, nominalH, offset, cutD, 'BR', firstLabel, 0, 0);
-            pushPartWithEdges(parts, detail, first, [
-              { side: 'A', length: nominalH, horizontal: false },
-              { side: 'B', length: nominalW, horizontal: true },
-              { side: 'C', length: nominalTopHeight, horizontal: false },
-              { side: 'F', length: cutW, horizontal: true },
-              { side: 'G', length: cutD, horizontal: false },
-              { side: 'H', length: offset, horizontal: true },
-            ]);
-            pushPartWithEdges(parts, detail, markRect(secondLabel, rightWidth, cutD, secondLabel, rightX, topY, { E: 'A' }), rightFootSpecs);
-          }
-        } else {
-          const firstLabel = splitLabel(parentLabel, 1);
-          const secondLabel = splitLabel(parentLabel, 2);
-          const thirdLabel = splitLabel(parentLabel, 3);
-          const topHeight = Math.max(nominalH - cutD, 1);
-          const rightWidth = Math.max(nominalW - offset - cutW, 1);
-          const first = buildSlotSinkRectPart(detail, firstLabel, offset, nominalH, firstLabel, splitMeta(parentLabel, 0, 0));
-          const second = buildSlotSinkRectPart(detail, secondLabel, cutW, topHeight, secondLabel, splitMeta(parentLabel, first.width, 0));
-          const third = buildSlotSinkRectPart(detail, thirdLabel, rightWidth, nominalH, thirdLabel, splitMeta(parentLabel, first.width + second.width, 0));
-          pushPartWithEdges(parts, detail, first);
-          pushPartWithEdges(parts, detail, second);
-          pushPartWithEdges(parts, detail, third);
+          const wholeHoles = buildHolesFromCutouts(g.cutouts, complexLayout.points, layout.width, layout.height, layout.shiftX, layout.shiftY);
+          const main = buildPart(detail, parentLabel, 'П-подібна', complexLayout.points, layout.width, layout.height, true, parentLabel, undefined, undefined, {
+            nominalPoints: layout.nominalPoints,
+            holes: wholeHoles.length ? wholeHoles : undefined,
+          });
+          main.sideSegments = complexLayout.sideSegments;
+          pushPartWithEdges(parts, detail, main);
+          const notice = `Деталь «${detail.label}»: стику немає або його не вдалося застосувати — деталь пішла в розкрій ЦІЛОЮ. Додайте стик у панелі «Стики».`;
+          if (!jointNotices.includes(notice)) jointNotices.push(notice);
+          console.warn('[СТИК]', notice);
         }
       }
     }

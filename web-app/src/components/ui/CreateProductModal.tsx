@@ -142,9 +142,9 @@ export function CreateProductModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4" role="presentation">
+    <div className="create-product-backdrop fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4" role="presentation">
       <div
-        className="w-full max-w-[880px] max-h-[calc(100vh-2rem)] bg-[#dcebf5] rounded-md shadow-2xl flex flex-col overflow-hidden font-sans"
+        className="create-product-modal w-full max-w-[880px] max-h-[calc(100vh-2rem)] bg-[#dcebf5] rounded-md shadow-2xl flex flex-col overflow-hidden font-sans"
         role="dialog"
         aria-modal="true"
         aria-label="Новий виріб"
@@ -174,7 +174,7 @@ export function CreateProductModal({
         </div>
 
         {/* Body */}
-        <div className="p-7 flex flex-col gap-6 overflow-y-auto text-[15px]">
+        <div className="cpm-body p-7 flex flex-col gap-6 overflow-y-auto text-[15px]">
           {/* Назва виробу */}
           <div>
             <label className="block text-[15px] font-bold text-slate-700 mb-2">
@@ -194,7 +194,7 @@ export function CreateProductModal({
             <label className="block text-[15px] font-bold text-slate-700 mb-2">
               Матеріал <span className="text-red-600" title="Обов'язково">*</span>
             </label>
-            <div className="grid grid-cols-4 gap-3" role="radiogroup" aria-label="Матеріал">
+            <div className="cpm-materials grid grid-cols-4 gap-3" role="radiogroup" aria-label="Матеріал">
               {materials.map((m) => {
                 const active = material === m;
                 return (
@@ -359,7 +359,7 @@ export function CreateProductModal({
           )}
 
           {/* Форми (Radio buttons + Thumbnails) */}
-          <div className={`mt-1 grid gap-5 ${designs.length > 3 ? 'grid-cols-5' : 'grid-cols-3'}`}>
+          <div className={`cpm-shapes mt-1 grid gap-5 ${designs.length > 3 ? 'grid-cols-5' : 'grid-cols-3'}`}>
             {designs.map((design) => (
               <div key={design.kind} className="flex flex-col gap-2">
                 <label
@@ -392,7 +392,7 @@ export function CreateProductModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 flex items-center justify-between gap-4 shrink-0 border-t border-white/60">
+        <div className="cpm-footer px-6 py-4 flex items-center justify-between gap-4 shrink-0 border-t border-white/60">
           <div className="text-[13px] text-slate-500">{blocker ?? ''}</div>
           <button
             type="button"

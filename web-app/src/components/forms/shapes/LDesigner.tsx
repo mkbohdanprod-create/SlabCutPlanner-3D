@@ -3,6 +3,7 @@ import type { UiLanguage } from '../../../store/useDictionaryStore';
 import {     TemplateInput,  TemplateCheck} from './SvgComponents';
 import { translateStaticUiText } from '../../../i18n';
 import lDetailTemplateSrc from '/src/assets/l-detail-template.svg';
+import { setShapeJoint, shapeJointDirection } from '../../../domain/joints';
 
 export function LDesigner({ detail, updateDetail, activeSides, onSideClick, language }: { detail: DetailDraft; updateDetail: (patch: Partial<DetailDraft>) => void; activeSides: Set<string>; onSideClick: (side: string) => void; language: UiLanguage }) {
   const ui = (value: string) => translateStaticUiText(language, value);
@@ -19,8 +20,14 @@ export function LDesigner({ detail, updateDetail, activeSides, onSideClick, lang
         <TemplateInput x={244} y={352} value={detail.innerHorizontal} onChange={(innerHorizontal) => updateDetail({ innerHorizontal })} />
         <TemplateInput x={585} y={255} width={58} value={detail.quantity} onChange={(quantity) => updateDetail({ quantity })} />
         <TemplateCheck x={520} y={278} label="Ліва (дзеркально)" checked={Boolean(detail.mirrorL)} onChange={(checked) => updateDetail({ mirrorL: checked || undefined })} />
-        <TemplateCheck x={520} y={306} label="Стик вертикальний" checked={detail.jointDirection === 'vertical'} onChange={(checked) => updateDetail({ jointDirection: checked ? 'vertical' : undefined })} />
-        <TemplateCheck x={520} y={334} label="Стик горизонтальний" checked={detail.jointDirection === 'horizontal'} onChange={(checked) => updateDetail({ jointDirection: checked ? 'horizontal' : undefined })} />
+        {/* Стики Г-форми — це звичайні довільні стики (03.09.2026).
+            Раніше вони жили окремим полем `jointDirection`, якого не було
+            видно в панелі «Стики»: користувач бачив на моделі лінію, не міг
+            її прибрати і ставив свою — звідси «стик один, ліній дві».
+            Тепер прапорець створює довільний стик зі стабільним id, тож він
+            і в панелі видимий, і знімається тим самим прапорцем. */}
+        <TemplateCheck x={520} y={306} label="Стик вертикальний" checked={shapeJointDirection(detail.manualJoints, 'corner') === 'vertical'} onChange={(checked) => updateDetail({ manualJoints: setShapeJoint(detail.manualJoints, 'corner', checked ? 'vertical' : undefined, detail), jointDirection: undefined })} />
+        <TemplateCheck x={520} y={334} label="Стик горизонтальний" checked={shapeJointDirection(detail.manualJoints, 'corner') === 'horizontal'} onChange={(checked) => updateDetail({ manualJoints: setShapeJoint(detail.manualJoints, 'corner', checked ? 'horizontal' : undefined, detail), jointDirection: undefined })} />
       </div>
     </div>
   );

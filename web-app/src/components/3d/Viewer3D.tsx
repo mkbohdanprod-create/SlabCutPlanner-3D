@@ -276,6 +276,10 @@ function ProductAssemblyWrapper({
     || (mainPlacement && selectedId === mainPlacement.id);
   
   const updateProductScenePlacement = useProjectStore(st => st.updateProductScenePlacement);
+  /* Стики 45° (02.09): план мітр у ProductElement3DNode залежить від
+     матеріалу (підворот мітрується лише на керамограніті) — той самий
+     фолбек, що всюди: матеріал виробу, інакше матеріал проєкту. */
+  const productMaterial = useProjectStore(st => (st.project?.products?.find(pr => pr.id === product.id)?.material) ?? st.project?.projectMaterial ?? null);
   const handleDragEnd = () => {
     if (!group) return;
     // Пишемо У ВИРІБ: висота лишається на підлозі, поворот — лише навколо
@@ -344,6 +348,7 @@ function ProductAssemblyWrapper({
         <EdgesVisibility.Provider value={assemblyShowEdges}>
           <ProductElement3DNode
             element={mainElement}
+            material={productMaterial}
             customTextureMapFactory={textureFactory}
             /* Для розрізаної складної форми (Г/П зі стиками) один меш не може мати
                три різні UV зі слябу. Тому передаємо сегменти окремо — вузол малює
@@ -1857,7 +1862,12 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8]
         <Canvas
           camera={{ position: [0, 5, 8], fov: 50 }}
           onPointerMissed={() => { setSelectedId(null); useUIStore.getState().setSelectedProductId3d(null); }}
-          onCreated={(state) => attachContextLossRecovery(state.gl.domElement)}
+          onCreated={(state) => {
+            attachContextLossRecovery(state.gl.domElement);
+            // Дев-ручка камери Підбору — та сама угода, що __vs3dPreview у
+            // редакторі: автотести ставлять камеру точно, без сліпих драгів.
+            (window as unknown as { __vs3dAssembly?: unknown }).__vs3dAssembly = state;
+          }}
         >
           <color attach="background" args={[isBacklightMode ? '#25313c' : '#f0f4f8']} />
 

@@ -112,7 +112,12 @@ describe('шов доходить до кошторису', () => {
       ...DEFAULT_SERVICE_CATALOG,
       GLUING_STRAIGHT: { ...DEFAULT_SERVICE_CATALOG.GLUING_STRAIGHT, price: 450 },
     };
-    const estimate = computeEstimate(project, parts, { details: [L_WITH_JOINT], catalog });
+    // manualPricing: ціна з каталогу видима лише в режимі калібрування
+    // (рішення власника 03.09.2026, аудит Е-2). Тест — про те, що рядок
+    // доходить до кошторису з грошима, тому режим тут вмикаємо явно.
+    const estimate = computeEstimate(project, parts, {
+      details: [L_WITH_JOINT], catalog, manualPricing: true,
+    });
     const ids = estimate.lines.map((line) => line.serviceId);
 
     expect(ids).toContain('GLUING_STRAIGHT');

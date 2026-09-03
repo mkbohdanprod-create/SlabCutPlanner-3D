@@ -10,7 +10,7 @@ import type { DetailDraft, ShapeKind } from '../forms/utils/draftHelpers';
 import { parseAdditionSlot, buildElementPath, toSlot, EDGE_KIND_LABEL } from '../../domain/ids';
 import { occupiedEdgeSides } from '../../domain/edgeOccupancy';
 import { clickEdgeSideLetter } from '../../store/useEdgeSourceSide';
-import { jointAnchorPoints, manualJointPosition, reflexCornerIds } from '../../domain/joints';
+import { jointAnchorPoints, manualJointPosition, reflexCornerIds, setShapeJoint } from '../../domain/joints';
 import type { JointShapeFields, JointSideSelection } from '../../domain/joints';
 import type { ManualJoint } from '../../domain/types';
 import { JointOffsetPopup } from './JointOffsetPopup';
@@ -578,7 +578,10 @@ export function ProductEditorWorkspace() {
   const ui = (text: string) => translateStaticUiText(language, text);
 
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
-  const [navCollapsed, setNavCollapsed] = useState(false);
+  /* На телефоні дерево навігації стартує згорнутим: на 390 px воно
+     з'їдало 320 px і редактор виглядав заглушкою (власник 01.09). */
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('is-mobile'));
 
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [jointContextMenu, setJointContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -649,7 +652,13 @@ export function ProductEditorWorkspace() {
     }
     return real || getSideSize(main, edgeId) || undefined;
   };
-  const [addElementModalOpen, setAddElementModalOpen] = useState(false);
+  /* На телефоні порожній редактор одразу відкриває «Новий виріб»:
+     кнопка «+ Створити виріб» живе в згорнутому дереві, і до неї інакше
+     два неочевидні тапи (власник 01.09). На десктопі — як було. */
+  const [addElementModalOpen, setAddElementModalOpen] = useState<boolean>(() =>
+    !session?.mainDetail
+    && typeof document !== 'undefined'
+    && document.documentElement.classList.contains('is-mobile'));
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [detailContextMenu, setDetailContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [detailPassportModalOpen, setDetailPassportModalOpen] = useState<{ detailId: string, initialTab: 'passport' | 'settings' } | null>(null);
@@ -939,9 +948,9 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
   };
 
   return (
-    <div className="absolute inset-0 bg-[#eaf0f4] z-50 flex flex-col shadow-lg overflow-hidden animate-in fade-in zoom-in duration-200">
+    <div className="product-editor absolute inset-0 bg-[#eaf0f4] z-50 flex flex-col shadow-lg overflow-hidden animate-in fade-in zoom-in duration-200">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-[#c6d3dd]">
+      <div className="pe-header flex items-center justify-between px-6 py-3 bg-white border-b border-[#c6d3dd]">
         <div>
           <h1 className="text-lg font-bold text-[#1f2d3a] flex items-center gap-3">
             {/* «Редагування:» окремим вузлом, а не в шаблоні: перекладач
@@ -984,9 +993,9 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
       </div>
 
       {/* Split Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="pe-body flex-1 flex overflow-hidden">
         {/* Left: Canvas Area */}
-        <div className="flex-1 flex flex-col overflow-hidden relative">
+        <div className="pe-canvas flex-1 flex flex-col overflow-hidden relative">
           <div className="absolute top-4 left-4 z-10 flex rounded-md shadow-sm border p-1 gap-1 bg-white border-[#c6d3dd]">
             <button
               onClick={() => setViewMode('2d')}
@@ -1091,21 +1100,19 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   const isU = detail.kind === 'u';
                   const isL = detail.kind === 'l';
                   
-                  if (direction === 'none') {
-                    if (isU) {
-                      if (jointContextMenu.id === 'E') updateDetail({ jointOmegaDirection: undefined });
-                      else if (jointContextMenu.id === 'D') updateDetail({ jointLambdaDirection: undefined });
-                    } else if (isL) {
-                      updateDetail({ jointDirection: undefined });
-                    }
-                  } else {
-                    if (isU) {
-                      if (jointContextMenu.id === 'E') updateDetail({ jointOmegaDirection: direction as 'horizontal' | 'vertical' });
-                      else if (jointContextMenu.id === 'D') updateDetail({ jointLambdaDirection: direction as 'horizontal' | 'vertical' });
-                    } else if (isL) {
-                      updateDetail({ jointDirection: direction as 'horizontal' | 'vertical' });
-                    }
-                  }
+                  /* Стик на куті — це звичайний довільний стик (03.09.2026).
+                     Старі поля jointDirection / jointOmega / jointLambda більше
+                     не пишемо: вони були невидимі в панелі «Стики», і саме тому
+                     користувач не міг прибрати лінію, якої не ставив. */
+                  const which = isU
+                    ? (jointContextMenu.id === 'E' ? 'omega' : jointContextMenu.id === 'D' ? 'lambda' : undefined)
+                    : isL ? 'corner' : undefined;
+                  if (!which || !detail) return;
+                  const axis = direction === 'none' ? undefined : (direction as 'horizontal' | 'vertical');
+                  updateDetail({
+                    manualJoints: setShapeJoint(detail.manualJoints, which, axis, detail),
+                    ...(isL ? { jointDirection: undefined } : { jointOmegaDirection: undefined, jointLambdaDirection: undefined }),
+                  });
                 }}
               />
             )}
@@ -1527,7 +1534,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
 
         {/* Left: Навігація — окремий бар, що згортається.
             order-first ставить його перед канвасом без переносу JSX. */}
-        <div className={`${navCollapsed ? 'w-10' : 'w-[320px]'} order-first bg-white border-r border-[#c6d3dd] flex flex-col overflow-y-auto shadow-sm z-10 transition-all duration-200 shrink-0`}>
+        <div className={`pe-nav ${navCollapsed ? 'w-10 is-collapsed' : 'w-[320px]'} order-first bg-white border-r border-[#c6d3dd] flex flex-col overflow-y-auto shadow-sm z-10 transition-all duration-200 shrink-0`}>
           <button
             onClick={() => setNavCollapsed(!navCollapsed)}
             className="w-full p-2 flex items-center justify-center gap-2 text-slate-500 hover:bg-slate-100 border-b border-slate-200 shrink-0"
@@ -1765,7 +1772,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
         </div>
 
         {/* Right: Властивості деталі */}
-        <div className="w-[450px] bg-white border-l border-[#c6d3dd] flex flex-col overflow-y-auto shadow-sm z-10 shrink-0">
+        <div className="pe-props w-[450px] bg-white border-l border-[#c6d3dd] flex flex-col overflow-y-auto shadow-sm z-10 shrink-0">
           {detail ? (
             <>
               <div className="p-4 bg-slate-50 border-b border-slate-200">
@@ -2150,7 +2157,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   П-подібна (тільки для неї рушій ці поля читає), на увігнутому
                   куті справді радіус, і на цьому куті справді заданий стик. */}
               {detail.kind === 'u' && (() => {
-                const reflexIds = reflexCornerIds(toDetailShape(detail.kind));
+                const reflexIds = reflexCornerIds(toDetailShape(detail.kind), Boolean((detail as { mirrorL?: boolean }).mirrorL));
                 const rows = [
                   {
                     cornerId: 'E',

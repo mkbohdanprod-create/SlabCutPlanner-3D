@@ -122,8 +122,6 @@ interface UIState {
   redoSession: () => void;
   editingDetailId: string | null;
   setEditingDetailId: (id: string | null) => void;
-  isQuoteOpen: boolean;
-  setIsQuoteOpen: (open: boolean) => void;
   isHelpOpen: boolean;
   /**
    * Розділ, на якому відкрити довідку. Кнопка «i» біля інструмента має
@@ -275,8 +273,6 @@ export const useUIStore = create<UIState>((set) => ({
   setFloatingPreviewOpen: (isFloatingPreviewOpen) => set({ isFloatingPreviewOpen }),
   floatingPreviewMode: '2d',
   setFloatingPreviewMode: (floatingPreviewMode) => set({ floatingPreviewMode }),
-  isQuoteOpen: false,
-  setIsQuoteOpen: (isQuoteOpen) => set({ isQuoteOpen }),
   isHelpOpen: false,
   helpSection: null,
   openHelp: (section) => set({ isHelpOpen: true, helpSection: section ?? null }),

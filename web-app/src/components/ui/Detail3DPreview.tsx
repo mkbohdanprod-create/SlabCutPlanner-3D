@@ -24,6 +24,7 @@ import { explodeDetails } from '../../engines/geometry';
 import { getSinkPartTransform } from '../../engines/sinkAssembly';
 import { sampleContourPoints } from '../../engines/shapeBuilder';
 import { attachmentPlacement } from '../../engines/transform3d';
+import { buildAssemblyMiterPlan } from '../../engines/miterAssembly';
 import { parseAdditionSlot } from '../../domain/ids';
 import { hasEdgeTreatment } from '../../domain/edgeTreatment';
 import { useEdgeSourceSide } from '../../store/useEdgeSourceSide';
@@ -46,6 +47,7 @@ import {
   type JointSideSelection,
 } from '../../domain/joints';
 import { anchorContextFor, toDetailShape } from '../../domain/elementToDetail';
+import { edgeNamedContour } from '../../domain/baseContour';
 import { withSinkCutouts, sinkCenter } from '../../domain/productSink';
 import { metalProfileById, METAL_PROFILES } from '../../domain/metalProfiles';
 import { metalChainPieces } from '../../domain/metalChain';
@@ -728,18 +730,12 @@ export function Detail3DNode({
     let height = detail.height || 600;
 
     if (detail.kind === "l") {
-      width = detail.outerWidth || 1200;
-      height = detail.outerHeight || 1200;
-      const iw = detail.innerHorizontal || 600;
-      const ih = detail.innerVertical || 600;
-      return [
-        { id: "start", closeId: "F", x: 0, y: 0 },
-        { id: "A", x: width, y: 0 },
-        { id: "B", x: width, y: height - ih },
-        { id: "C", x: iw, y: height - ih },
-        { id: "D", x: iw, y: height },
-        { id: "E", x: 0, y: height },
-      ];
+      /* Розкладка Г — зі спільного `edgeNamedContour` (03.09.2026).
+         Тут лежала своя копія, яка НЕ знала `mirrorL`, тому ліва Г у цій
+         сцені малювалась правою — при тому, що `shapeBuilder` і креслення
+         дзеркало вже знали. Тепер копія одна на всіх. */
+      const base = edgeNamedContour(detail as never);
+      if (base) return base;
     }
 
     if (detail.kind === "u") {
@@ -1037,8 +1033,24 @@ export function Detail3DNode({
       {/* Стик Г-форми. Гілка Г в `explodeDetails` ріже рівно по `innerHorizontal`
           / `outerHeight − innerVertical` і на радіус увігнутого кута НЕ зсуває
           (на відміну від П-форми). Тому тут зсуву теж немає — модель показує
-          саме те, що зробить рушій. */}
-      {detail.kind === "l" && (() => {
+          саме те, що зробить рушій.
+
+          03.09.2026, скарга фокус-групи «стик поставив один, намалювало два».
+          Кутовий стик (`jointDirection`) і довільні стики (`manualJoints`) —
+          два незалежні записи, і в панелі «Стики» видно ЛИШЕ довільні. Тому
+          користувач, у якого кутовий стик уже стояв (чекбокс у формі Г, права
+          кнопка на куті, шаблон чи імпорт), ставив свій стик і бачив ДВІ
+          пунктирні лінії — свою і чужу, невидиму в списку.
+          А рушій у цьому разі ріже ТІЛЬКИ по довільних: гілка `manualJoints`
+          (`geometry.ts:2197`) стоїть перед гілкою Г і робить `continue`, тож
+          кутовий стик до різу не доходить. Саме тому на карті крою деталь по
+          тій другій лінії не розривалась — фокус-група так і написала:
+          «математика вірна, невірно відмальовує».
+          Показуємо те, що рушій справді зробить: за наявності довільних стиків
+          кутову лінію не малюємо. Питання, чи МАЄ кутовий стик різати разом із
+          довільним, — це зміна математики, вона винесена окремо (розбір
+          «Одна математика деталі», крок 3), тут нічого не рахується інакше. */}
+      {detail.kind === "l" && !detail.manualJoints?.length && (() => {
           const height = detail.outerHeight || 1200;
           const iw = detail.innerHorizontal || 600;
           const ih = detail.innerVertical || 600;
@@ -1101,7 +1113,7 @@ export function Detail3DNode({
           // кнопка). На прямокутнику таких кутів немає, а вісім однакових
           // жовтих кульок (чотири кути + чотири середини сторін) читались як
           // однорідна розмітка і збивали з пантелику: стик задається СТОРОНОЮ.
-          const isReflexCorner = reflexCornerIds(toDetailShape(detail.kind)).includes(
+          const isReflexCorner = reflexCornerIds(toDetailShape(detail.kind), Boolean((detail as { mirrorL?: boolean }).mirrorL)).includes(
             p.id === 'start' ? (p.closeId || 'H') : p.id,
           );
           if (editMode === "joints" && !isReflexCorner) return null;
@@ -1321,6 +1333,15 @@ export function Detail3DNode({
                 onClick={(x, y) => {
                   const selection = jointSelectionFor(side.id);
                   if (selection && onJointSideClick) onJointSideClick(selection, x, y);
+                  /* Знімаємо підсвітку одразу на кліку (03.09.2026).
+                     Далі відкривається віконце відступу з автофокусом на полі:
+                     типовий сценарій — ввести число і натиснути Enter, не
+                     ворухнувши мишею. Тоді `pointerout` не приходить узагалі,
+                     і бурштинова лінія-прев'ю ЛИШАЄТЬСЯ висіти посеред сторони
+                     поруч зі щойно доданим стиком — ще одна «зайва друга
+                     лінія» у скарзі фокус-групи. Зникала вона від першого руху
+                     мишею, тому в розробника не відтворювалась. */
+                  setHoveredJointSide(null);
                 }}
               />
             </group>
@@ -1683,53 +1704,8 @@ function NestedAttachments({
   );
 }
 
-/**
- * СТИК 45° З ДОПОВНЕННЯМ (01.09, власник по керамограніту: «деталі
- * накладаються — нога, потовщення — і автоматично отримують зріз під 45»).
- * Назви — як у цеху (domain/ids EDGE_KIND_LABEL): код `fold` — це
- * ПОТОВЩЕННЯ (заусовка 45°, текстура йде через ребро) — завжди мітра, як і
- * нога (їх стик у кошторисі вже miter45); код `thickening` — це ПІДВОРОТ
- * (пряма підклейка знизу) — мітра лише на керамограніті (каталог цеху:
- * стик 45° опуску), на кварциті лишається прямим стиком без скосу.
- */
-function miterJointFor(kind: string | undefined, material?: string | null): boolean {
-  if (kind === 'fold' || kind === 'leg') return true;
-  if (kind === 'thickening') return material === 'Керамограніт';
-  return false;
-}
-
-const MITER_BIG = 10;
-
-/**
- * Дві половини простору по одній площині 45° через верхнє ребро плити.
- * Система групи ребра (як у блоці ATTACHMENTS): x — уздовж ребра, y —
- * вгору, 0 — верхня площина на лінії ребра, +z — УСЕРЕДИНУ плити (нога й
- * потовщення стоять під ребром: z ∈ [0, t], верх на y = 0 — і накладаються
- * на плиту, звідси й потреба у зрізі). `main` забирає у плити клин
- * знизу-зовні (переріз: (0,0)–(0,−t)–(t,−t)), `child` — у доповнення
- * дзеркальний клин зверху-зсередини; разом — чистий кут зі швом на ребрі.
- * Обидва обмежені по x зоною контакту (spanLen навколо posX). `child`
- * переведено в простір меша доповнення (T(childPos)·R(childRot))⁻¹; `main`
- * лишається в системі групи ребра — його переводить викликач.
- */
-function miterCutters(args: { posX: number; spanLen: number; childPos: [number, number, number]; childRot: [number, number, number] }) {
-  const { posX, spanLen, childPos, childRot } = args;
-  const main = new THREE.BoxGeometry(spanLen, MITER_BIG, MITER_BIG);
-  main.translate(0, 0, MITER_BIG / 2);     // півпростір z > 0 …
-  main.rotateX((3 * Math.PI) / 4);         // … повернутий у (0, −1, −1)/√2: знизу-зовні від ребра
-  main.translate(posX, 0, 0);
-  const child = new THREE.BoxGeometry(spanLen, MITER_BIG, MITER_BIG);
-  child.translate(0, 0, -MITER_BIG / 2);   // протилежний півпростір: зверху-зсередини
-  child.rotateX((3 * Math.PI) / 4);
-  child.translate(posX, 0, 0);
-  const childMatrix = new THREE.Matrix4().compose(
-    new THREE.Vector3(...childPos),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(...childRot)),
-    new THREE.Vector3(1, 1, 1),
-  );
-  child.applyMatrix4(childMatrix.invert());
-  return { main, child };
-}
+/* miterJointFor / miterCutters — перенесені в engines/miterAssembly (02.09):
+   той самий план 45° тепер ріже і редактор, і 3D Підбір. */
 
 function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick, onCutoutDoubleClick, onPlaneClick, onEdgeClick, onEdgeSelect, occupiedSides, onJointClick, onJointSideClick, onLegDoubleClick, onWallPanelDoubleClick, onDetailDoubleClick, onDetailClick, onDetailContextMenu, mode, editMode, theme, textureMode, customTextureMapFactory, position, rotation, material }: { detail: DetailDraft; subDetails?: Record<string, DetailDraft>;
   /** Матеріал виробу — керамограніт мітрує стики 45° автоматично (01.09). */
@@ -1771,22 +1747,12 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
     let height = detail.height || 600;
 
     if (detail.kind === "l") {
-      width = detail.outerWidth || 1200;
-      height = detail.outerHeight || 1200;
-      const iw = detail.innerHorizontal || 600;
-      const ih = detail.innerVertical || 600;
-      return [
-        // Сторони Г-подібної названі буквами A..F — так само, як у
-        // редакторі, у списку сторін і в ключах доповнень (`leg_A`,
-        // `wall_panel_F`). Доти тут жила стара нотація AB/inner/CD/DA,
-        // і жодне доповнення на Г-подібній не знаходило свого ребра.
-        { id: "start", closeId: "F", x: 0, y: 0 },
-        { id: "A", x: width, y: 0 },
-        { id: "B", x: width, y: height - ih },
-        { id: "C", x: iw, y: height - ih },
-        { id: "D", x: iw, y: height },
-        { id: "E", x: 0, y: height },
-      ];
+      /* Розкладка Г — зі спільного `edgeNamedContour` (03.09.2026).
+         Тут лежала своя копія, яка НЕ знала `mirrorL`, тому ліва Г у цій
+         сцені малювалась правою — при тому, що `shapeBuilder` і креслення
+         дзеркало вже знали. Тепер копія одна на всіх. */
+      const base = edgeNamedContour(detail as never);
+      if (base) return base;
     }
 
     if (detail.kind === "u") {
@@ -1902,124 +1868,16 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
    *    45°. Увігнуті кути не чіпаємо (там смуги не перетинаються).
    *    ГІПОТЕЗА: кут підворота на кварциті — теж на ус, а не встик.
    */
-  const miterPlan = useMemo(() => {
-    type Placed = {
-      childPos: [number, number, number]; childRot: [number, number, number];
-      cutters: THREE.BufferGeometry[];
-      /** Межі смуги в рамці ребра: x уздовж ребра від середини, y ≤ 0 під верхньою площиною. */
-      xMin: number; xMax: number; yMin: number; yMax: number;
-      /** Рамка ребра → рамка збірки. */
-      edgeMatrix: THREE.Matrix4;
-    };
-    const mainCutters: THREE.BufferGeometry[] = [];
-    const bySlot = new Map<string, Placed>();
-    const byEdge = new Map<string, Placed[]>();
-    const w = mainBounds.maxX - mainBounds.minX || 1;
-    const h = mainBounds.maxY - mainBounds.minY || 1;
-    const s = 0.001;
-    const thickness = (detail.thickness || 20) * s;
-    const sceneXZ = (p: THREE.Vector2) => ({ x: (p.x - 0.5) * w * s, z: (p.y - 0.5) * h * s });
-    for (const item of mainLineSegments) {
-      const pId = item.id;
-      const here = attachmentsOn(pId);
-      if (!here.length) continue;
-      const p1 = sceneXZ(item.curve.v1); const p2 = sceneXZ(item.curve.v2);
-      const midX = (p1.x + p2.x) / 2; const midY = (p1.z + p2.z) / 2;
-      const angle = Math.atan2(p2.z - p1.z, p2.x - p1.x);
-      const edgeLen = Math.hypot(p2.x - p1.x, p2.z - p1.z);
-      const edgeMatrix = new THREE.Matrix4().compose(
-        new THREE.Vector3(midX, thickness / 2, midY),
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -angle, 0)),
-        new THREE.Vector3(1, 1, 1),
-      );
-      for (const { slot, draft, parsed } of here) {
-        const goesDown = parsed.kind === 'leg' || parsed.kind === 'fold' || parsed.kind === 'thickening';
-        if (!goesDown) continue;
-        const defaultHeight = parsed.kind === 'leg' ? 900 : parsed.kind === 'fold' ? 100 : 40;
-        const height = (draft.height || defaultHeight) * s;
-        const gapY = (draft.attachGap ?? 0) * s;
-        const { posX, insetZ } = attachmentPlacement(item.curve.v1, item.curve.v2, mainBounds, draft.width, draft.attachOffset ?? 0, draft.attachInset ?? 0);
-        const childThickness = (draft.thickness || detail.thickness || 20) * s;
-        // Врівень із торцем плити: зовнішня площина доповнення на лінії ребра (+z — усередину)
-        const childPos: [number, number, number] = [posX, -(height / 2 + gapY), childThickness / 2 + insetZ];
-        const childRot: [number, number, number] = [-Math.PI / 2, 0, 0];
-        const spanLen = Math.min(edgeLen, ((draft.width || 0) * s) || edgeLen);
-        const placed: Placed = {
-          childPos, childRot, cutters: [], edgeMatrix,
-          xMin: posX - spanLen / 2, xMax: posX + spanLen / 2, yMin: -(height + gapY), yMax: -gapY,
-        };
-        if (miterJointFor(parsed.kind, material)) {
-          const cut = miterCutters({ posX, spanLen, childPos, childRot });
-          cut.main.rotateY(-angle);
-          cut.main.translate(midX, thickness / 2, midY);
-          mainCutters.push(cut.main);
-          placed.cutters.push(cut.child);
-        }
-        bySlot.set(slot, placed);
-        if (!byEdge.has(pId)) byEdge.set(pId, []);
-        byEdge.get(pId)!.push(placed);
-      }
-    }
-
-    // КУТИ: сусідні смуги на опуклому куті — зріз по бісектрисі
-    if (byEdge.size >= 2) {
-      const curves = mainShape.curves;
-      // Орієнтація обходу контуру (за самими кривими, бо форма могла бути дзеркальна)
-      let area2 = 0;
-      for (let i = 0; i < curves.length; i += 1) {
-        const a = sceneXZ(curves[i].getPoint(0) as THREE.Vector2);
-        const b = sceneXZ(curves[(i + 1) % curves.length].getPoint(0) as THREE.Vector2);
-        area2 += a.x * b.z - b.x * a.z;
-      }
-      const orientation = Math.sign(area2) || 1;
-      const EPS_Y = 0.0005; // 0,5 мм понад висоту сусіда — щоб грані різака не збігались із гранями смуги
-      const childMatrixOf = (pl: Placed) => new THREE.Matrix4().compose(
-        new THREE.Vector3(...pl.childPos),
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(...pl.childRot)),
-        new THREE.Vector3(1, 1, 1),
-      );
-      const cornerCutter = (V: { x: number; z: number }, n: { x: number; z: number }, sign: 1 | -1, neighbour: Placed, target: Placed) => {
-        const yMin = thickness / 2 + neighbour.yMin - EPS_Y;
-        const yMax = thickness / 2 + neighbour.yMax + EPS_Y;
-        const geo = new THREE.BoxGeometry(MITER_BIG, yMax - yMin, MITER_BIG);
-        geo.translate(sign * MITER_BIG / 2, (yMin + yMax) / 2, 0); // півпростір попереду (+) або позаду (−) вершини вздовж n
-        geo.rotateY(Math.atan2(-n.z, n.x));                        // +x → n
-        geo.translate(V.x, 0, V.z);
-        const full = target.edgeMatrix.clone().multiply(childMatrixOf(target));
-        geo.applyMatrix4(full.invert());
-        return geo;
-      };
-      for (let i = 0; i < curves.length; i += 1) {
-        const c1 = curves[i]; const c2 = curves[(i + 1) % curves.length];
-        if (c1.type !== 'LineCurve' || c2.type !== 'LineCurve') continue;
-        const id1 = mainEdgeMap[i]; const id2 = mainEdgeMap[(i + 1) % curves.length];
-        if (!id1 || !id2 || id1 === id2) continue;
-        const on1 = byEdge.get(id1); const on2 = byEdge.get(id2);
-        if (!on1?.length || !on2?.length) continue;
-        const l1 = c1 as THREE.LineCurve; const l2 = c2 as THREE.LineCurve;
-        if (Math.hypot(l1.v2.x - l2.v1.x, l1.v2.y - l2.v1.y) > 1e-6) continue; // не спільна вершина
-        const a1 = sceneXZ(l1.v1); const V = sceneXZ(l1.v2); const b2 = sceneXZ(l2.v2);
-        const L1 = Math.hypot(V.x - a1.x, V.z - a1.z); const L2 = Math.hypot(b2.x - V.x, b2.z - V.z);
-        if (L1 < 1e-9 || L2 < 1e-9) continue;
-        const d1 = { x: (V.x - a1.x) / L1, z: (V.z - a1.z) / L1 };
-        const d2 = { x: (b2.x - V.x) / L2, z: (b2.z - V.z) / L2 };
-        const cross = d1.x * d2.z - d1.z * d2.x;
-        if (cross * orientation <= 1e-9) continue; // лише опуклий кут
-        const nLen = Math.hypot(d1.x + d2.x, d1.z + d2.z) || 1;
-        const n = { x: (d1.x + d2.x) / nLen, z: (d1.z + d2.z) / nLen };
-        for (const a of on1) {
-          if (a.xMax < L1 / 2 - 1e-6) continue; // смуга не доходить до кута
-          for (const b of on2) {
-            if (b.xMin > -L2 / 2 + 1e-6) continue;
-            a.cutters.push(cornerCutter(V, n, 1, b, a));   // a лишає те, що позаду вершини
-            b.cutters.push(cornerCutter(V, n, -1, a, b));  // b — те, що попереду
-          }
-        }
-      }
-    }
-    return { mainCutters, bySlot };
+  const miterPlan = useMemo(() => buildAssemblyMiterPlan({
+    segments: mainLineSegments.map((item) => ({ id: item.id, v1: item.curve.v1, v2: item.curve.v2 })),
+    curves: mainShape.curves as never,
+    edgeMap: mainEdgeMap,
+    bounds: mainBounds,
+    thicknessMm: detail.thickness || 20,
+    material,
+    attachmentsOn: (pId) => attachmentsOn(pId).map(({ slot, draft, parsed }) => ({ slot, kind: parsed.kind, draft })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mainLineSegments, mainShape, mainEdgeMap, subDetails, mainBounds, detail.thickness, detail.fold, detail.thickening, material]);
+  }), [mainLineSegments, mainShape, mainEdgeMap, subDetails, mainBounds, detail.thickness, detail.fold, detail.thickening, material]);
 
   const mainNode = isSink ? (
     <SinkAssemblyPreview detail={detail} textureMode={textureMode} />
@@ -2665,22 +2523,12 @@ export function Detail3DPreview({
     let height = detail.height || 600;
 
     if (detail.kind === "l") {
-      width = detail.outerWidth || 1200;
-      height = detail.outerHeight || 1200;
-      const iw = detail.innerHorizontal || 600;
-      const ih = detail.innerVertical || 600;
-      return [
-        // Сторони Г-подібної названі буквами A..F — так само, як у
-        // редакторі, у списку сторін і в ключах доповнень (`leg_A`,
-        // `wall_panel_F`). Доти тут жила стара нотація AB/inner/CD/DA,
-        // і жодне доповнення на Г-подібній не знаходило свого ребра.
-        { id: "start", closeId: "F", x: 0, y: 0 },
-        { id: "A", x: width, y: 0 },
-        { id: "B", x: width, y: height - ih },
-        { id: "C", x: iw, y: height - ih },
-        { id: "D", x: iw, y: height },
-        { id: "E", x: 0, y: height },
-      ];
+      /* Розкладка Г — зі спільного `edgeNamedContour` (03.09.2026).
+         Тут лежала своя копія, яка НЕ знала `mirrorL`, тому ліва Г у цій
+         сцені малювалась правою — при тому, що `shapeBuilder` і креслення
+         дзеркало вже знали. Тепер копія одна на всіх. */
+      const base = edgeNamedContour(detail as never);
+      if (base) return base;
     }
 
     if (detail.kind === "u") {

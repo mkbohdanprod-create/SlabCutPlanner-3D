@@ -9,7 +9,8 @@ import { getSinkPartTransform } from '../../engines/sinkAssembly';
 import { sinkCenter } from '../../domain/productSink';
 import { pointInPolygonStrict } from '../../engines/geometryUtils';
 import { buildGrateCutters } from '../../engines/drainGrate';
-import { subtractEdgeCutters } from '../../engines/edgeCutters';
+import { buildEdgeCutters, subtractEdgeCutters } from '../../engines/edgeCutters';
+import { buildAssemblyMiterPlan } from '../../engines/miterAssembly';
 import type { RadiusElementMark } from '../../domain/types';
 
 /**
@@ -204,6 +205,8 @@ export function ProductElement3DNode({
   rotation = [0, 0, 0],
   segmentPartsFor,
   textureForPart,
+  material,
+  extraCutters,
 }: {
   element: ProductElement;
   activeDetailId?: string;
@@ -227,6 +230,10 @@ export function ProductElement3DNode({
   segmentPartsFor?: (elementId: string) => any[];
   /** Текстура для конкретного парта (свій шматок слябу на кожен сегмент). */
   textureForPart?: (part: any) => any;
+  /** Матеріал виробу — керамограніт мітрує підворот 45° автоматично (як у редакторі). */
+  material?: string | null;
+  /** Різаки в просторі меша ЦІЄЇ деталі (клин 45° від батька) — прокидаються в Detail3DNode. */
+  extraCutters?: THREE.BufferGeometry[];
 }) {
   const detail = element.baseDefinition;
   
@@ -315,6 +322,28 @@ export function ProductElement3DNode({
     fold: detail?.fold ? { ...detail.fold, enabled: false } : detail?.fold,
     thickening: detail?.thickening ? { ...detail.thickening, enabled: false } : detail?.thickening,
   }), [detail]);
+
+  /*
+   * СТИКИ 45° У ПІДБОРІ (02.09, власник: «в 3D Підборі обробка кромок і
+   * зрізи по 45 не відображаються»). Той самий план, що ріже редактор
+   * виробу (engines/miterAssembly): клин у плити — в її меш, клин у
+   * ноги/потовщення/підворота — вниз по рекурсії через extraCutters.
+   */
+  const additionEntries = useMemo(() => (element.additions ?? []).map((a) => {
+    const slot = a.id.split(':').pop() || '';
+    return { slot, parsed: parseAdditionSlot(slot), draft: a.baseDefinition };
+  }), [element.additions]);
+  const miterPlan = useMemo(() => buildAssemblyMiterPlan({
+    segments: lineSegments.map((item) => ({ id: item.id, v1: item.curve.v1, v2: item.curve.v2 })),
+    curves: curves as never,
+    edgeMap,
+    bounds,
+    thicknessMm: detail?.thickness || 20,
+    material,
+    attachmentsOn: (pId) => additionEntries
+      .filter((e) => e.parsed.sideId === pId && !e.parsed.ownerSlot)
+      .map((e) => ({ slot: e.slot, kind: e.parsed.kind, draft: e.draft as never })),
+  }), [lineSegments, curves, edgeMap, bounds, detail?.thickness, material, additionEntries]);
 
   // Розрізана форма: якщо елемент дав кілька партів, малюємо КОЖЕН сегмент окремим
   // мешем із власною текстурою. Один меш не може мати три різні UV зі слябу.
@@ -517,14 +546,46 @@ export function ProductElement3DNode({
             shape.holes.push(path);
           });
 
-          const geom = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: false, curveSegments: 32 });
+          let geom: THREE.BufferGeometry = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: false, curveSegments: 32 });
           geom.scale(pw * s, ph * s, 1);
           geom.translate((-pw * s) / 2, (-ph * s) / 2, -thick / 2);
+          // Поворот — у ГЕОМЕТРІЮ (а не в меш, як було): різаки торців і
+          // клини 45° живуть у повернутому просторі, як у Viewer3D/DetailMesh.
+          geom.rotateX(Math.PI / 2);
 
           // Центр сегмента в системі елемента (мм → одиниці сцени).
           const cx = ((p.textureOffsetX ?? 0) + minX + pw / 2) * s - (elW * s) / 2;
           const cz = ((p.textureOffsetY ?? 0) + minY + ph / 2) * s - (elH * s) / 2;
           const tex = textureForPart ? textureForPart(p) : null;
+
+          /*
+           * ОБРОБКА КРОМОК НА РОЗРІЗАНІЙ ПЛИТІ (02.09). Досі профілі різались
+           * лише в нерозрізаній гілці (Detail3DNode) — щойно деталь ділилась
+           * стиком на сегменти, торці ставали сирими. Різаки — ті самі
+           * (buildEdgeCutters по партy: сторони бере з p.sideSegments), плюс
+           * клини 45° плити з плану мітр, переведені в простір сегмента.
+           */
+          const segCutters: THREE.BufferGeometry[] = [];
+          const millingOn = (v?: string) => Boolean(v) && v !== 'Без фрезерування';
+          const wantsCutters = Boolean(detail?.edgeProfiles && Object.values(detail.edgeProfiles).some(Boolean))
+            || Object.values((detail?.corners ?? {}) as Record<string, { edgeProcessing?: string }>).some((c) => millingOn(c?.edgeProcessing))
+            || Object.values((detail?.cutouts ?? {}) as Record<string, { edgeProcessing?: string }>).some((c) => millingOn(c?.edgeProcessing));
+          if (wantsCutters) {
+            try {
+              segCutters.push(...buildEdgeCutters(p, detail?.edgeProfiles, (detail?.thickness || 20), {
+                corners: detail?.corners as never,
+                cutouts: detail?.cutouts as never,
+              }));
+            } catch (e) { console.error('edge cutters error (split)', e); }
+          }
+          for (const mc of miterPlan.mainCutters) {
+            const c = mc.clone();
+            c.translate(-cx, 0, -cz);
+            segCutters.push(c);
+          }
+          if (segCutters.length) {
+            try { geom = subtractEdgeCutters(geom, segCutters); } catch (e) { console.error('CSG error (split)', e); }
+          }
 
           return (
             <mesh
@@ -533,7 +594,6 @@ export function ProductElement3DNode({
               castShadow
               receiveShadow
               position={[cx, 0, cz]}
-              rotation={[Math.PI / 2, 0, 0]}
             >
               {/* Режим «Підсвітка» — це ЧИСТА підміна текстури на фото зі світлом.
                   Emissive і притемнення сцени свідомо не використовуємо: світле фото
@@ -577,6 +637,7 @@ export function ProductElement3DNode({
             addition.baseDefinition.attachGap ?? 0,
           );
 
+          const miter = miterPlan.bySlot.get(additionSlot);
           return (
             <group key={addition.id} position={transform.groupPosition} rotation={transform.groupRotation}>
               <group position={transform.childPosition} rotation={transform.childRotation}>
@@ -589,6 +650,8 @@ export function ProductElement3DNode({
                   mode={mode}
                   theme={theme}
                   textureMode={textureMode}
+                  material={material}
+                  extraCutters={miter?.cutters.length ? miter.cutters : undefined}
                 />
               </group>
             </group>
@@ -603,6 +666,9 @@ export function ProductElement3DNode({
       <Detail3DNode
         id={element.id}
         detail={detailForNode}
+        extraCutters={(extraCutters?.length || miterPlan.mainCutters.length)
+          ? [...(extraCutters ?? []), ...miterPlan.mainCutters]
+          : undefined}
         isActive={activeDetailId === element.id}
         mode={mode}
         editMode={editMode}
@@ -685,6 +751,7 @@ export function ProductElement3DNode({
           addition.baseDefinition.attachGap ?? 0,
         );
 
+        const miter = miterPlan.bySlot.get(additionSlot);
         return (
           <group key={addition.id} position={transform.groupPosition} rotation={transform.groupRotation}>
              <group position={transform.childPosition} rotation={transform.childRotation}>
@@ -705,6 +772,8 @@ export function ProductElement3DNode({
                   theme={theme}
                   textureMode={textureMode}
                   customTextureMapFactory={customTextureMapFactory}
+                  material={material}
+                  extraCutters={miter?.cutters.length ? miter.cutters : undefined}
                 />
              </group>
           </group>

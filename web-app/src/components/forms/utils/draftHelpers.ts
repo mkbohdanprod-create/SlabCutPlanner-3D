@@ -1,5 +1,6 @@
 import { referenceData } from '../../../domain/defaults';
 import type { Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, MaterialType, Point, ShapeKind } from '../../../domain/types';
+import { legacyJointsToManual, SHAPE_JOINT_ID } from '../../../domain/joints';
 
 export type { ShapeKind, CircleSizeMode } from '../../../domain/types';
 export type DetailDraft = import('../../../domain/types').ElementDefinition;
@@ -185,9 +186,24 @@ export function draftFromDetail(source: Detail): DetailDraft {
     diameter: geometry.diameter ?? draft.diameter,
     ellipseWidth: geometry.ellipseWidth ?? draft.ellipseWidth,
     ellipseHeight: geometry.ellipseHeight ?? draft.ellipseHeight,
-    jointDirection: geometry.jointDirection ?? draft.jointDirection,
-    jointOmegaDirection: geometry.jointOmegaDirection ?? draft.jointOmegaDirection,
-    jointLambdaDirection: geometry.jointLambdaDirection ?? draft.jointLambdaDirection,
+    /* МІГРАЦІЯ СТИКІВ (03.09.2026). Старі поля більше не переносимо в
+       чернетку: замість них деталь отримує звичайні довільні стики з тими
+       самими позиціями. Так виріб, зроблений до зведення, відкривається в
+       редакторі вже з видимими стиками — їх видно в панелі «Стики» і можна
+       прибрати. Рушій розуміє й старі поля (`legacyJointsToManual`), тож
+       проєкти, які редактор не відкривав, рахуються так само. */
+    jointDirection: undefined,
+    jointOmegaDirection: undefined,
+    jointLambdaDirection: undefined,
+    manualJoints: [
+      ...legacyJointsToManual(source.shape, geometry).map((joint) => ({
+        ...joint,
+        id: joint.id === 'legacy-corner' ? SHAPE_JOINT_ID.corner
+          : joint.id === 'legacy-omega' ? SHAPE_JOINT_ID.omega
+          : SHAPE_JOINT_ID.lambda,
+      })),
+      ...(geometry.manualJoints ?? []),
+    ],
     thickening: cloneFeature(source.thickening),
     fold: cloneFeature(source.fold, 100),
     edgeProfiles: cloneEdgeProfiles(source.edgeProfiles),

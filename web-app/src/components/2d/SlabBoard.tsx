@@ -1,7 +1,7 @@
 import type { ChangeEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { uid } from '../../domain/defaults';
-import { Loader2, Play, ChevronDown, Lock, LockOpen, PenTool, Camera, Palette, Ruler, FlipHorizontal2, ZoomIn, Eraser, Trash2, Coins, Gauge, Wallpaper, ClipboardCheck } from 'lucide-react';
+import { Loader2, Play, ChevronDown, Lock, LockOpen, PenTool, Camera, Palette, Ruler, FlipHorizontal2, Eraser, Trash2, Coins, Gauge, Wallpaper, ClipboardCheck } from 'lucide-react';
 import type { CutAllowances, DetailPart, DefectZone, EdgeProfileSelection, ManualDimension, Placement, Point, SlabInstance, UiLanguage } from '../../domain/types';
 import { t, translateStaticUiText } from '../../i18n';
 import { normalizeRotation, placementPolygon, pointString, polygonBounds, rotatedLocalPoints, rotatedPoints, rotatedSize, translatePoints } from '../../lib/project';
@@ -33,7 +33,7 @@ import { DrainGrateMarks } from "./board/DrainGrateMarks";
 import { FactHighlight } from "./board/FactHighlight";
 import { SelectionRect } from "./board/SelectionRect";
 import { GroupDragPreview, PlacementDragGhost } from "./board/DragPreviews";
-import { ManualDimensions, SlabDimensionHints, SlabMagnifierWindow } from "./board/BoardOverlays";
+import { ManualDimensions, SlabDimensionHints } from "./board/BoardOverlays";
 
 /**
  * Запас ліворуч від колонки буфера (28.08): зона «поверни в нерозміщені»
@@ -109,7 +109,6 @@ export function SlabBoard({ compact = false }: { compact?: boolean } = {}) {
   const [drag, setDrag] = useState<CanvasDrag | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const [showDimensions, setShowDimensions] = useState(true);
-  const [magnifierOpen, setMagnifierOpen] = useState(false);
   const [selectedManualDimensionId, setSelectedManualDimensionId] = useState<string | undefined>(undefined);
   const [expandedLabelPartId, setExpandedLabelPartId] = useState<string | undefined>(undefined);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenu | null>(null);
@@ -926,7 +925,6 @@ export function SlabBoard({ compact = false }: { compact?: boolean } = {}) {
             >
               {compact ? <FlipHorizontal2 className="w-4 h-4" /> : ui('Дзеркалення')}
             </button>
-            <button className={magnifierOpen ? 'active' : ''} title={t(language, 'magnifier')} onClick={() => setMagnifierOpen((value) => !value)}>{compact ? <ZoomIn className="w-4 h-4" /> : t(language, 'magnifier')}</button>
           </div>
 
           <div className="segmented">
@@ -1360,19 +1358,7 @@ export function SlabBoard({ compact = false }: { compact?: boolean } = {}) {
         })}
       </svg>
       </div>
-      {magnifierOpen && (
-        <SlabMagnifierWindow
-          slabs={project.slabs}
-          selectedSlabId={selectedSlabId}
-          placements={project.placements}
-          parts={parts}
-          viewMode={viewMode}
-          showAllowance={project.allowances.show}
-          language={language}
-          drag={drag?.type === 'placement' ? drag : undefined}
-          onClose={() => setMagnifierOpen(false)}
-        />
-      )}
+      {/* Лупа над слябом видалена 03.09.2026 (рішення власника, аудит А-1). */}
       {/* Ручки зміни висоти зони слебів більше немає: зона не має власної
           прокрутки і росте під кількість слебів, а гортає її загальний
           повзунок робочої області. */}

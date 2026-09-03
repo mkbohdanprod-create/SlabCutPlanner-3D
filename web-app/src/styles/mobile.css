@@ -452,3 +452,185 @@ html.is-mobile .m-sheet__body aside.sidebar-3d {
   padding-right: 0 !important;
   overflow: visible !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Редактор виробу і «Новий виріб» — 01.09.2026
+   (власник: «мобільна версія — заглушка, створення виробів не працює»)
+
+   До цього редактор лишався десктопним: дерево на 320 px + властивості
+   на 450 px на екрані 390 px — полотна і форм просто не було видно, а
+   футер модалки «Новий виріб» ховався під нижнім меню.
+
+   Мобільна розкладка редактора — колонка, яка скролиться:
+     [шапка] → [навігація (згорнута смужка)] → [полотно 46dvh] →
+     [властивості на всю ширину] → нижнє меню.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Редактор закінчується НАД нижнім меню, а не під ним */
+html.is-mobile .product-editor {
+  bottom: calc(var(--m-nav-h) + var(--m-safe-b)) !important;
+}
+
+/* Шапка: компактна, підзаголовок зайвий, кнопки лишаються тапабельними */
+html.is-mobile .pe-header { padding: 8px 10px !important; gap: 8px; }
+html.is-mobile .pe-header h1 { font-size: 15px !important; gap: 6px !important; }
+html.is-mobile .pe-header p { display: none !important; }
+html.is-mobile .pe-header .flex.items-center.gap-4 { gap: 8px !important; }
+html.is-mobile .pe-header button { padding: 8px 12px !important; font-size: 13px !important; white-space: nowrap; }
+
+/* ── ПОРТРЕТ: колонка, що скролиться ─────────────────────────────
+   Вузько і високо → усе одне під одним: навігація смужкою, полотно,
+   властивості на всю ширину. */
+@media (orientation: portrait) {
+  html.is-mobile .pe-body {
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+
+  /* Дерево навігації: на всю ширину над полотном; стартує згорнутим
+     (смужка 42 px), розгорнуте — не вище третини екрана і скролиться */
+  html.is-mobile .pe-nav {
+    order: 0 !important;
+    width: 100% !important;
+    flex: 0 0 auto !important;
+    max-height: 36dvh;
+    border-right: none !important;
+    border-bottom: 1px solid #c6d3dd;
+  }
+  html.is-mobile .pe-nav.is-collapsed {
+    max-height: 42px;
+    min-height: 42px;
+    overflow: hidden !important;
+  }
+  html.is-mobile .pe-nav.is-collapsed > button {
+    width: 100%;
+    height: 42px;
+    flex-direction: row;
+    justify-content: flex-start;
+    padding: 0 12px;
+  }
+  /* Підпис на згорнутій смужці — інакше самотній шеврон нечитабельний */
+  html.is-mobile .pe-nav.is-collapsed > button::after {
+    content: 'Навігація: вироби і деталі';
+    font-size: 12px;
+    font-weight: 700;
+    color: #55627a;
+  }
+
+  /* Полотно (2D/3D): фіксована висота, щоб під ним завжди були властивості */
+  html.is-mobile .pe-canvas {
+    order: 1;
+    flex: 0 0 46dvh !important;
+    min-height: 46dvh;
+  }
+
+  /* Властивості деталі: на всю ширину під полотном, без власного скролу —
+     скролиться все тіло редактора разом */
+  html.is-mobile .pe-props {
+    order: 2;
+    width: 100% !important;
+    flex: 1 0 auto !important;
+    border-left: none !important;
+    border-top: 1px solid #c6d3dd;
+    overflow-y: visible !important;
+  }
+}
+
+/* ── ЛАНДШАФТ (телефон набік): полотно і властивості ПОРУЧ ───────
+   Висоти всього ~390 px — колонка з полотном 46dvh була б нечитабельна.
+   Розкладка як на десктопі, тільки компактніша: згорнуте дерево —
+   вертикальна смужка, полотно тягнеться, властивості 300 px зі своїм
+   скролом. Створення деталі: креслення видно, поки крутиш розміри. */
+@media (orientation: landscape) {
+  html.is-mobile .pe-body { flex-direction: row !important; }
+  html.is-mobile .pe-nav {
+    width: 260px !important;
+    max-height: none;
+    overflow-y: auto !important;
+  }
+  html.is-mobile .pe-nav.is-collapsed { width: 40px !important; }
+  html.is-mobile .pe-canvas { flex: 1 1 auto !important; min-width: 0; }
+  html.is-mobile .pe-props {
+    width: 300px !important;
+    flex: 0 0 300px !important;
+    overflow-y: auto !important;
+  }
+}
+
+/* ── «Новий виріб» ────────────────────────────────────────────────── */
+
+/* На весь екран НАД нижнім меню: футер із «Додати» завжди видно */
+html.is-mobile .create-product-backdrop {
+  padding: 0 !important;
+  align-items: stretch !important;
+  bottom: calc(var(--m-nav-h) + var(--m-safe-b)) !important;
+}
+html.is-mobile .create-product-modal {
+  max-width: 100vw !important;
+  width: 100vw !important;
+  height: 100% !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+}
+html.is-mobile .cpm-body { padding: 14px !important; gap: 16px !important; }
+
+html.is-mobile .cpm-shapes label span {
+  font-size: 12px !important;
+  line-height: 1.15;
+}
+
+@media (orientation: portrait) {
+  /* Картки матеріалів: 2×2 замість чотирьох обрізаних колонок */
+  html.is-mobile .cpm-materials {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+  /* Форми: три в ряд, підписи не наїжджають один на одного */
+  html.is-mobile .cpm-shapes {
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 10px !important;
+  }
+  html.is-mobile .cpm-shapes > div > button { height: 72px !important; }
+}
+
+@media (orientation: landscape) {
+  /* Ширини вистачає на десктопні ряди — менше скролити донизу */
+  html.is-mobile .cpm-materials { gap: 8px !important; }
+  html.is-mobile .cpm-body { padding: 10px 14px !important; gap: 10px !important; }
+  html.is-mobile .cpm-shapes > div > button { height: 64px !important; }
+}
+
+html.is-mobile .cpm-footer {
+  padding: 10px 14px calc(10px + var(--m-safe-b)) !important;
+}
+html.is-mobile .cpm-footer button { flex: 0 0 auto; }
+
+/* Тулбари над полотном: перемикач 2D/3D тулиться вгору-вліво меншим,
+   панель прев'ю (Перегляд/Редагування/Розміри + значки) — під ним,
+   рядком, що скролиться вбік; інакше вони наїжджали одне на одного */
+html.is-mobile .pe-canvas > .absolute.top-4 { top: 6px !important; left: 6px !important; }
+html.is-mobile .pe-canvas .absolute.top-4.left-\[264px\] {
+  left: 6px !important;
+  right: 6px !important;
+  top: 52px !important;
+  justify-content: flex-start !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  pointer-events: auto !important;
+  scrollbar-width: none;
+}
+html.is-mobile .pe-canvas .absolute.top-4.left-\[264px\]::-webkit-scrollbar { display: none; }
+html.is-mobile .pe-canvas .absolute.top-4.left-\[264px\] > * { flex: 0 0 auto; }
+
+/* Ландшафт: другий поверх зверху накривав би перемикач 2D/3D (той сам
+   ~330 px шириною) — панель прев'ю їде на НИЖНІЙ край полотна */
+@media (orientation: landscape) {
+  html.is-mobile .pe-canvas .absolute.top-4.left-\[264px\] {
+    top: auto !important;
+    bottom: 6px !important;
+    left: 6px !important;
+    right: 6px !important;
+  }
+}
+

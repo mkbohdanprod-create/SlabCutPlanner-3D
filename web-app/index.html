@@ -1,10 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="uk">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>web-app</title>
+    <!-- viewport-fit=cover: у режимі застосунку (з Початкового екрана)
+         безпечні зони iPhone стають ненульовими, і нижнє меню їх поважає
+         (mobile.css: env(safe-area-inset-bottom)) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Viyar Stone 3D</title>
+    <!-- Застосунок з Початкового екрана: без адресного рядка Safari.
+         Додати: Safari → Поділитись → «На Початковий екран» -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#303f50" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Viyar Stone" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">

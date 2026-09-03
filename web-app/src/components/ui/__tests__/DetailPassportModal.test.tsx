@@ -5,7 +5,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { DetailPassportModal } from '../DetailPassportModal';
 import type { Detail, Project } from '../../../domain/types';
-import { defaultCommercialQuoteSettings } from '../../../domain/defaults';
 
 // Регресія на конкретну поломку: пункт «Параметри та список обробок» у
 // контекстному меню 3D нічого не відкривав. Меню віддає короткий слот
@@ -44,7 +43,6 @@ const project = {
   products: [],
   slabs: [],
   placements: [],
-  commercialQuote: defaultCommercialQuoteSettings,
   referenceData: { edgeProfiles: [] },
 } as unknown as Project;
 

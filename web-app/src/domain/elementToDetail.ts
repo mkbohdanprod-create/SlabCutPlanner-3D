@@ -91,6 +91,27 @@ export function buildGeometry(draft: ElementDefinition): DetailGeometry {
     innerCutOffset: 'innerCutOffset' in draft ? (draft as any).innerCutOffset : undefined,
     leftLegHeight: 'leftLegHeight' in draft ? (draft as any).leftLegHeight : undefined,
     rightLegHeight: 'rightLegHeight' in draft ? (draft as any).rightLegHeight : undefined,
+    /**
+     * ДЗЕРКАЛО Г-ПОДІБНОЇ (03.09.2026 — скарги фокус-групи, аудит Б-2).
+     *
+     * Чернетка редактора описує ліву Г прапорцем `mirrorL`, а деталь, яка
+     * їде в розкрій, — орієнтацією обходу `cornerOrientation` ('BL' ліва /
+     * 'BR' права). Переклад між ними жив рівно в одному місці — у legacy-
+     * імпорті бланка (`FormsPanel.tsx:812`), а на шляху «виріб → деталь»
+     * його не було взагалі: поле просто випадало зі списку копіювання.
+     *
+     * Наслідок бачила фокус-група: 3D і креслення показували виріз ліворуч
+     * (вони читають `mirrorL`), а розкрій, стики, прив'язка вирізів і ніша
+     * будувались для ПРАВОЇ Г — тобто карта крою на ліві вироби їхала в цех
+     * дзеркальною. Це не помилка обчислення: рушій уміє обидві орієнтації
+     * (`geometry.ts`, гілка 'BL'), його просто ніхто не попереджав.
+     *
+     * Зворотний переклад ('BL' → mirrorL) уже існував у `draftHelpers.ts:177`
+     * — тобто модель обидві сторони передбачала, бракувало саме цього рядка.
+     */
+    cornerOrientation: draft.kind === 'l'
+      ? ((draft as { mirrorL?: boolean }).mirrorL ? 'BL' as const : 'BR' as const)
+      : undefined,
     diameter: 'diameter' in draft ? (draft as any).diameter : undefined,
     ellipseWidth: 'ellipseWidth' in draft ? (draft as any).ellipseWidth : undefined,
     ellipseHeight: 'ellipseHeight' in draft ? (draft as any).ellipseHeight : undefined,
