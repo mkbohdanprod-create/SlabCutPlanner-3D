@@ -3,7 +3,7 @@ import type { Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection
 import { legacyJointsToManual, SHAPE_JOINT_ID } from '../../../domain/joints';
 import { contourEdges } from '../../../domain/baseContour';
 import type { ContourEdge, EdgeNamedPoint } from '../../../domain/baseContour';
-import { groupMembers, groupOfSide, sideGroupsFor, solveGroupEdit, WIDTH_SIDE } from '../../../domain/sideLocks';
+import { DIAMETER_SIDE, ELLIPSE_H_SIDE, ELLIPSE_W_SIDE, groupMembers, groupOfSide, sideGroupsFor, solveGroupEdit, WIDTH_SIDE } from '../../../domain/sideLocks';
 
 export type { ShapeKind, CircleSizeMode } from '../../../domain/types';
 export type DetailDraft = import('../../../domain/types').ElementDefinition;
@@ -267,6 +267,14 @@ export function applySideEdit(
   if (draft.kind === 'l') return applyLSideEdit(draft, side, val, locked);
   if (draft.kind === 'u') return applyUSideEdit(draft, side, val, locked);
 
+  // Кругла й овальна: сторони A–D — квадранти дуги, форму ними не задати.
+  // Редагується габарит: діаметр або дві осі овалу.
+  if (draft.kind === 'circle' && side === DIAMETER_SIDE) return { diameter: val };
+  if (draft.kind === 'ellipse') {
+    if (side === ELLIPSE_W_SIDE) return { ellipseWidth: val };
+    if (side === ELLIPSE_H_SIDE) return { ellipseHeight: val };
+  }
+
   return {};
 }
 
@@ -437,9 +445,12 @@ export function getSideSize(draft: DetailDraft, side: string): number {
   // (похибка < 0.05 % для наших пропорцій), як і метраж крайки в розкрої.
   if (draft.kind === 'circle') {
     const d = Math.max(1, draft.diameter || 800);
+    if (side === DIAMETER_SIDE) return d;
     return Math.round((Math.PI * d) / 4);
   }
   if (draft.kind === 'ellipse') {
+    if (side === ELLIPSE_W_SIDE) return Math.max(1, draft.ellipseWidth || 1200);
+    if (side === ELLIPSE_H_SIDE) return Math.max(1, draft.ellipseHeight || 600);
     const a = Math.max(1, draft.ellipseWidth || 1200) / 2;
     const b = Math.max(1, draft.ellipseHeight || 600) / 2;
     const h = ((a - b) ** 2) / ((a + b) ** 2);

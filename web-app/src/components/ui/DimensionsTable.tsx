@@ -73,11 +73,19 @@ export function DimensionsTable({ draft, updateDetail, sides, lockedSides = NO_L
           {sides.map((side) => {
             const length = getSideLength(side);
             const custom = Boolean((draft as { customPoints?: unknown[] }).customPoints?.length);
+            /* Коло й овал: A–D — це чверті дуги, а не ребра. Полем їх не
+               задати (яка з осей мала б поїхати?), тому лише читання —
+               раніше поле приймало ввід і мовчки нічого не робило.
+               Габарит міняється в блоці Ø / «Габарити» нижче або кліком
+               по числу прямо в кресленні. */
+            const curvedArc = draft.kind === 'circle' || draft.kind === 'ellipse';
             const locked = lockedSides.has(side);
-            const editable = !custom && sideEditable(draft, side, lockedSides);
+            const editable = !custom && !curvedArc && sideEditable(draft, side, lockedSides);
             const donor = editable ? donorForSide(draft, side, lockedSides) : undefined;
             const title = custom
               ? 'Довільний контур: розмір задають точки контуру'
+              : curvedArc
+                ? 'Це довжина чверті дуги — вона рахується з габариту. Міняйте Ø (овал: ширину і висоту)'
               : locked
                 ? 'Замок закритий — зніміть його, щоб змінити розмір'
                 : !editable

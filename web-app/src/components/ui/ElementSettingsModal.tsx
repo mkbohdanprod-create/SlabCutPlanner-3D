@@ -6,7 +6,7 @@ import { SideLockButton } from './SideLockButton';
 import { Detail2DBlueprint } from './Detail2DBlueprint';
 import { sideOptionsFor, supportsEdges } from './FormsPanel';
 import { getSideSize, applySideEdit } from '../forms/utils/draftHelpers';
-import { sideEditable, WIDTH_SIDE } from '../../domain/sideLocks';
+import { DIAMETER_SIDE, ELLIPSE_H_SIDE, ELLIPSE_W_SIDE, sideEditable, WIDTH_SIDE } from '../../domain/sideLocks';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useUIStore } from '../../store/useStore';
 import { minSideMmFor } from '../../domain/manufacturability';
@@ -227,6 +227,57 @@ export function ElementSettingsModal({
                 </div>
               </Accordion>
             )}
+            {/* Кругла: єдиний розмір — діаметр. Сторони A–D у таблиці вище
+                це чверті дуги, ними форму не задати. */}
+            {draft.kind === 'circle' && (
+              <Accordion title="Ø" defaultOpen={true} info="sizes">
+                <div className="p-4 bg-white flex flex-col gap-2">
+                  <SideSizeInput
+                    length={getSideSize(draft, DIAMETER_SIDE)}
+                    readOnly={false}
+                    onCommit={(val) => {
+                      const patch = applySideEdit(draft, DIAMETER_SIDE, val);
+                      if (Object.keys(patch).length > 0) updateDraft(patch);
+                    }}
+                  />
+                  <span className="text-xs text-slate-500">Ø — діаметр деталі</span>
+                </div>
+              </Accordion>
+            )}
+
+            {/* Овальна: дві осі. Замків тут немає — рівняння між ними теж. */}
+            {draft.kind === 'ellipse' && (
+              <Accordion title="Габарити" defaultOpen={true} info="sizes">
+                <div className="p-4 bg-white flex flex-col gap-3">
+                  <label className="flex items-center justify-between gap-3 text-xs text-slate-600">
+                    Ширина
+                    <SideSizeInput
+                      length={getSideSize(draft, ELLIPSE_W_SIDE)}
+                      readOnly={false}
+                      className="w-[110px]"
+                      onCommit={(val) => {
+                        const patch = applySideEdit(draft, ELLIPSE_W_SIDE, val);
+                        if (Object.keys(patch).length > 0) updateDraft(patch);
+                      }}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-3 text-xs text-slate-600">
+                    Висота
+                    <SideSizeInput
+                      length={getSideSize(draft, ELLIPSE_H_SIDE)}
+                      readOnly={false}
+                      className="w-[110px]"
+                      onCommit={(val) => {
+                        const patch = applySideEdit(draft, ELLIPSE_H_SIDE, val);
+                        if (Object.keys(patch).length > 0) updateDraft(patch);
+                      }}
+                    />
+                  </label>
+                  <span className="text-xs text-slate-500">Дві осі овалу; A–D у таблиці — чверті дуги</span>
+                </div>
+              </Accordion>
+            )}
+
             {draft.kind === 'u' && (
               <Accordion title="λ" defaultOpen={true} info="sizes">
                 {/* Це поле мало власну копію формули — і рахувало «Ширину»

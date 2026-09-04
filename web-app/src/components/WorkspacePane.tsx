@@ -1,4 +1,4 @@
-import { Suspense, memo } from 'react';
+import { Suspense, memo, lazy } from 'react';
 import { Layers, Image, Box, Eye, Columns, Loader2, ExternalLink, FileText, Calculator } from 'lucide-react';
 import { useUIStore, type MainView, type PaneView } from '../store/useStore';
 import { ErrorBoundary } from './ui/ErrorBoundary';
@@ -10,6 +10,43 @@ import { EstimatePanel } from './ui/EstimatePanel';
 import { QuotePanel } from './ui/QuotePanel';
 import { RoomEditor } from './room/RoomEditor';
 import { WorkspaceTabs } from './WorkspaceTabs';
+import { CONSTRUCTOR_VIEWS } from '../store/useStore';
+
+/*
+ * КОНСТРУКТОР (04.09.2026): вкладки-пасхалки Студії. Ліниві — код
+ * конструктора не вантажиться, доки менеджер працює у VS3D.
+ */
+const MeasureTab = lazy(() => import('../constructor/measure/MeasureTab'));
+const MetalTab = lazy(() => import('../constructor/metal/MetalTab'));
+const PlywoodTab = lazy(() => import('../constructor/plywood/PlywoodTab'));
+const MergeTab = lazy(() => import('../constructor/merge/MergeTab'));
+const ServicesTab = lazy(() => import('../constructor/docs/ServicesTab'));
+const DocsTab = lazy(() => import('../constructor/docs/DocsTab'));
+
+function ConstructorView({ view }: { view: PaneView }) {
+  const Comp = view === 'measure' ? MeasureTab
+    : view === 'metal' ? MetalTab
+      : view === 'plywood' ? PlywoodTab
+        : view === 'merge' ? MergeTab
+          : view === 'services' ? ServicesTab
+            : DocsTab;
+  return (
+    <div className="flex flex-col h-full relative">
+      <ErrorBoundary componentName={`Constructor:${view}`}>
+        <Suspense
+          fallback={
+            <div className="flex-1 flex flex-col items-center justify-center bg-slate-100 text-slate-500 w-full h-full gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+              <span className="font-medium">Завантаження конструктора...</span>
+            </div>
+          }
+        >
+          <Comp />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
+  );
+}
 
 interface WorkspacePaneProps {
   view: PaneView;
@@ -112,6 +149,8 @@ export const WorkspacePane = memo(function WorkspacePane({
               <QuotePanel />
             </ErrorBoundary>
           </div>
+        ) : CONSTRUCTOR_VIEWS.has(view) ? (
+          <ConstructorView view={view} />
         ) : view === 'room' ? (
           <div className="flex flex-col h-full relative">
             <ErrorBoundary componentName="RoomEditor">

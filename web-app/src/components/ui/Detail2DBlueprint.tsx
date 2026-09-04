@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { DetailDraft } from '../forms/utils/draftHelpers';
 import { curvedContour, isCurvedKind } from '../../domain/baseContour';
-import { sideIsLockable, WIDTH_SIDE } from '../../domain/sideLocks';
+import { DIAMETER_SIDE, ELLIPSE_H_SIDE, ELLIPSE_W_SIDE, sideIsLockable, WIDTH_SIDE } from '../../domain/sideLocks';
 
 /**
  * БЕЙДЖ СТОРОНИ НА КРЕСЛЕННІ (04.09.2026).
@@ -451,17 +451,41 @@ export function Detail2DBlueprint({ detail, lockedSides, onToggleSideLock, onCom
               <line x1={0} y1={0} x2={0} y2={dimY} stroke="#cbd5e1" strokeWidth={Math.max(w, h) * 0.002} />
               <line x1={w} y1={0} x2={w} y2={dimY} stroke="#cbd5e1" strokeWidth={Math.max(w, h) * 0.002} />
               <line x1={0} y1={dimY} x2={w} y2={dimY} stroke="#64748b" strokeWidth={Math.max(w, h) * 0.004} />
-              <text x={cx} y={dimY - textOffset * 0.5} fill="#334155" fontSize={fontSize} fontFamily="sans-serif" textAnchor="middle" dominantBaseline="central">
-                {isCircle ? `Ø ${Math.round(w)} mm` : `${Math.round(w)} mm`}
-              </text>
+              {/* Ø лишається позначкою (як λ у П-подібної), редагується число */}
+              {isCircle && (
+                <text x={cx - fontSize * 1.6} y={dimY - textOffset * 0.5} fill="#64748b" fontSize={fontSize} fontFamily="sans-serif" textAnchor="middle" dominantBaseline="central">
+                  Ø
+                </text>
+              )}
+              <DimValue
+                x={isCircle ? cx + fontSize * 0.5 : cx}
+                y={dimY - textOffset * 0.5}
+                rotate={0}
+                fontSize={fontSize}
+                value={Math.round(w)}
+                editable={canEdit(isCircle ? DIAMETER_SIDE : ELLIPSE_W_SIDE)}
+                editing={editingSide === (isCircle ? DIAMETER_SIDE : ELLIPSE_W_SIDE)}
+                onStart={() => setEditingSide(isCircle ? DIAMETER_SIDE : ELLIPSE_W_SIDE)}
+                onCommit={(next) => commit(isCircle ? DIAMETER_SIDE : ELLIPSE_W_SIDE, next)}
+                onCancel={() => setEditingSide(null)}
+              />
               {!isCircle && (
                 <>
                   <line x1={w} y1={0} x2={dimX} y2={0} stroke="#cbd5e1" strokeWidth={Math.max(w, h) * 0.002} />
                   <line x1={w} y1={h} x2={dimX} y2={h} stroke="#cbd5e1" strokeWidth={Math.max(w, h) * 0.002} />
                   <line x1={dimX} y1={0} x2={dimX} y2={h} stroke="#64748b" strokeWidth={Math.max(w, h) * 0.004} />
-                  <text x={dimX + textOffset * 0.5} y={cy} fill="#334155" fontSize={fontSize} fontFamily="sans-serif" textAnchor="middle" dominantBaseline="central" transform={`rotate(-90, ${dimX + textOffset * 0.5}, ${cy})`}>
-                    {Math.round(h)} mm
-                  </text>
+                  <DimValue
+                    x={dimX + textOffset * 0.5}
+                    y={cy}
+                    rotate={-90}
+                    fontSize={fontSize}
+                    value={Math.round(h)}
+                    editable={canEdit(ELLIPSE_H_SIDE)}
+                    editing={editingSide === ELLIPSE_H_SIDE}
+                    onStart={() => setEditingSide(ELLIPSE_H_SIDE)}
+                    onCommit={(next) => commit(ELLIPSE_H_SIDE, next)}
+                    onCancel={() => setEditingSide(null)}
+                  />
                 </>
               )}
               {quadrants.map(([id, a]) => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layers, Image, Box, Eye, Columns, ExternalLink, FileText, Calculator, Home } from 'lucide-react';
+import { Layers, Image, Box, Eye, Columns, ExternalLink, FileText, Calculator, Home, Ruler, Wrench, LayoutGrid, Combine, ClipboardList, FileOutput, X } from 'lucide-react';
 import { useUIStore, type MainView, type PaneView } from '../store/useStore';
 
 /**
@@ -15,6 +15,16 @@ import { useUIStore, type MainView, type PaneView } from '../store/useStore';
  * ширину вікна і центрує), а в «Спліті» лишається всередині кожної
  * половини — там у кожної панелі свій набір вкладок і свій стан.
  */
+/** Вкладки конструктора — порядок за словами власника 04.09. */
+const CONSTRUCTOR_TABS: Array<{ view: PaneView; label: string; title: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { view: 'measure', label: 'Замір', title: 'Замір з приладу (Leica DXF): підвантажили — відмалювався', icon: Ruler },
+  { view: 'metal', label: 'Метал', title: 'Конструктор металокаркаса: шаблони, профіль, окремий виріб', icon: Wrench },
+  { view: 'plywood', label: 'Фанера', title: 'Конструктор фанерного підкладу: рама, ребра, специфікація', icon: LayoutGrid },
+  { view: 'merge', label: 'Зведення', title: 'Шари замір / виріб / фанера / метал — звести і підігнати під стіни', icon: Combine },
+  { view: 'services', label: 'Послуги', title: 'Послуги для виробництва поруч із розкроєм', icon: ClipboardList },
+  { view: 'docs', label: 'Документи', title: 'Креслення, тех карта, бланк цеху, JSON для MES — з попереднім переглядом', icon: FileOutput },
+];
+
 export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleSplit, centered = false }: {
   view: PaneView;
   onChangeView: (view: MainView) => void;
@@ -28,6 +38,10 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
   const isAdminUnlocked = useUIStore((s) => s.isAdminUnlocked);
   const isDocumentView = view === 'estimate' || view === 'quote';
   const isExpertMode = useUIStore((s) => s.isExpertMode);
+  // КОНСТРУКТОР (04.09): додаткові вкладки лише в режимі конструктора;
+  // вкладки VS3D лишаються всі, разом зі «Спліт» і «2D Розкрій».
+  const constructorMode = useUIStore((s) => s.constructorMode);
+  const setConstructorMode = useUIStore((s) => s.setConstructorMode);
 
   // На телефоні стрічка вкладок прокручується — активна може опинитись
   // за краєм, і людина бачить обрубок «…крій». Підвозимо її в кадр.
@@ -41,6 +55,8 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
     }
   }, [view, isFloatingPreviewOpen]);
   const tabLabel = (label: string) => (isExpertMode ? null : label);
+  // У конструкторі вкладок на шість більше — корінці вужчі, щоб уся смуга влізла в 1600 px
+  const padX = isExpertMode ? 'px-3.5' : constructorMode ? 'px-3' : 'px-6';
 
   // Canvas Tabs
   // overflow-x-auto: у «Спліті» панель удвічі вужча, а вкладок сім —
@@ -64,7 +80,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             onChangeView('2d');
             useUIStore.getState().setFloatingPreviewOpen(false);
           }}
-          className={`pane-tab ${isExpertMode ? 'px-3.5' : 'px-6'} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ${
+          className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ${
             view === '2d' && !isFloatingPreviewOpen ? 'is-active' : ''
           }`}
           style={{ fontFamily: 'Roboto, sans-serif' }}
@@ -78,7 +94,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             onChangeView('texture');
             useUIStore.getState().setFloatingPreviewOpen(false);
           }}
-          className={`pane-tab ${isExpertMode ? 'px-3.5' : 'px-6'} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 ${
+          className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 ${
             view === 'texture' && !isFloatingPreviewOpen ? 'is-active' : ''
           }`}
           style={{ fontFamily: 'Roboto, sans-serif' }}
@@ -92,7 +108,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             useUIStore.getState().set3dAssemblyMode(true);
             useUIStore.getState().setFloatingPreviewOpen(false);
           }}
-          className={`pane-tab ${isExpertMode ? 'px-3.5' : 'px-6'} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 ${
+          className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 ${
             view === '3d' && is3dAssemblyMode ? 'is-active' : ''
           }`}
           style={{ fontFamily: 'Roboto, sans-serif' }}
@@ -107,7 +123,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
               useUIStore.getState().setFloatingPreviewMode('3d');
               useUIStore.getState().setFloatingPreviewOpen(true);
             }}
-            className={`pane-tab ${isExpertMode ? 'px-3.5' : 'px-6'} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
+            className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
               isFloatingPreviewOpen && !isDocumentView ? 'is-active' : ''
             }`}
             style={{ fontFamily: 'Roboto, sans-serif' }}
@@ -122,7 +138,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
               onChangeView('estimate');
               useUIStore.getState().setFloatingPreviewOpen(false);
             }}
-            className={`pane-tab ${isExpertMode ? 'px-3.5' : 'px-6'} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
+            className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
               view === 'estimate' ? 'is-active' : ''
             }`}
             style={{ fontFamily: 'Roboto, sans-serif' }}
@@ -137,7 +153,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             onChangeView('room');
             useUIStore.getState().setFloatingPreviewOpen(false);
           }}
-          className={`pane-tab ${isExpertMode ? 'px-3.5' : 'px-6'} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
+          className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
             view === 'room' ? 'is-active' : ''
           }`}
           style={{ fontFamily: 'Roboto, sans-serif' }}
@@ -150,7 +166,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             onChangeView('quote');
             useUIStore.getState().setFloatingPreviewOpen(false);
           }}
-          className={`pane-tab ${isExpertMode ? 'px-3.5' : 'px-6'} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
+          className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
             view === 'quote' ? 'is-active' : ''
           }`}
           style={{ fontFamily: 'Roboto, sans-serif' }}
@@ -158,9 +174,28 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
         >
           <Calculator className="w-4 h-4" /> {tabLabel('Прорахунок')}
         </button>
+        {constructorMode && CONSTRUCTOR_TABS.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.view}
+              onClick={() => {
+                onChangeView(tab.view);
+                useUIStore.getState().setFloatingPreviewOpen(false);
+              }}
+              className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
+                view === tab.view ? 'is-active' : ''
+              }`}
+              style={{ fontFamily: 'Roboto, sans-serif' }}
+              title={tab.title}
+            >
+              <Icon className="w-4 h-4" /> {tabLabel(tab.label)}
+            </button>
+          );
+        })}
         <button
           onClick={onToggleSplit}
-          className={`pane-tab ${isExpertMode ? 'px-3.5' : 'px-6'} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
+          className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
             isSplitModeActive ? 'is-active' : ''
           }`}
           style={{ fontFamily: 'Roboto, sans-serif' }}
@@ -169,6 +204,15 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
           <Columns className="w-4 h-4" /> {tabLabel('Спліт')}
         </button>
         
+        {constructorMode && (
+          <button
+            onClick={() => setConstructorMode(false)}
+            className={`pane-tab px-2.5 h-10 rounded-t-lg text-[12px] font-bold flex items-center gap-1 shrink-0 whitespace-nowrap !text-violet-700 ${centered ? 'absolute right-14 bottom-0' : 'ml-auto'}`}
+            title="Конструктор увімкнено — клік: вийти назад у VS3D (нічого не губиться)"
+          >
+            <Ruler className="w-4 h-4" /><X className="w-3.5 h-3.5" />
+          </button>
+        )}
         {/* Open in new window button */}
         <button
           onClick={() => {
@@ -177,7 +221,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             url.searchParams.set('popup', isFloatingPreviewOpen ? '3d-preview' : view);
             window.open(url.toString(), 'SlabCutPlannerPopup', 'width=1200,height=800');
           }}
-          className={`pane-tab px-4 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 shrink-0 hover:text-[var(--accent-color)] ${centered ? 'absolute right-4 bottom-0' : 'ml-auto'}`}
+          className={`pane-tab px-4 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 shrink-0 hover:text-[var(--accent-color)] ${centered ? 'absolute right-4 bottom-0' : constructorMode ? '' : 'ml-auto'}`}
           title="Відкрити поточний вид в окремому вікні"
         >
           <ExternalLink className="w-4 h-4" />

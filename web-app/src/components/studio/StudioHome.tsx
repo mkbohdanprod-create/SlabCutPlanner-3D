@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useUIStore } from '../../store/useStore';
 import { ArrowLeft, Box, Ruler, Building2, PackageCheck, Boxes, Factory } from 'lucide-react';
 import { prefersReducedMotion } from './StudioReveal';
 
@@ -114,7 +115,16 @@ export function StudioHome({ onClose }: { onClose: () => void }) {
       question: 'Як це зробити',
       what: 'Погоджений проєкт зустрічається з реальним заміром: підгонка під фактичні стіни, метал і фанера, перевірка по ТУ. На виході не КП, а пакет для цеху.',
       icon: Ruler,
-      status: 'soon',
+      status: 'live',
+      // Перша версія 04.09.2026: режим конструктора поверх VS3D — усі
+      // вкладки VS3D лишаються, додаються замір / метал / фанера /
+      // зведення / формування доків / документи.
+      onOpen: () => {
+        const ui = useUIStore.getState();
+        ui.setConstructorMode(true);
+        ui.setMainView('measure');
+        onClose();
+      },
     },
     {
       id: 'architecture',

@@ -14,7 +14,18 @@ import { publishHighlight, subscribeHighlight } from './highlightSync';
  *  · quote    — прорахунок для клієнта
  *  · room     — приміщення (база): редактор кімнати, 01.09
  */
-export type PaneView = '2d' | '3d' | 'texture' | 'estimate' | 'quote' | 'room';
+export type PaneView = '2d' | '3d' | 'texture' | 'estimate' | 'quote' | 'room'
+  /*
+   * КОНСТРУКТОР (04.09.2026). Шість вкладок, які існують лише в режимі
+   * конструктора (`constructorMode`): замір → метал → фанера → зведення →
+   * формування доків (послуги + розкрій поруч) → документи. Вкладки VS3D
+   * при цьому НЕ ховаються — конструктор дублює VS3D повністю, разом зі
+   * «Спліт» і «2D Розкрій», і додає своє (рішення власника 04.09).
+   */
+  | 'measure' | 'metal' | 'plywood' | 'merge' | 'services' | 'docs';
+
+/** Вкладки, які є лише в конструкторі. */
+export const CONSTRUCTOR_VIEWS: ReadonlySet<PaneView> = new Set(['measure', 'metal', 'plywood', 'merge', 'services', 'docs']);
 export type MainView = PaneView | 'split';
 
 interface UIState {
@@ -91,6 +102,14 @@ interface UIState {
    * сторінки знову замикає меню — розблокування живе, поки відкрите вікно.
    */
   isAdminUnlocked: boolean;
+  /**
+   * Режим «Конструктор» (04.09): та сама програма, те саме ядро, плюс
+   * вкладки конструктора. Вмикається з картки в студії (пасхалка),
+   * вимикається чипом у смузі вкладок. Не зберігається між сесіями —
+   * це спосіб роботи, а не властивість проєкту.
+   */
+  constructorMode: boolean;
+  setConstructorMode: (enabled: boolean) => void;
   setAdminUnlocked: (unlocked: boolean) => void;
   /**
    * Останній застосований шаблон виробу: id і введені числа. Тримаємо тут,
@@ -299,6 +318,13 @@ export const useUIStore = create<UIState>((set) => ({
     publishHighlight({ serviceId: highlightedServiceId, refs: highlightedFactRefs });
   },
   isAdminUnlocked: false,
+  constructorMode: false,
+  setConstructorMode: (constructorMode) => set((state) => ({
+    constructorMode,
+    // Виходимо з конструктора з його вкладки — повертаємось на розкрій,
+    // інакше робоча область лишиться на вкладці, якої вже немає.
+    mainView: !constructorMode && CONSTRUCTOR_VIEWS.has(state.mainView as PaneView) ? '2d' : state.mainView,
+  })),
   setAdminUnlocked: (isAdminUnlocked) => set({ isAdminUnlocked }),
   lastTemplate: null,
   setLastTemplate: (lastTemplate) => set({ lastTemplate }),

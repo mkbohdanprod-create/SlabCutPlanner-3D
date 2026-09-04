@@ -97,11 +97,31 @@ function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point) {
   return Math.abs((lineEnd.y - lineStart.y) * point.x - (lineEnd.x - lineStart.x) * point.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x) / length;
 }
 
+/**
+ * МЕЖА СТОРІН — НЕ ЗАЙВА ТОЧКА (№105, 04.09.2026).
+ *
+ * Вершина, в якій міняється ім'я сторони (`sideId`) або починається /
+ * закінчується ребро різу (`cut`), несе інформацію, якої в координатах
+ * немає. Після різу стиком по внутрішньому куту ніжки П/Г ребро різу
+ * лежить на одній прямій зі стороною (x = 600: різ (600,0)→(600,600) і
+ * F (600,600)→(600,2100)) — геометрично точка (600,600) «майже пряма»,
+ * але саме вона відділяє різ від кромки. Її викидання зсувало всі імена
+ * сторін шматка на одне ребро (XD20 на короткій стороні, метраж 605
+ * замість 1500, кромка по ребру різу). Тому такі вершини чистка не чіпає.
+ */
+function isSideBoundary(previous: Point, point: Point) {
+  return previous.sideId !== point.sideId || Boolean(previous.cut) !== Boolean(point.cut);
+}
+
 /** Removes tiny DXF artifacts so allowance offsets do not create visible teeth at dirty corners. */
 function cleanPolygonForOffset(points: Point[], tolerance: number) {
   if (points.length <= 3) return points;
   const minSegment = Math.max(0.4, tolerance);
-  let cleaned = points.filter((point, index) => pointDistance(point, points[(index + 1) % points.length]) > minSegment);
+  let cleaned = points.filter((point, index) => {
+    const previous = points[(index - 1 + points.length) % points.length];
+    if (isSideBoundary(previous, point)) return true;
+    return pointDistance(point, points[(index + 1) % points.length]) > minSegment;
+  });
   if (cleaned.length < 3) cleaned = points;
 
   let changed = true;
@@ -110,6 +130,7 @@ function cleanPolygonForOffset(points: Point[], tolerance: number) {
     cleaned = cleaned.filter((point, index, items) => {
       const previous = items[(index - 1 + items.length) % items.length];
       const next = items[(index + 1) % items.length];
+      if (isSideBoundary(previous, point)) return true;
       const shortCorner = pointDistance(previous, point) <= minSegment || pointDistance(point, next) <= minSegment;
       const almostStraight = perpendicularDistance(point, previous, next) <= Math.max(0.35, minSegment * 0.18);
       const keep = !shortCorner && !almostStraight;
@@ -1927,8 +1948,22 @@ function namedCustomContour(g: NonNullable<Detail['geometry']>): {
 /**
  * Готовий контур деталі — з радіусами, фасками й Г-зарізами, з іменами сторін.
  * Це те, що ріжуть стики: форма шматка після різу виходить сама.
+ *
+ * Віддано назовні 04.09.2026 для конструктора (зведення з заміром,
+ * фанера) через експортну обгортку внизу файла: та сама математика
+ * деталі, другої не буде (ОДНА_МАТЕМАТИКА_ДЕТАЛІ).
  */
 function contourForDetail(detail: Detail): Point[] | undefined {
+  return contourBuildForDetail(detail)?.points;
+}
+
+/**
+ * Той самий контур разом із сегментами сторін (ім'я сторони → відрізок).
+ * Розділено 04.09.2026 для конструктора: йому потрібні імена сторін, а
+ * `contourForDetail` віддавав лише точки. Математика не змінилась —
+ * `contourForDetail` тепер бере `.points` звідси.
+ */
+function contourBuildForDetail(detail: Detail): { points: Point[]; sideSegments?: Record<string, { start: Point; end: Point }> } | undefined {
   const g = detail.geometry;
   if (!g) return undefined;
   const corners = g.corners;
@@ -1945,7 +1980,7 @@ function contourForDetail(detail: Detail): Point[] | undefined {
    * за угодою customPoints, тому кромки й панелі на шматках лишаються.
    */
   const custom = namedCustomContour(g);
-  if (custom) return custom.points;
+  if (custom) return { points: custom.points, sideSegments: custom.sideSegments };
 
   if (detail.shape === 'П-подібна') {
     const base = uShapePoints(
@@ -1953,7 +1988,7 @@ function contourForDetail(detail: Detail): Point[] | undefined {
       g.innerCutWidth ?? 600, g.innerCutDepth ?? 300, g.innerCutOffset ?? 200,
       g.innerCutSide ?? 'bottom', g.leftLegHeight, g.rightLegHeight,
     );
-    return buildComplexPolygonPoints(base, corners, U_CORNER_IDS, U_SIDE_IDS).points;
+    return buildComplexPolygonPoints(base, corners, U_CORNER_IDS, U_SIDE_IDS);
   }
 
   if (detail.shape === 'Г-подібна') {
@@ -1962,12 +1997,12 @@ function contourForDetail(detail: Detail): Point[] | undefined {
       g.innerHorizontal ?? 900, g.innerVertical ?? 500,
       g.cornerOrientation,
     );
-    return buildComplexPolygonPoints(base, corners, L_CORNER_IDS, L_SIDE_IDS).points;
+    return buildComplexPolygonPoints(base, corners, L_CORNER_IDS, L_SIDE_IDS);
   }
 
   if (detail.shape === 'Прямокутна') {
     const base = rectPoints(g.width ?? 600, g.height ?? 600);
-    return buildComplexPolygonPoints(base, corners, ['DA', 'AB', 'BC', 'CD'], ['A', 'B', 'C', 'D']).points;
+    return buildComplexPolygonPoints(base, corners, ['DA', 'AB', 'BC', 'CD'], ['A', 'B', 'C', 'D']);
   }
 
   return undefined;
@@ -2258,7 +2293,26 @@ function pushRingParts(parts: DetailPart[], detail: Detail, rings: Point[][], pa
     let shiftY = 0;
     if (padX > 0 || padY > 0) {
       const offset = offsetPolygon(local, padX, padY);
-      finalPoints = offset.points.map((p, i) => ({ ...p, sideId: local[i]?.sideId, cut: local[i]?.cut }));
+      /*
+       * Імена сторін і позначки різу переносяться на контур з припуском.
+       * За індексом — лише коли точок стільки ж, скільки було (чистка
+       * `cleanPolygonForOffset` межі сторін тепер не чіпає, №105). Якщо
+       * кількість усе ж розійшлась — за найближчою вихідною вершиною, а
+       * не «за номером»: інакше кожна сторона після викинутої точки
+       * з'їжджає на сусіднє ребро.
+       */
+      const sameCount = offset.points.length === local.length;
+      if (!sameCount) console.warn(`[РОЗКРІЙ] ${label}: контур з припуском має ${offset.points.length} точок проти ${local.length} — імена сторін перенесено за найближчою вершиною`);
+      const sourceFor = (p: Point, i: number): Point | undefined => {
+        if (sameCount) return local[i];
+        let best: Point | undefined; let bestDist = Infinity;
+        for (const q of local) {
+          const d = (q.x + offset.shiftX - p.x) ** 2 + (q.y + offset.shiftY - p.y) ** 2;
+          if (d < bestDist) { bestDist = d; best = q; }
+        }
+        return best;
+      };
+      finalPoints = offset.points.map((p, i) => { const src = sourceFor(p, i); return { ...p, sideId: src?.sideId, cut: src?.cut }; });
       width = offset.width;
       height = offset.height;
       shiftX = offset.shiftX;
@@ -2684,7 +2738,7 @@ function explodeDetails(details: Detail[]): DetailPart[] {
   return parts;
 }
 
-  return { explodeDetails };
+  return { explodeDetails, contourForDetail, contourBuildForDetail };
 }
 
 
@@ -2699,4 +2753,18 @@ export function explodeDetails(
   material?: MaterialType,
 ): DetailPart[] {
   return createGeometryEngine({ ...DEFAULT_ALLOWANCES, ...allowances }, material).explodeDetails(details);
+}
+
+/**
+ * Готовий контур деталі з іменами сторін — для конструктора (04.09.2026).
+ * Та сама функція, що ріже стики всередині рушія; припуски на контур не
+ * впливають, тому беремо замовчування.
+ */
+export function contourForDetail(detail: Detail): Point[] | undefined {
+  return createGeometryEngine(DEFAULT_ALLOWANCES).contourForDetail(detail);
+}
+
+/** Контур + сегменти сторін (ім'я → відрізок) — для конструктора (04.09.2026). */
+export function contourWithSidesForDetail(detail: Detail): { points: Point[]; sideSegments?: Record<string, { start: Point; end: Point }> } | undefined {
+  return createGeometryEngine(DEFAULT_ALLOWANCES).contourBuildForDetail(detail);
 }
