@@ -322,6 +322,18 @@ export function buildProductFromSession(
     const contactLength = Math.max(1, attachTo - attachFrom);
 
     const joint: import('../../domain/types').Joint = {
+      /*
+       * Ім'я стику — від СЛОТА, і так лишається свідомо: за ним стик
+       * шукають тести й код («знайди joint_wall_panel_B у власника»).
+       *
+       * 03.09.2026 з'ясувалось, що воно НЕ унікальне між виробами: два
+       * вироби з панеллю на стороні A дають однакове `joint_wall_panel_A`.
+       * Спокуса була перейменувати стик тут — але тоді ламається угода
+       * пошуку за слотом. Полагоджено там, де й була помилка: у
+       * `productionFacts` ключ дедуплікації тепер адресний (виріб + шлях
+       * елемента + ім'я), тож однакові імена в різних виробах більше не
+       * склеюються в один факт.
+       */
       id: `joint_${id}`,
       origin: 'authored',
       a: { elementPath: ownerElementId, sideId, from: attachFrom, to: attachTo },
@@ -577,7 +589,6 @@ export function ProductEditorWorkspace() {
   const language = useProjectStore(s => s.language);
   const ui = (text: string) => translateStaticUiText(language, text);
 
-  const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
   /* На телефоні дерево навігації стартує згорнутим: на 390 px воно
      з'їдало 320 px і редактор виглядав заглушкою (власник 01.09). */
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() =>
@@ -996,54 +1007,13 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
       <div className="pe-body flex-1 flex overflow-hidden">
         {/* Left: Canvas Area */}
         <div className="pe-canvas flex-1 flex flex-col overflow-hidden relative">
-          <div className="absolute top-4 left-4 z-10 flex rounded-md shadow-sm border p-1 gap-1 bg-white border-[#c6d3dd]">
-            <button
-              onClick={() => setViewMode('2d')}
-              className={`px-4 py-1.5 rounded-sm text-sm font-medium transition-colors ${
-                viewMode === '2d'
-                  ? 'bg-[#e0f0ff] text-[#0084ff]'
-                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
-              }`}
-            >
-              2D Креслення
-            </button>
-            <button
-              onClick={() => setViewMode('3d')}
-              className={`px-4 py-1.5 rounded-sm text-sm font-medium transition-colors ${
-                viewMode === '3d'
-                  ? 'bg-[#e0f0ff] text-[#0084ff]'
-                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
-              }`}
-            >
-              3D Модель
-            </button>
-          </div>
-          
+          {/* ТУТ БУВ ПЕРЕМИКАЧ «2D Креслення / 3D Модель» (прибрано 04.09.2026,
+              рішення власника). Він відкривав те саме вікно розмірів і торців,
+              що й подвійний клік по деталі, — дві двері в одну кімнату, ще й
+              одна з них займала кут сцени. Лишився один вхід: подвійний клік
+              по деталі в 3D. */}
           <div className="flex-1 relative bg-[#eaf0f4] overflow-hidden flex flex-col">
-            {viewMode === '2d' ? (
-              detail ? (
-                <div className="flex-1 w-full relative flex flex-col">
-                  {/* Той самий редактор «Налаштування розмірів та торців», але вбудований:
-                      дерево ліворуч і властивості праворуч лишаються видимими,
-                      тож між деталями можна перемикатись не виходячи з 2D. */}
-                  <ElementSettingsModal
-                    embedded
-                    key={session.activeDetailId ?? 'main'}
-                    project={project}
-                    material={session.material}
-                    initialDetail={detail}
-                    occupiedSides={occupiedSides}
-                    onClose={() => setViewMode('3d')}
-                    onSave={(draft) => updateDetail(draft)}
-                  />
-                </div>
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-sm">
-                  <Box className="w-12 h-12 text-slate-300 mb-2" />
-                  Виберіть деталь для відображення в 2D
-                </div>
-              )
-            ) : session.mainDetail ? (
+            {session.mainDetail ? (
               <Detail3DPreview
                 detail={session.mainDetail}
                 subDetails={session.subDetails}

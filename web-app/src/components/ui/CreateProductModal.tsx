@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { X, HelpCircle, LayoutTemplate, AlertTriangle, Info } from 'lucide-react';
 import { translateStaticUiText } from '../../i18n';
 import { ShapeIcon } from '../forms/utils/sharedInputs';
-import { visibleDetailTypes, createDraft } from '../forms/utils/draftHelpers';
+import { visibleDetailTypes, createDraft, defaultsForKind } from '../forms/utils/draftHelpers';
 import { useUIStore } from '../../store/useStore';
 import type { DetailDraft, ProductEditorSession } from '../forms/utils/draftHelpers';
 import type { DetailType, MaterialType } from '../../domain/types';
@@ -85,7 +85,9 @@ export function CreateProductModal({
   const ui = (text: string) => translateStaticUiText('uk', text);
 
   const updateDraft = (patch: Partial<DetailDraft>) => {
-    setDraft({ ...draft, ...patch });
+    // Форма приносить свої розміри (`defaultsForKind`) — інакше П-подібна,
+    // створена тут, лишалась із розмірами прямокутника (04.09.2026).
+    setDraft({ ...draft, ...(patch.kind ? defaultsForKind(patch.kind, draft.kind) : {}), ...patch });
   };
 
   const thicknessOptions = thicknessesFor(material);

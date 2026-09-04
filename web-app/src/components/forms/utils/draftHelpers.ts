@@ -1,6 +1,9 @@
 import { referenceData } from '../../../domain/defaults';
 import type { Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, MaterialType, Point, ShapeKind } from '../../../domain/types';
 import { legacyJointsToManual, SHAPE_JOINT_ID } from '../../../domain/joints';
+import { contourEdges } from '../../../domain/baseContour';
+import type { ContourEdge, EdgeNamedPoint } from '../../../domain/baseContour';
+import { groupMembers, groupOfSide, sideGroupsFor, solveGroupEdit, WIDTH_SIDE } from '../../../domain/sideLocks';
 
 export type { ShapeKind, CircleSizeMode } from '../../../domain/types';
 export type DetailDraft = import('../../../domain/types').ElementDefinition;
@@ -131,7 +134,13 @@ export function createDraft(): DetailDraft {
 export function defaultsForKind(kind: ShapeKind, previousKind?: ShapeKind): Partial<DetailDraft> {
   if (kind === previousKind) return {};
   if (kind === 'l') return { outerWidth: 1200, outerHeight: 1200, innerHorizontal: 600, innerVertical: 600 };
-  if (kind === 'u') return { width: 2600, height: 1600, innerCutWidth: 1200, innerCutDepth: 1000, innerCutOffset: 600, leftLegHeight: 1600, rightLegHeight: 1200 };
+  /* П-подібна, 04.09.2026: симетрична 2400 × 1200 з вирізом 1200 × 600 по
+     центру — A 2400 · B 1200 · C 600 · D 600 · E 1200 · F 600 · G 600 · H 1200.
+     Було 2600 × 1600 з ногами різної висоти: деталь виходила кособокою, а
+     головне — ці дефолти застосовувались лише в одному місці, тож П,
+     створена через модалку виробу, лишалась із розмірами прямокутника
+     (1200 × 600) і сторона C виходила 1 мм. */
+  if (kind === 'u') return { width: 2400, height: 1200, innerCutWidth: 1200, innerCutDepth: 600, innerCutOffset: 600, leftLegHeight: 1200, rightLegHeight: 1200 };
   if (kind === 'sink_slot') return { width: 600, height: 400, innerVertical: 150 };
   if (kind === 'sink_rect') return { width: 500, height: 400, innerVertical: 200 };
   // Металопрокат: width = довжина відрізка; height ставиться з профілю в панелі
@@ -209,32 +218,45 @@ export function draftFromDetail(source: Detail): DetailDraft {
     edgeProfiles: cloneEdgeProfiles(source.edgeProfiles),
   };
 }
-
 /**
  * ЗАПИС РОЗМІРУ СТОРОНИ — дзеркало `getSideSize`, і живе поруч із ним
  * навмисно: читання і запис однієї угоди мусять бути в одному файлі,
  * інакше вони розходяться (так уже сталося з B/D на Г-формі, журнал №14).
  *
- * ГОЛОВНЕ ПРАВИЛО (цехове, від власника 10.08): **глибина стільниці не
- * пливе**. У Г-подібної глибини — це E (плече вздовж F) і B (плече вздовж A);
- * вони змінюються ТІЛЬКИ прямим редагуванням. Коли міняють габарит, поїхати
- * має внутрішній розмір вирізу, а не глибина:
+ * ЯК ЦЕ ПРАЦЮЄ (з 04.09.2026). У Г- і П-подібної сторони зв'язані
+ * рівняннями — габарит дорівнює сумі часток:
  *
- *     A = C + E   (по горизонталі)      F = B + D   (по вертикалі)
+ *     Г:  A = C + E        F = B + D            (дзеркальна: B = F + D)
+ *     П:  A = G + E + C    H = F + Ширина       B = D + Ширина
  *
- *   · міняють A або C → рухається інший з пари, E стоїть;
- *   · міняють F       → рухається D, B стоїть  ← було навпаки, це й муляло;
- *   · міняють D       → рухається F, B стоїть;
- *   · міняють B або E → це і є зміна глибини, рухається D або C відповідно,
- *                       габарит (F / A) лишається — кімната ж не гумова.
+ * Тому змінити один розмір «просто так» не можна: хтось мусить поступитись.
+ * Хто саме — вирішують ЗАМКИ (`domain/sideLocks.ts`): зміну поглинає перший
+ * НЕзамкнений розмір рівняння, у порядку `SideGroup.priority`. Без замків
+ * цей порядок дає рівно ту поведінку, що була до появи замків, — старий
+ * зашитий switch перенесено в списки пріоритету і видалено, щоб математика
+ * сторін лишалась в одному місці.
  *
- * П-подібна цього правила вже дотримується: там усі зміни висот тримають
- * глибину верхньої перекладини (`topBarHeight`) і рухають виріз.
+ * Цехове правило (від власника 10.08) нікуди не поділось, воно тепер
+ * записане саме цим порядком: **глибина стільниці не пливе**. Міняють
+ * габарит — рухається виріз, а не глибина; глибина змінюється лише прямим
+ * редагуванням своєї сторони.
  *
- * Повертає ПАТЧ (лише змінені поля), а не мутує чернетку.
+ * Повертає ПАТЧ (лише змінені поля), а не мутує чернетку. Порожній патч —
+ * правка неможлива (замкнене поле або нема кому поступитись).
  */
-export function applySideEdit(draft: DetailDraft, side: string, rawValue: number): Partial<DetailDraft> {
+const NO_LOCKS: ReadonlySet<string> = new Set<string>();
+
+export function applySideEdit(
+  draft: DetailDraft,
+  side: string,
+  rawValue: number,
+  locked: ReadonlySet<string> = NO_LOCKS,
+): Partial<DetailDraft> {
   const val = Math.max(1, Math.round(rawValue));
+
+  // Довільний контур задано точками — сторону з поля не перебудувати,
+  // редагується сам контур (таблиця показує розмір лише для читання).
+  if ((draft as { customPoints?: Point[] }).customPoints?.length) return {};
 
   if (draft.kind === 'rect' || draft.kind === 'sink_rect' || draft.kind === 'sink_slot') {
     if (side === 'A' || side === 'C') return { width: val };
@@ -242,91 +264,110 @@ export function applySideEdit(draft: DetailDraft, side: string, rawValue: number
     return {};
   }
 
-  if (draft.kind === 'l') {
-    const { outerWidth = 1200, outerHeight = 1200, innerHorizontal = 600, innerVertical = 600 } = draft;
-    // Поточні глибини, які треба зберегти
-    const depthB = Math.max(1, outerHeight - innerVertical);
-
-    switch (side) {
-      case 'A':
-        // Габарит по X: глибина E стоїть, плече C стає коротшим/довшим
-        return { outerWidth: Math.max(innerHorizontal + 1, val) };
-      case 'C':
-        return { outerWidth: val + innerHorizontal };
-      case 'E':
-        // Пряма зміна глибини: габарит A лишається, C їде
-        return { innerHorizontal: Math.min(val, outerWidth - 1) };
-      case 'F': {
-        // ЛІВА Г: F — коротка сторона (глибина), редагується як B у правої
-        if (draft.mirrorL) return { innerVertical: Math.max(1, outerHeight - val) };
-        // Габарит по Y: глибина B стоїть, виріз D підлаштовується.
-        // Якщо новий габарит менший за саму глибину — фізично неможливо,
-        // тому лишаємо мінімальний виріз 1 мм (глибина мусить поступитись).
-        const nextInner = Math.max(1, val - depthB);
-        return { outerHeight: Math.max(nextInner + 1, val), innerVertical: nextInner };
-      }
-      case 'D':
-        // Внутрішня вертикаль: глибина B стоїть, габарит F росте/меншає
-        return { innerVertical: val, outerHeight: depthB + val };
-      case 'B': {
-        // ЛІВА Г: B — повна висота (як F у правої)
-        if (draft.mirrorL) {
-          const nextInner = Math.max(1, val - depthB);
-          return { outerHeight: Math.max(nextInner + 1, val), innerVertical: nextInner };
-        }
-        // Пряма зміна глибини: габарит F лишається, виріз D підлаштовується
-        return { innerVertical: Math.max(1, outerHeight - val) };
-      }
-      default:
-        return {};
-    }
-  }
-
-  if (draft.kind === 'u') {
-    let w = draft.width || 2400;
-    let leftH = draft.leftLegHeight ?? (draft.height || 1200);
-    let rightH = draft.rightLegHeight ?? (draft.height || 1200);
-    let maxH = Math.max(leftH, rightH);
-    let cutW = draft.innerCutWidth || 1200;
-    let cutD = draft.innerCutDepth || 600;
-    let cutOff = draft.innerCutOffset || 600;
-    // Глибина верхньої перекладини — те, що тут не має пливти
-    const topBarHeight = Math.max(0, maxH - cutD);
-
-    const setHeights = (nextLeft: number, nextRight: number) => {
-      leftH = Math.max(1, nextLeft);
-      rightH = Math.max(1, nextRight);
-      maxH = Math.max(leftH, rightH);
-      cutD = Math.max(0, maxH - topBarHeight);
-    };
-    const setWidths = (nextOff: number, nextCut: number, nextC: number) => {
-      cutOff = Math.max(0, nextOff);
-      cutW = Math.max(1, nextCut);
-      w = cutOff + cutW + Math.max(0, nextC);
-    };
-    const c = w - cutOff - cutW;
-
-    switch (side) {
-      case 'A': w = val; break;
-      case 'B': setHeights(leftH, val); break;
-      case 'C': setWidths(cutOff, cutW, val); break;
-      case 'D': setHeights(leftH, topBarHeight + val); break;
-      case 'E': setWidths(cutOff, val, c); break;
-      case 'F': setHeights(topBarHeight + val, rightH); break;
-      case 'G': setWidths(val, cutW, c); break;
-      case 'H': setHeights(val, rightH); break;
-      default: return {};
-    }
-    return {
-      width: w, height: maxH, leftLegHeight: leftH, rightLegHeight: rightH,
-      innerCutWidth: cutW, innerCutDepth: cutD, innerCutOffset: cutOff,
-    };
-  }
+  if (draft.kind === 'l') return applyLSideEdit(draft, side, val, locked);
+  if (draft.kind === 'u') return applyUSideEdit(draft, side, val, locked);
 
   return {};
 }
 
+/** Г-подібна: дві незалежні пари рівнянь, спільних розмірів між ними немає. */
+function applyLSideEdit(draft: DetailDraft, side: string, val: number, locked: ReadonlySet<string>): Partial<DetailDraft> {
+  const group = groupOfSide(draft, side);
+  if (!group) return {};
+
+  const { outerWidth = 1200, outerHeight = 1200, innerHorizontal = 600, innerVertical = 600 } = draft;
+  const values: Record<string, number> = {
+    A: outerWidth,
+    E: innerHorizontal,
+    C: Math.max(1, outerWidth - innerHorizontal),
+    D: innerVertical,
+    // Дзеркальна Г: повна вертикаль — B, коротка — F (див. getSideSize).
+    ...(draft.mirrorL
+      ? { B: outerHeight, F: Math.max(1, outerHeight - innerVertical) }
+      : { F: outerHeight, B: Math.max(1, outerHeight - innerVertical) }),
+  };
+
+  const next = solveGroupEdit(group, values, side, val, locked);
+  if (!next) return {};
+
+  if (group.total === 'A') return { outerWidth: next.A, innerHorizontal: next.E };
+  return { outerHeight: draft.mirrorL ? next.B : next.F, innerVertical: next.D };
+}
+
+/**
+ * П-подібна: три рівняння, причому «Ширина» (глибина верхньої перекладини)
+ * стоїть одразу в двох — вона в деталі одна на обидві ноги. Тому, якщо вона
+ * поїхала, друга вертикаль мусить домовитись зі своїми замками; якщо там
+ * поступитись нікому — скасовуємо правку цілком, бо двох різних «Ширин»
+ * у деталі не буває.
+ */
+function applyUSideEdit(draft: DetailDraft, side: string, val: number, locked: ReadonlySet<string>): Partial<DetailDraft> {
+  const w = draft.width || 2400;
+  const leftH = draft.leftLegHeight ?? (draft.height || 1200);
+  const rightH = draft.rightLegHeight ?? (draft.height || 1200);
+  const cutW = draft.innerCutWidth || 1200;
+  const cutD = draft.innerCutDepth || 600;
+  const cutOff = draft.innerCutOffset || 600;
+  const topBar = Math.max(1, Math.max(leftH, rightH) - cutD);
+
+  const values: Record<string, number> = {
+    A: w,
+    G: cutOff,
+    E: cutW,
+    C: Math.max(1, w - cutOff - cutW),
+    H: leftH,
+    F: Math.max(1, leftH - topBar),
+    B: rightH,
+    D: Math.max(1, rightH - topBar),
+    [WIDTH_SIDE]: topBar,
+  };
+
+  const groups = sideGroupsFor(draft);
+  const group = groups.find((g) => groupMembers(g).includes(side));
+  if (!group) return {};
+
+  const solved = solveGroupEdit(group, values, side, val, locked);
+  if (!solved) return {};
+  const next = { ...values, ...solved };
+
+  if (next[WIDTH_SIDE] !== values[WIDTH_SIDE]) {
+    const other = groups.find((g) => g !== group && groupMembers(g).includes(WIDTH_SIDE));
+    if (other) {
+      const echo = solveGroupEdit(other, values, WIDTH_SIDE, next[WIDTH_SIDE], locked);
+      if (!echo || echo[WIDTH_SIDE] !== next[WIDTH_SIDE]) return {};
+      Object.assign(next, echo);
+    }
+  }
+
+  const nextLeft = Math.max(1, next.H);
+  const nextRight = Math.max(1, next.B);
+  const maxH = Math.max(nextLeft, nextRight);
+  return {
+    width: Math.max(1, next.A),
+    height: maxH,
+    leftLegHeight: nextLeft,
+    rightLegHeight: nextRight,
+    innerCutWidth: Math.max(1, next.E),
+    innerCutOffset: Math.max(0, next.G),
+    innerCutDepth: Math.max(0, maxH - Math.max(1, next[WIDTH_SIDE])),
+  };
+}
+
+/**
+ * Ребро іменованого довільного контуру за ім'ям сторони (03.09.2026).
+ * Порожньо, якщо контуру немає або його точки без імен.
+ */
+export function customContourEdge(draft: { customPoints?: Point[] }, side: string): ContourEdge | undefined {
+  const points = draft.customPoints;
+  if (!points?.length) return undefined;
+  return contourEdges(points as EdgeNamedPoint[]).find((edge) => edge.name === side);
+}
+
 export function getSideSize(draft: DetailDraft, side: string): number {
+  // Довільний контур: розмір сторони — довжина її ребра, а не габарит.
+  const customEdge = customContourEdge(draft as { customPoints?: Point[] }, side);
+  if (customEdge) return Math.round(customEdge.lengthMm);
+
   if (draft.kind === 'rect' || draft.kind === 'sink_rect' || draft.kind === 'sink_slot') {
     if (side === 'A' || side === 'C') return draft.width;
     if (side === 'B' || side === 'D') return draft.height;
@@ -383,6 +424,11 @@ export function getSideSize(draft: DetailDraft, side: string): number {
       case 'F': return Math.max(1, leftH - topBarHeight);
       case 'G': return cutOff;
       case 'H': return leftH;
+      // «Ширина» — глибина верхньої перекладини. Літери не має, але в
+      // рівняннях висот стоїть нарівні зі сторонами, тому читається тим
+      // самим getSideSize (модалка мала свою копію цієї формули — і та
+      // рахувала від лівої ноги, а не від найвищої).
+      case WIDTH_SIDE: return Math.max(1, topBarHeight);
     }
   }
 

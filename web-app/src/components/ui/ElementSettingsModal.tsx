@@ -1,25 +1,49 @@
 import React, { useState, useMemo } from 'react';
 import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import type { DetailDraft } from '../forms/utils/draftHelpers';
-import { DimensionsTable } from './DimensionsTable';
+import { DimensionsTable, SideSizeInput } from './DimensionsTable';
+import { SideLockButton } from './SideLockButton';
 import { Detail2DBlueprint } from './Detail2DBlueprint';
 import { sideOptionsFor, supportsEdges } from './FormsPanel';
-import { getSideSize } from '../forms/utils/draftHelpers';
+import { getSideSize, applySideEdit } from '../forms/utils/draftHelpers';
+import { sideEditable, WIDTH_SIDE } from '../../domain/sideLocks';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useUIStore } from '../../store/useStore';
 import { minSideMmFor } from '../../domain/manufacturability';
 
-function Accordion({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
+function Accordion({ title, children, defaultOpen = false, info }: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  /** Розділ довідки для кнопки «i» — як у панелі кромок (openHelp). */
+  info?: string;
+}) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
+  const openHelp = useUIStore((s) => s.openHelp);
   return (
-    <div className="border border-slate-200 mb-2 rounded-sm bg-white overflow-hidden">
+    /* shrink-0 обов'язковий: права панель — flex-колонка, і без нього
+       акордеон стискається нижче свого вмісту, а `overflow-hidden` тихо
+       відрізає останні рядки таблиці (сторона H зникала). */
+    <div className="shrink-0 border border-slate-200 mb-2 rounded-sm bg-white overflow-hidden">
       <button 
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="w-full px-4 py-2 bg-[#dcebf5] hover:bg-[#cbe0f0] flex items-center justify-between text-sm font-bold text-[#1f93ef] transition-colors"
       >
         {title}
-        {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        <span className="flex items-center gap-2">
+          {info && (
+            <span
+              role="button"
+              title="Як користуватись цим розділом — інструкція зі скрінами"
+              className="w-5 h-5 rounded-full border border-[#b9d5f5] !bg-[#dbeafe] text-[#0058ab] text-[11px] font-bold flex items-center justify-center hover:!bg-[#0084ff] hover:!text-white transition-colors"
+              onClick={(e) => { e.stopPropagation(); openHelp(info); }}
+            >
+              i
+            </span>
+          )}
+          {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </span>
       </button>
       {isOpen && (
         <div className="p-0 border-t border-slate-200">
@@ -40,7 +64,8 @@ export function ElementSettingsModal({
   onClose,
   onSave,
   embedded = false,
-  occupiedSides,
+  /* `occupiedSides` більше не розбираємо: кромки прибрані з цього вікна
+     04.09, а пропс лишається в типі, щоб не переписувати виклики. */
 }: {
   initialDetail: DetailDraft;
   project: Project;
@@ -59,6 +84,16 @@ export function ElementSettingsModal({
   embedded?: boolean;
 }) {
   const [draft, setDraft] = useState<DetailDraft>(initialDetail);
+  /* ЗАМКИ НА РОЗМІРАХ (04.09). Живуть у вікні, а не в проєкті: це спосіб
+     редагування, а не властивість деталі. Закрив замки, посунув габарит,
+     зберіг — у файлі проєкту нічого нового не з'явилось. Математику тримає
+     domain/sideLocks.ts, і вона одна на таблицю сторін та константу λ. */
+  const [lockedSides, setLockedSides] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const toggleLock = (side: string) => setLockedSides((prev) => {
+    const next = new Set(prev);
+    if (!next.delete(side)) next.add(side);
+    return next;
+  });
   const effectiveMaterial = material ?? project.projectMaterial;
   const thicknessOptions = useMemo(() => {
     const list = effectiveMaterial ? thicknessesFor(effectiveMaterial) : [12, 20, 30, 40];
@@ -69,7 +104,8 @@ export function ElementSettingsModal({
   const manualThicknessAllowed = allowsManualThickness(effectiveMaterial);
   // Просунутий режим: підказки сховані (рішення власника 01.09).
   const isExpertMode = useUIStore((s) => s.isExpertMode);
-  const sides = useMemo(() => sideOptionsFor(draft.kind), [draft.kind]);
+  // Довільний контур і ніша дають свої імена сторін — тому в залежностях і вони.
+  const sides = useMemo(() => sideOptionsFor(draft.kind, draft as never), [draft.kind, (draft as { uCutout?: unknown }).uCutout, (draft as { customPoints?: unknown }).customPoints]);
   const showEdges = supportsEdges(draft.type);
 
   const updateDraft = (patch: Partial<DetailDraft>) => {
@@ -137,8 +173,20 @@ export function ElementSettingsModal({
         <div className="flex-1 min-h-0 flex overflow-hidden">
           {/* Main Blueprint Area */}
           <div className="flex-1 p-6 flex flex-col bg-white">
-            <div className="flex-1 bg-[#f4f7f9] border border-slate-300 relative rounded-md overflow-hidden shadow-inner">
-              <Detail2DBlueprint detail={draft} />
+            <div className="flex-1 bg-white relative overflow-hidden">
+              <Detail2DBlueprint
+                detail={draft}
+                lockedSides={lockedSides}
+                onToggleSideLock={toggleLock}
+                /* Розмір редагується прямо в кресленні — тією самою
+                   математикою, що й у панелі (applySideEdit + замки). */
+                isSideEditable={(side) => sideEditable(draft, side, lockedSides)
+                  && !(draft as { customPoints?: unknown[] }).customPoints?.length}
+                onCommitSide={(side, value) => {
+                  const patch = applySideEdit(draft, side, value, lockedSides);
+                  if (Object.keys(patch).length > 0) updateDraft(patch);
+                }}
+              />
               {/* Ліва/права Г (26.08): перемикач прямо на кресленні, бо саме
                   тут людина бачить, куди дивиться виріз. Дзеркалиться
                   реальний контур (cornerOrientation у рушії), не картинка. */}
@@ -164,37 +212,42 @@ export function ElementSettingsModal({
           </div>
 
           {/* Right Sidebar */}
-          <div className="flex-1 min-h-0 bg-[#f4f7f9] overflow-y-auto custom-scrollbar p-4 flex flex-col">
+          <div className="w-[340px] shrink-0 min-h-0 bg-[#f4f7f9] border-l border-slate-200 overflow-y-auto custom-scrollbar p-3 flex flex-col">
             {/* Сторони (Розміри та Кромка) */}
             {showEdges && (
-              <Accordion title="Сторони" defaultOpen={true}>
+              <Accordion title="Сторони" defaultOpen={true} info="sizes">
                 <div className="p-0 bg-white">
-                  <DimensionsTable 
-                    draft={draft} 
-                    updateDetail={updateDraft} 
-                    sides={sides} 
-                    edgeProfiles={project.referenceData?.edgeProfiles ?? []}
-                    material={project.slabs[0]?.material} // Use main material as default for estimation
-                    occupiedSides={occupiedSides}
+                  <DimensionsTable
+                    draft={draft}
+                    updateDetail={updateDraft}
+                    sides={sides}
+                    lockedSides={lockedSides}
+                    onToggleLock={toggleLock}
                   />
                 </div>
               </Accordion>
             )}
             {draft.kind === 'u' && (
-              <Accordion title="Ширина" defaultOpen={true}>
+              <Accordion title="λ" defaultOpen={true} info="sizes">
+                {/* Це поле мало власну копію формули — і рахувало «Ширину»
+                    від лівої ноги, тоді як решта програми рахує її від
+                    найвищої. Тепер читає getSideSize і пише applySideEdit,
+                    як усі сторони, і має такий самий замок: закритий —
+                    перекладина не пливе, коли міняють висоти ніг. */}
                 <div className="p-4 bg-white flex flex-col gap-2">
-                  <input 
-                    type="number" 
-                    min="1"
-                    value={Math.max(1, (draft.leftLegHeight ?? draft.height) - draft.innerCutDepth)}
-                    onChange={(e) => {
-                      const val = Math.max(1, Number(e.target.value));
-                      const maxH = Math.max(draft.leftLegHeight ?? draft.height, draft.rightLegHeight ?? draft.height);
-                      updateDraft({ innerCutDepth: Math.max(0, maxH - val) });
-                    }}
-                    className="w-full p-2 border border-slate-300 rounded-sm outline-none focus:border-[#1f93ef] text-sm font-mono"
-                  />
-                  <span className="text-xs text-slate-500">Товщина верхньої частини деталі</span>
+                  <div className="flex items-center gap-1.5">
+                    <SideSizeInput
+                      length={getSideSize(draft, WIDTH_SIDE)}
+                      readOnly={!sideEditable(draft, WIDTH_SIDE, lockedSides)}
+                      title={lockedSides.has(WIDTH_SIDE) ? 'Замок закритий — зніміть його, щоб змінити λ' : undefined}
+                      onCommit={(val) => {
+                        const patch = applySideEdit(draft, WIDTH_SIDE, val, lockedSides);
+                        if (Object.keys(patch).length > 0) updateDraft(patch);
+                      }}
+                    />
+                    <SideLockButton locked={lockedSides.has(WIDTH_SIDE)} onToggle={() => toggleLock(WIDTH_SIDE)} />
+                  </div>
+                  <span className="text-xs text-slate-500">λ — товщина верхньої частини деталі</span>
                 </div>
               </Accordion>
             )}
@@ -247,17 +300,12 @@ export function ElementSettingsModal({
               </div>
             </Accordion>
 
-            <Accordion title="Кількість виробів">
-              <div className="p-4 bg-white">
-                <input
-                  type="number"
-                  min="1"
-                  value={draft.quantity}
-                  onChange={(e) => updateDraft({ quantity: Math.max(1, Number(e.target.value)) })}
-                  className="w-full p-2 border border-slate-300 rounded-sm outline-none focus:border-[#1f93ef] text-sm"
-                />
-              </div>
-            </Accordion>
+            {/* «Кількість виробів» звідси прибрано 04.09 на вимогу власника:
+                поле дублювало кількість із модалки створення виробу, стояло
+                в кінці налаштувань РОЗМІРІВ і збивало з пантелику. Саме число
+                (`quantity`) лишається в моделі й далі множить деталі в
+                розкрої (engines/geometry.ts) — прибрано другий вхід, не
+                функцію. */}
           </div>
         </div>
 

@@ -251,3 +251,63 @@ describe('сторожі: вирізи', () => {
     expect(areaM2(parts[0].points)).toBeCloseTo(0.72, 4);
   });
 });
+
+// ── 6. Довільний контур ──────────────────────────────────────────────
+//
+// Знайдено 03.09 на кейсі 81-2009298: «прямокутна» стільниця 5645×990 з
+// довільним контуром (ніша вікна 345 на лівих 3656 мм, виступ за пенал
+// 346×52) і двома стиками їхала в розкрій трьома РІВНИМИ прямокутниками
+// 990 завширшки — ніж різав номінальний прямокутник, а не контур.
+
+const CUSTOM_POINTS = [
+  { id: 'D',    x: 0,    y: 345 },
+  { id: 'A',    x: 3656, y: 345 },
+  { id: 'A_s1', x: 3656, y: 0 },
+  { id: 'A_s2', x: 5645, y: 0 },
+  { id: 'B',    x: 5645, y: 990 },
+  { id: 'C_s2', x: 5299, y: 990 },
+  { id: 'C_s1', x: 5299, y: 938 },
+  { id: 'C',    x: 0,    y: 938 },
+];
+const CUSTOM = { width: 5645, height: 990, customPoints: CUSTOM_POINTS };
+
+describe('сторожі: довільний контур', () => {
+  it('цілий — контур як заданий, сторони з id точок навіть без кутів', () => {
+    const parts = explode(draft(CUSTOM as never), 'Прямокутна');
+    expect(parts.length).toBe(1);
+    expect(parts[0].контур.split(' ').length).toBe(8);
+    // 5645×990 − ніша вікна 3656×345 − сходинка виступу 5299×52 = 4.0517 м²
+    expect(parts[0].площа).toBe(4.0517);
+    // До 03.09 таблиця сторін з'являлась лише разом із обробкою кута —
+    // на іменованому контурі без кутів кромка не знаходила сторону.
+    expect(parts[0].сторони).toBe('AA_s1A_s2BCC_s1C_s2D');
+  });
+
+  it('ВИПРАВЛЕНО 03.09: два довільні стики ріжуть КОНТУР, а не номінальний прямокутник', () => {
+    const parts = explode(draft({
+      ...CUSTOM, wholeDetail: false,
+      manualJoints: [
+        { id: 'j1', axis: 'vertical', offset: 3078 },
+        { id: 'j2', axis: 'vertical', offset: 5299 },
+      ],
+    } as never), 'Прямокутна');
+    expect(parts.length).toBe(3);
+    // Було: 3078×990, 2221×990, 346×990 (усі по 4 точки, площа 5.5886).
+    expect(parts.map((p) => p.габарит)).toEqual(['3078×593', '2221×938', '346×990']);
+    expect(parts.map((p) => p.контур.split(' ').length)).toEqual([4, 6, 5]);
+    expect(Number(parts.reduce((s, p) => s + p.площа, 0).toFixed(4))).toBe(4.0517);
+    // Імена сторін оригіналу переживають різ; ребро стику імені не має.
+    expect(parts.map((p) => p.сторони)).toEqual(['ACD', 'AA_s1A_s2C', 'A_s2BC_s1C_s2']);
+  });
+
+  it('точки без імен (імпорт) — стик ріже контур, сторін не вигадує', () => {
+    const parts = explode(draft({
+      ...CUSTOM, wholeDetail: false,
+      customPoints: CUSTOM_POINTS.map(({ x, y }) => ({ x, y })),
+      manualJoints: [{ id: 'j1', axis: 'vertical', offset: 3078 }],
+    } as never), 'Прямокутна');
+    expect(parts.length).toBe(2);
+    expect(parts.map((p) => p.габарит)).toEqual(['3078×593', '2567×990']);
+    expect(parts.every((p) => p.сторони === '')).toBe(true);
+  });
+});

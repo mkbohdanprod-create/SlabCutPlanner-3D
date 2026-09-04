@@ -2,7 +2,7 @@ import {  useMemo, useState } from 'react';
 import { Loader2 , Plus, SquarePlus, FileUp, ClipboardList, StretchHorizontal, FileBox, AlertTriangle } from 'lucide-react';
 import { referenceData, uid, MATERIALS_IN_USE } from '../../domain/defaults';
 import { ChangeEvent, useEffect, useRef } from 'react';
-import type { BindingAnchor, Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, EdgeProfileType, MaterialType, SlabInstance, UiLanguage } from '../../domain/types';
+import type { BindingAnchor, Detail, DetailShape, DetailType, EdgeFeature, EdgeProfileSelection, EdgeProfileType, MaterialType, Point, SlabInstance, UiLanguage } from '../../domain/types';
 import { translateStaticUiText } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
@@ -21,6 +21,7 @@ import { DEFAULT_EDGE_PROFILE } from '../../utils/edgeProfiles';
 import { applyUCutout } from '../../domain/uCutout';
 import type { UCutoutSpec } from '../../domain/uCutout';
 import { contourEdges, edgeNamedContour } from '../../domain/baseContour';
+import type { EdgeNamedPoint } from '../../domain/baseContour';
 import type {
   DxfPoint, DxfPreviewContour, DxfBindingSession,
   DxfBlockDraft, DxfModalResize, DxfPreviewDrag, DxfImportRole,
@@ -90,7 +91,13 @@ export function designForKind(kind: ShapeKind) {
  * існували для решти застосунку: ні кромки задати, ні панель повісити.
  * Тому, коли деталь має нішу, імена беремо з її контуру.
  */
-export function sideOptionsFor(kind: ShapeKind, detail?: { uCutout?: UCutoutSpec } & object) {
+export function sideOptionsFor(kind: ShapeKind, detail?: { uCutout?: UCutoutSpec; customPoints?: Point[] } & object) {
+  // ДОВІЛЬНИЙ КОНТУР З ІМЕНАМИ (03.09.2026, кейс 81-2009298): сторони — це
+  // ребра самого контуру (угода customPoints: id точки = ребро, що в ній
+  // закінчується). Раніше таблиця «Сторони» показувала A/B/C/D прямокутника
+  // за габаритом, і кромку на сходинку ніші не було куди поставити.
+  const named = namedCustomContourSides(detail?.customPoints);
+  if (named) return named;
   const niche = detail?.uCutout;
   if (niche) {
     // РЕМОНТ 19.08: сторони деталі з нішею читаються з її РЕАЛЬНОГО
@@ -103,6 +110,14 @@ export function sideOptionsFor(kind: ShapeKind, detail?: { uCutout?: UCutoutSpec
   if (kind === 'u') return allSides;
   if (kind === 'l') return ['A', 'B', 'C', 'D', 'E', 'F'];
   return ['A', 'B', 'C', 'D'];
+}
+
+/** Імена ребер довільного контуру — лише якщо точки іменовані; інакше порожньо. */
+export function namedCustomContourSides(points?: Point[]): string[] | undefined {
+  if (!points?.length) return undefined;
+  const names = contourEdges(points as EdgeNamedPoint[]).map((edge) => edge.name).filter((name) => name && !/^edge-\d+$/.test(name));
+  if (names.length !== points.length) return undefined;
+  return [...new Set(names)];
 }
 
 /**
@@ -316,7 +331,7 @@ export function FormsPanel({ activeTab, compact = false }: { activeTab?: 'detail
     [detail.type, isAdminUnlocked, detail.kind],
   );
   const currentDesign = designForKind(detail.kind);
-  const sides = sideOptionsFor(detail.kind);
+  const sides = sideOptionsFor(detail.kind, detail as never);
   const showEdges = supportsEdges(detail.type);
 
   useEffect(() => {

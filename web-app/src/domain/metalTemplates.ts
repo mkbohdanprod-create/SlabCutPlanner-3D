@@ -40,7 +40,7 @@ const EPS = 1e-6;
  * рахувати по-різному — 3D розійдеться з розкроєм, тому обертання
  * продубльовано дзеркально до domain/metalChain.metalChainPieces.
  */
-class TurtleWriter {
+export class TurtleWriter {
   readonly pos = new THREE.Vector3(0, 0, 0);
   private readonly dir = new THREE.Vector3(1, 0, 0);
   private readonly up = new THREE.Vector3(0, 1, 0);
@@ -302,6 +302,61 @@ export function trussTemplate(p: TrussParams): MetalTemplateResult {
   return t.result();
 }
 
+export interface WallConsoleParams {
+  /** Довжина рейки при стіні, мм */
+  rail: number;
+  /** Виліт кронштейна від стіни (плече), мм */
+  arm: number;
+  /** Висота стійки при стіні під плечем, мм */
+  drop: number;
+  /** Розкос кріпиться до плеча за стільки мм від його кінця */
+  braceInset: number;
+  /** Кількість кронштейнів; крайні — з відступом `edgeInset` від країв рейки */
+  brackets: number;
+  /** Відступ крайніх кронштейнів від країв рейки, мм */
+  edgeInset: number;
+  /** Профіль кронштейнів; порожньо — як рейка */
+  bracketProfileId?: string;
+  /**
+   * Явні позиції кронштейнів по рейці, мм — коли вони стоять під тумби, а
+   * не рівномірно (кейс 81-2009298: 20 / 517 / 1035 / 1716 / 2165).
+   * Задано — `brackets` і `edgeInset` ігноруються. З UI не доступно.
+   */
+  positions?: number[];
+}
+
+/**
+ * Консоль під поличку (03.09.2026, з кейса 81-2009298, аркуш 2): рейка
+ * при стіні (площина XY) і рівномірно розставлені кронштейни-трикутники,
+ * що виходять від стіни в +Z: плече, стійка вниз при стіні, розкос від
+ * плеча до п'яти стійки.
+ *
+ * Порядок ходу в кронштейні не випадковий: черепашка вміє повертати лише
+ * навколо своїх локальних осей, тому розкос малюється З ПЛЕЧА вниз (це
+ * поворот «down»), а не зі стійки вгору — з вертикалі діагональ в
+ * площині YZ одним поворотом недосяжна.
+ */
+export function wallConsoleTemplate(p: WallConsoleParams): MetalTemplateResult {
+  const t = new TurtleWriter();
+  t.lineTo(p.rail, 0, 0);
+  const n = Math.max(1, Math.round(p.brackets));
+  const inset = Math.min(p.edgeInset, p.rail / 2);
+  const xs = p.positions?.length
+    ? p.positions.filter((x) => x >= 0 && x <= p.rail)
+    : n === 1
+      ? [p.rail / 2]
+      : Array.from({ length: n }, (_, i) => inset + ((p.rail - 2 * inset) * i) / (n - 1));
+  const prof = p.bracketProfileId;
+  for (const x of xs) {
+    t.moveTo(x, 0, 0);
+    t.lineTo(x, 0, p.arm, prof);                           // плече
+    t.moveTo(x, 0, Math.max(0, p.arm - p.braceInset));     // назад по плечу (перо вгору)
+    t.lineTo(x, -p.drop, 0, prof);                         // розкос до п'яти
+    t.lineTo(x, 0, 0, prof);                               // стійка вгору до рейки
+  }
+  return t.result();
+}
+
 /* ------------------------------------------------------------------ */
 /*  Реєстр для UI                                                       */
 /* ------------------------------------------------------------------ */
@@ -400,6 +455,25 @@ export const METAL_TEMPLATES: MetalTemplate[] = [
     generate: (v) => trussTemplate({
       span: num(v, 'span', 3000), height: num(v, 'height', 400), panels: num(v, 'panels', 6),
       posts: Boolean(v.posts), braceProfileId: typeof v.braceProfileId === 'string' && v.braceProfileId ? v.braceProfileId : undefined,
+    }),
+  },
+  {
+    id: 'wall_console',
+    label: 'Консоль під поличку',
+    hint: 'Рейка при стіні + кронштейни-трикутники: плече, стійка, розкос. Крайні кронштейни з відступом від країв.',
+    params: [
+      { key: 'rail', label: 'Довжина рейки, мм', type: 'number', default: 2000, min: 300, max: 6000, step: 10 },
+      { key: 'arm', label: 'Виліт плеча, мм', type: 'number', default: 470, min: 150, max: 1200, step: 10 },
+      { key: 'drop', label: 'Стійка при стіні, мм', type: 'number', default: 120, min: 40, max: 600, step: 10 },
+      { key: 'braceInset', label: 'Розкос від кінця плеча, мм', type: 'number', default: 70, min: 0, max: 400, step: 10 },
+      { key: 'brackets', label: 'Кронштейнів', type: 'number', default: 5, min: 1, max: 20, step: 1 },
+      { key: 'edgeInset', label: 'Відступ крайніх від країв, мм', type: 'number', default: 20, min: 0, max: 500, step: 5 },
+      { key: 'bracketProfileId', label: 'Профіль кронштейнів', type: 'profile', default: '' },
+    ],
+    generate: (v) => wallConsoleTemplate({
+      rail: num(v, 'rail', 2000), arm: num(v, 'arm', 470), drop: num(v, 'drop', 120),
+      braceInset: num(v, 'braceInset', 70), brackets: num(v, 'brackets', 5), edgeInset: num(v, 'edgeInset', 20),
+      bracketProfileId: typeof v.bracketProfileId === 'string' && v.bracketProfileId ? v.bracketProfileId : undefined,
     }),
   },
 ];

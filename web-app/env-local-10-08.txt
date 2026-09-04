@@ -1,0 +1,22 @@
+# ЦЕЙ ФАЙЛ ТРЕБА ПЕРЕЙМЕНУВАТИ НА  .env  (крапка на початку, без .txt).
+# Він лежить у C:\Works\slabcut-agent-pack\web-app\ — там же, де docker-compose.yml.
+# Прямо записати .env з хмари не дав місток (заборона на запис у .env), тому .txt.
+#
+# ЛОКАЛЬНИЙ .env — той, яким користувались до 10.08.2026.
+#
+# ВАЖЛИВО: ці значення лежали в git чотири тижні, тому вважаються
+# скомпрометованими. Для ЛОКАЛЬНОЇ роботи (docker compose на своїй машині)
+# вони придатні. Для ПРОДА — НІ: там девопс ставить ротовані значення
+# (див. ДЛЯ_ДЕВОПСА_ДЕПЛОЙ_10-08.md). У git цей файл більше не потрапляє
+# (.gitignore), тримай його тільки на диску.
+
+KEYCLOAK_CLIENT_ID=qr
+KEYCLOAK_CLIENT_SECRET=13b61c0a-5f7c-4313-b2f7-ad48dc5387df
+SESSION_SECRET=ca1648a148af49f3c84921fbbc85f1012a262bfc5a8bdc7e3bf9a337fa352d1b
+POSTGRES_PASSWORD=90980ed26b8b9f903576831c5f7c9f90
+
+# Публічна адреса сервісу (використовується compose-дефолтами теж)
+SERVER_DOMAIN=slabcutplanner.viyar.tech
+KEYCLOAK_DISCOVERY_URL=https://auth-dev.viyar.tech/auth/realms/ViyarLocal/.well-known/openid-configuration
+REDIRECT_URI=https://slabcutplanner.viyar.tech/api/auth/callback
+APP_URL=https://slabcutplanner.viyar.tech/

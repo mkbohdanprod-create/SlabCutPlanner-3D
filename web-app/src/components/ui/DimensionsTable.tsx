@@ -1,40 +1,52 @@
 import type { DetailDraft } from '../forms/utils/draftHelpers';
 import { getSideSize, applySideEdit } from '../forms/utils/draftHelpers';
+import { donorForSide, sideEditable, sideIsLockable } from '../../domain/sideLocks';
+import { SideLockButton } from './SideLockButton';
 import { useCommittedNumber } from './useCommittedNumber';
-import { EdgeProfileThumb } from '../forms/editors/EdgeProfileThumb';
-import { CATALOG_OPTION_VALUE, EdgeProfileOptionGroups } from '../forms/editors/EdgeProfileOptions';
-import { openEdgeCatalog } from '../../store/useEdgeCatalog';
-import { topProfileId } from '../../domain/edgeTreatment';
-import type { EdgeProfileType, EdgeProfileDef, MaterialType } from '../../../domain/types';
 
 interface DimensionsTableProps {
   draft: DetailDraft;
   updateDetail: (patch: Partial<DetailDraft>) => void;
   sides: string[];
-  edgeProfiles: EdgeProfileDef[];
-  material?: MaterialType;
-  /** Сторони, закриті ногою/потовщенням/підворотом — форму не обрати (domain/edgeOccupancy). */
-  occupiedSides?: Record<string, string>;
+  /** Розміри, закріплені замком: не змінюються ні руками, ні від сусідів. */
+  lockedSides?: ReadonlySet<string>;
+  onToggleLock?: (side: string) => void;
 }
 
 /**
  * Поле розміру сторони. Значення йде в модель на Enter або втраті фокуса —
  * див. useCommittedNumber: інакше кожна набрана цифра встигає стати розміром.
  */
-function SideSizeInput({ length, readOnly, onCommit }: { length: number; readOnly: boolean; onCommit: (val: number) => void }) {
+export function SideSizeInput({ length, readOnly, onCommit, title, className }: {
+  length: number;
+  readOnly: boolean;
+  onCommit: (val: number) => void;
+  title?: string;
+  className?: string;
+}) {
   const field = useCommittedNumber(length, onCommit);
   return (
     <input
       type="number"
       {...(readOnly ? { value: Math.round(length), readOnly: true } : field)}
       disabled={readOnly}
-      title={readOnly ? 'Цей розмір розраховується автоматично' : 'Enter або клік поза полем — застосувати, Esc — скасувати'}
-      className={`w-[80px] px-2 py-1 border rounded outline-none font-mono text-sm ${readOnly ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed' : 'border-slate-300 bg-white focus:border-[#1f93ef]'}`}
+      title={title ?? (readOnly ? 'Цей розмір розраховується автоматично' : 'Enter або клік поза полем — застосувати, Esc — скасувати')}
+      className={`${className ?? 'w-full'} px-2 py-1.5 border rounded outline-none font-mono text-sm ${readOnly ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed' : 'border-slate-300 bg-white focus:border-[#1f93ef]'}`}
     />
   );
 }
 
-export function DimensionsTable({ draft, updateDetail, sides, edgeProfiles, material, occupiedSides }: DimensionsTableProps) {
+const NO_LOCKS: ReadonlySet<string> = new Set<string>();
+
+/**
+ * ТАБЛИЦЯ РОЗМІРІВ (04.09.2026 — лише розміри).
+ *
+ * Колонки «Розкрій» і «Обробка» звідси прибрані на вимогу власника: кромки
+ * задаються не тут, а «Розкрій» без обраної кромки завжди був порожній.
+ * Лишилось три речі в рядку — літера, розмір, замок, — тому панель стала
+ * вузькою, а кресленню дісталось місце, яке вона займала.
+ */
+export function DimensionsTable({ draft, updateDetail, sides, lockedSides = NO_LOCKS, onToggleLock }: DimensionsTableProps) {
   // Довжину сторони рахує СПІЛЬНА getSideSize із draftHelpers — тут жила її
   // повна копія, і на Г-подібній вони розійшлися (B і D навхрест). Дві копії
   // одного мапінгу — це і є механізм таких багів: виправляють одну, друга
@@ -42,25 +54,10 @@ export function DimensionsTable({ draft, updateDetail, sides, edgeProfiles, mate
   const getSideLength = (side: string): number => getSideSize(draft, side);
 
   // Запис розміру — теж СПІЛЬНА функція (applySideEdit), дзеркало getSideSize.
-  // Тут жила своя копія формул, і саме в ній глибина стільниці «пливла»
-  // від зміни габариту.
+  // Замки вирішують, хто поступиться (domain/sideLocks.ts).
   const handleSizeChange = (side: string, val: number) => {
-    const patch = applySideEdit(draft, side, val);
+    const patch = applySideEdit(draft, side, val, lockedSides);
     if (Object.keys(patch).length > 0) updateDetail(patch);
-  };
-
-  const setSideProfile = (side: string, profile: EdgeProfileType | '') => {
-    const nextProfiles = { ...draft.edgeProfiles };
-    if (profile === '') delete nextProfiles[side];
-    else nextProfiles[side] = profile;
-    updateDetail({ edgeProfiles: nextProfiles });
-  };
-  
-  const toggleFeature = (side: string, featureName: 'thickening' | 'fold') => {
-    const feature = draft[featureName];
-    const isChecked = feature.sides.includes(side);
-    const nextSides = isChecked ? feature.sides.filter(s => s !== side) : [...feature.sides, side];
-    updateDetail({ [featureName]: { ...feature, enabled: nextSides.length > 0, sides: nextSides } });
   };
 
   return (
@@ -70,66 +67,47 @@ export function DimensionsTable({ draft, updateDetail, sides, edgeProfiles, mate
           <tr className="bg-[#b3d4f0] text-slate-700 font-medium text-xs">
             <th className="py-2 px-2 border-b border-[#a3c4e0] text-center w-10"></th>
             <th className="py-2 px-2 border-b border-[#a3c4e0]">Сторони</th>
-            <th className="py-2 px-2 border-b border-[#a3c4e0]" title="Габарит заготовки для розкрою (+допуски)">Розкрій</th>
-            <th className="py-2 px-2 border-b border-[#a3c4e0]">Обробка</th>
           </tr>
         </thead>
         <tbody>
           {sides.map((side) => {
             const length = getSideLength(side);
-            // Крайка може бути і рядком, і повною EdgeTreatment — читаємо
-            // спільним нормалізатором, а не розбираємо union на місці.
-            const profile = topProfileId(draft.edgeProfiles[side]);
-            // Легасі-галочки потовщення/підворота цього ж драфту теж закривають торець
-            const occupiedBy = occupiedSides?.[side]
-              ?? (draft.fold?.enabled && draft.fold.sides?.includes(side) ? `Потовщення (${side})` : undefined)
-              ?? (draft.thickening?.enabled && draft.thickening.sides?.includes(side) ? `Підворот (${side})` : undefined);
-            
+            const custom = Boolean((draft as { customPoints?: unknown[] }).customPoints?.length);
+            const locked = lockedSides.has(side);
+            const editable = !custom && sideEditable(draft, side, lockedSides);
+            const donor = editable ? donorForSide(draft, side, lockedSides) : undefined;
+            const title = custom
+              ? 'Довільний контур: розмір задають точки контуру'
+              : locked
+                ? 'Замок закритий — зніміть його, щоб змінити розмір'
+                : !editable
+                  ? 'Усі суміжні розміри закриті замками — поступитись нема кому'
+                  : donor
+                    ? `Enter — застосувати. Поступиться розмір ${donor}`
+                    : undefined;
+
             return (
               <tr key={side} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
-                <td className="py-1 px-2 text-center">
-                  <span className="inline-flex items-center justify-center w-6 h-6 rounded text-sm bg-[#1f93ef] text-white font-bold">{side}</span>
+                <td className="py-1 px-2 text-center align-middle">
+                  <span className={`inline-flex items-center justify-center min-w-6 h-6 px-1 rounded text-sm font-bold whitespace-nowrap ${
+                    locked ? 'bg-[#22c55e] text-white' : 'bg-[#1f93ef] text-white'
+                  }`}>{side}</span>
                 </td>
                 <td className="py-1 px-2">
-                  <SideSizeInput
-                    length={length}
-                    readOnly={draft.kind === 'u' && (side === 'D' || side === 'E' || side === 'F')}
-                    onCommit={(val) => handleSizeChange(side, val)}
-                  />
-                </td>
-                <td className="py-1 px-2">
-                  {(() => {
-                    if (!material || !['Керамограніт', 'Кварцит', 'Натуральний камінь'].includes(material)) return null;
-                    const allowance = profile ? (edgeProfiles.find((p) => p.id === profile)?.allowance ?? 0) : 0;
-                    if (allowance === 0) return null;
-                    return (
-                      <div className="text-xs text-slate-500 font-mono" title="Розмір з урахуванням допуску на обробку">
-                        {Math.round(length + allowance)} мм
-                      </div>
-                    );
-                  })()}
-                </td>
-                <td className="py-1 px-2">
-                  <div className="flex items-center gap-1">
-                    <EdgeProfileThumb profileId={profile} height={24} />
-                    <select
-                      disabled={Boolean(occupiedBy)}
-                      title={occupiedBy ? `Торець закриває ${occupiedBy} — форму тут не обрати` : undefined}
-                      value={profile ?? ''}
-                      onChange={(e) => {
-                        if (e.target.value === CATALOG_OPTION_VALUE) {
-                          openEdgeCatalog({ title: `Сторона ${side}`, material, value: profile, allowNone: true,
-                            onSelect: (id) => setSideProfile(side, id as EdgeProfileType | '') });
-                          return;
-                        }
-                        setSideProfile(side, e.target.value as EdgeProfileType | '');
-                      }}
-                      className="border border-slate-300 rounded py-1 px-1 focus:border-[#1f93ef] outline-none w-[180px] text-xs truncate bg-white"
-                    >
-                      <option value="">Без фрезерування</option>
-                      <EdgeProfileOptionGroups profiles={edgeProfiles} material={material} />
-                    </select>
-                    {occupiedBy && <span className="text-[10px] text-amber-700 whitespace-nowrap" title="Нога, потовщення чи підворот закриває торець">зайнято</span>}
+                  {/* До 04.09 сторони D, E, F у П-подібної були назавжди сірі —
+                      «розраховується автоматично». Саме це власник назвав
+                      парадоксом. Тепер редагується все, а хто кому поступиться
+                      — вирішує замок. */}
+                  <div className="flex items-center gap-1.5">
+                    <SideSizeInput
+                      length={length}
+                      readOnly={!editable}
+                      title={title}
+                      onCommit={(val) => handleSizeChange(side, val)}
+                    />
+                    {!custom && onToggleLock && sideIsLockable(draft, side) && (
+                      <SideLockButton locked={locked} onToggle={() => onToggleLock(side)} />
+                    )}
                   </div>
                 </td>
               </tr>

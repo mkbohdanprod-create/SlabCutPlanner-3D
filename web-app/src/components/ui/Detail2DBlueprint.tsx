@@ -1,12 +1,151 @@
-import  { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { DetailDraft } from '../forms/utils/draftHelpers';
 import { curvedContour, isCurvedKind } from '../../domain/baseContour';
+import { sideIsLockable, WIDTH_SIDE } from '../../domain/sideLocks';
 
-export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
+/**
+ * БЕЙДЖ СТОРОНИ НА КРЕСЛЕННІ (04.09.2026).
+ *
+ * Білий квадратик — звичайна сторона, зелений — закрита замком. Клік по
+ * квадратику замикає і відмикає: власник просив ставити замки просто на
+ * рисунку, а не бігати очима в таблицю. Був суцільно синій — тоді стан
+ * замка на кресленні не читався взагалі.
+ */
+function SideBadge({ x, y, size, fontSize, id, locked, lockable, onToggle }: {
+  x: number; y: number; size: number; fontSize: number; id: string;
+  locked?: boolean; lockable?: boolean; onToggle?: () => void;
+}) {
+  return (
+    <g
+      onClick={lockable ? onToggle : undefined}
+      style={lockable ? { cursor: 'pointer' } : undefined}
+    >
+      {lockable && <title>{locked ? `Розмір ${id} закріплено — клік знімає замок` : `Клік — закріпити розмір ${id}`}</title>}
+      <rect
+        x={x - size / 2}
+        y={y - size / 2}
+        width={size}
+        height={size}
+        fill={locked ? '#22c55e' : '#ffffff'}
+        stroke={locked ? '#15803d' : '#94a3b8'}
+        strokeWidth={size * 0.06}
+        rx={size * 0.15}
+      />
+      <text
+        x={x}
+        y={y}
+        fill={locked ? '#ffffff' : '#334155'}
+        fontSize={fontSize}
+        fontWeight="bold"
+        fontFamily="sans-serif"
+        textAnchor="middle"
+        dominantBaseline="central"
+      >
+        {id}
+      </text>
+    </g>
+  );
+}
+
+/**
+ * ЧИСЛО РОЗМІРУ НА КРЕСЛЕННІ (04.09.2026).
+ *
+ * Було «G = 600 mm» — літера дублювала квадратик поруч, «mm» повторювалось
+ * вісім разів, а сам розмір був мертвим написом. Власник: «лишаємо просто
+ * цифру і коли на неї натискаєш можна змінювати розмір».
+ *
+ * Тепер це кнопка: клік — і на місці напису з'являється поле вводу
+ * (`foreignObject`, тому воно живе в тих самих координатах креслення й
+ * повертається разом із розміром). Enter застосовує, Esc скасовує, клік
+ * поза полем — застосовує. Закритий замком розмір блідий і не клікається:
+ * стан замка видно просто по кресленню.
+ */
+function DimValue({ x, y, rotate, fontSize, value, editable, editing, onStart, onCommit, onCancel }: {
+  x: number; y: number; rotate: number; fontSize: number; value: number;
+  editable: boolean; editing: boolean;
+  onStart: () => void; onCommit: (next: number) => void; onCancel: () => void;
+}) {
+  const w = fontSize * 4.2;
+  const h = fontSize * 1.7;
+  if (editing) {
+    return (
+      <foreignObject
+        x={x - w / 2}
+        y={y - h / 2}
+        width={w}
+        height={h}
+        transform={`rotate(${rotate}, ${x}, ${y})`}
+      >
+        <input
+          type="number"
+          defaultValue={Math.round(value)}
+          autoFocus
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={(e) => onCommit(Number(e.currentTarget.value))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onCommit(Number((e.target as HTMLInputElement).value));
+            if (e.key === 'Escape') onCancel();
+          }}
+          style={{
+            width: '100%', height: '100%', boxSizing: 'border-box',
+            fontSize: `${fontSize * 0.95}px`, fontFamily: 'sans-serif', textAlign: 'center',
+            border: `${Math.max(1, fontSize * 0.06)}px solid #1f93ef`, borderRadius: `${fontSize * 0.15}px`,
+            background: '#ffffff', color: '#0f172a', padding: 0, outline: 'none',
+          }}
+        />
+      </foreignObject>
+    );
+  }
+  return (
+    <text
+      x={x}
+      y={y}
+      fill={editable ? '#334155' : '#94a3b8'}
+      fontSize={fontSize}
+      fontFamily="sans-serif"
+      textAnchor="middle"
+      dominantBaseline="central"
+      transform={`rotate(${rotate}, ${x}, ${y})`}
+      style={editable ? { cursor: 'text' } : undefined}
+      onClick={editable ? onStart : undefined}
+    >
+      {editable && <title>Клік — змінити розмір</title>}
+      {Math.round(value)}
+    </text>
+  );
+}
+
+export function Detail2DBlueprint({ detail, lockedSides, onToggleSideLock, onCommitSide, isSideEditable }: {
+  detail: DetailDraft;
+  /** Розміри, закріплені замком (див. domain/sideLocks.ts). */
+  lockedSides?: ReadonlySet<string>;
+  onToggleSideLock?: (side: string) => void;
+  /** Записати новий розмір сторони (або λ) — редагування просто в кресленні. */
+  onCommitSide?: (side: string, value: number) => void;
+  /** Чи можна зараз редагувати цей розмір (замки, довільний контур). */
+  isSideEditable?: (side: string) => boolean;
+}) {
+  const [editingSide, setEditingSide] = useState<string | null>(null);
+  const canEdit = (side: string) => Boolean(onCommitSide) && (isSideEditable?.(side) ?? true);
+  const commit = (side: string, next: number) => {
+    setEditingSide(null);
+    if (Number.isFinite(next) && next > 0) onCommitSide?.(side, next);
+  };
   const curved = isCurvedKind(detail.kind);
+  /*
+   * Довільний контур (03.09.2026, кейс 81-2009298). Чернетка редактора
+   * тримає точки в `customPoints` на самій собі, а не в `geometry` — тут
+   * читалось лише друге, і стільниця з нішею вікна малювалась на кресленні
+   * прямокутником за габаритом. Імена сторін такого контуру — за угодою
+   * customPoints (id точки = ребро, що в ній закінчується), а не за
+   * порядковим номером A–D.
+   */
+  const customPoints = detail.geometry?.customPoints
+    || (detail as { customPoints?: Array<{ x: number; y: number; id?: string; closeId?: string }> }).customPoints
+    || [];
+  const isCustom = customPoints.length > 0;
   const points = useMemo(() => {
-    let pts = detail.geometry?.customPoints || [];
-    if (pts.length > 0) return pts;
+    if (isCustom) return customPoints;
     // Коло й овал (01.09): контур квадрантами, а не прямокутник за габаритом.
     const curve = curvedContour(detail);
     if (curve) return curve;
@@ -101,7 +240,10 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
       const p2 = pts[(i + 1) % pts.length];
       
       let id = "";
-      if (detail.kind === "u" || detail.kind === "l") {
+      if (isCustom) {
+        const first = pts[0] as { id?: string; closeId?: string };
+        id = i === pts.length - 1 ? (first.closeId ?? first.id ?? "") : ((p2 as { id?: string }).id ?? "");
+      } else if (detail.kind === "u" || detail.kind === "l") {
         id = p2.id === "start" ? (p2.closeId || "") : p2.id;
       } else {
         if (i === 0) id = "A";
@@ -267,45 +409,32 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
               {/* Main dimension line */}
               <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke="#64748b" strokeWidth={Math.max(w, h) * 0.004} />
               
-              {/* Text */}
-              <text
+              {/* Розмір: просто цифра, і вона ж поле вводу */}
+              <DimValue
                 x={textX}
                 y={textY}
-                fill="#334155"
+                rotate={-angle}
                 fontSize={fontSize}
-                fontFamily="sans-serif"
-                textAnchor="middle"
-                dominantBaseline="central"
-                transform={`rotate(${-angle}, ${textX}, ${textY})`}
-              >
-                {seg.id ? `${seg.id} = ${seg.length} mm` : `${seg.length} mm`}
-              </text>
+                value={seg.length}
+                editable={Boolean(seg.id) && canEdit(seg.id as string)}
+                editing={Boolean(seg.id) && editingSide === seg.id}
+                onStart={() => setEditingSide(seg.id as string)}
+                onCommit={(next) => commit(seg.id as string, next)}
+                onCancel={() => setEditingSide(null)}
+              />
               
-              {/* Blue ID Box Inside Shape */}
+              {/* Літера сторони всередині контуру; зелена — закрита замком */}
               {seg.id && (
-                <g>
-                  <rect
-                    x={seg.midX - seg.nx * (boxSize * 0.8) - boxSize/2}
-                    y={seg.midY - seg.ny * (boxSize * 0.8) - boxSize/2}
-                    width={boxSize}
-                    height={boxSize}
-                    fill="#1f93ef"
-                    rx={boxSize * 0.15}
-                  />
-                  <text
-                    x={seg.midX - seg.nx * (boxSize * 0.8)}
-                    y={seg.midY - seg.ny * (boxSize * 0.8)}
-                    fill="#ffffff"
-                    fontSize={fontSize}
-                    fontWeight="bold"
-                    fontFamily="sans-serif"
-                    textAnchor="middle"
-                    dominantBaseline="central"
-
-                  >
-                    {seg.id}
-                  </text>
-                </g>
+                <SideBadge
+                  x={seg.midX - seg.nx * (boxSize * 0.8)}
+                  y={seg.midY - seg.ny * (boxSize * 0.8)}
+                  size={boxSize}
+                  fontSize={fontSize}
+                  id={seg.id}
+                  locked={lockedSides?.has(seg.id)}
+                  lockable={Boolean(onToggleSideLock) && sideIsLockable(detail, seg.id)}
+                  onToggle={() => onToggleSideLock?.(seg.id!)}
+                />
               )}
             </g>
           );
@@ -340,8 +469,7 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
                 const qy = cy + Math.sin(a) * (h / 2) * 0.72;
                 return (
                   <g key={id}>
-                    <rect x={qx - boxSize / 2} y={qy - boxSize / 2} width={boxSize} height={boxSize} fill="#1f93ef" rx={boxSize * 0.15} />
-                    <text x={qx} y={qy} fill="#ffffff" fontSize={fontSize} fontWeight="bold" fontFamily="sans-serif" textAnchor="middle" dominantBaseline="central">{id}</text>
+                    <SideBadge x={qx} y={qy} size={boxSize} fontSize={fontSize} id={id} />
                   </g>
                 );
               })}
@@ -349,41 +477,49 @@ export function Detail2DBlueprint({ detail }: { detail: DetailDraft }) {
           );
         })()}
 
-        {/* U-Shape Width Marker */}
-        {uShapeProps && (
-          <g>
-            <line 
-              x1={uShapeProps.cutOff + uShapeProps.cutW / 2} 
-              y1={0} 
-              x2={uShapeProps.cutOff + uShapeProps.cutW / 2} 
-              y2={uShapeProps.topBarHeight} 
-              stroke="#ef4444" 
-              strokeWidth={Math.max(w, h) * 0.006} 
-            />
-            {/* Arrow heads */}
-            <polygon 
-              points={`${uShapeProps.cutOff + uShapeProps.cutW / 2},0 ${uShapeProps.cutOff + uShapeProps.cutW / 2 - boxSize*0.3},${boxSize*0.6} ${uShapeProps.cutOff + uShapeProps.cutW / 2 + boxSize*0.3},${boxSize*0.6}`}
-              fill="#ef4444" 
-            />
-            <polygon 
-              points={`${uShapeProps.cutOff + uShapeProps.cutW / 2},${uShapeProps.topBarHeight} ${uShapeProps.cutOff + uShapeProps.cutW / 2 - boxSize*0.3},${uShapeProps.topBarHeight - boxSize*0.6} ${uShapeProps.cutOff + uShapeProps.cutW / 2 + boxSize*0.3},${uShapeProps.topBarHeight - boxSize*0.6}`}
-              fill="#ef4444" 
-            />
-            <text
-              x={uShapeProps.cutOff + uShapeProps.cutW / 2 + boxSize * 0.5}
-              y={uShapeProps.topBarHeight / 2}
-              fill="#ef4444"
-              fontSize={fontSize}
-              fontWeight="bold"
-              fontFamily="sans-serif"
-              textAnchor="middle"
-              dominantBaseline="central"
-              transform={`rotate(90, ${uShapeProps.cutOff + uShapeProps.cutW / 2 + boxSize * 0.5}, ${uShapeProps.topBarHeight / 2})`}
-            >
-              Ширина = {Math.round(uShapeProps.topBarHeight)} mm
-            </text>
-          </g>
-        )}
+        {/* ШИРИНА ПЕРЕМИЧКИ П-подібної.
+            До 04.09.2026 це була жирна ЧЕРВОНА стріла точно по центру
+            перемички — рівно там, де стоять сині бейджі сторін A та E, і
+            підпис («λ», колишня «Ширина») лягав просто на них. Тепер це
+            звичайний розмір креслення: тонкий, сірий, зміщений на чверть
+            вирізу від його лівого краю, тому нічого не перекриває. */}
+        {uShapeProps && uShapeProps.topBarHeight > 0 && (() => {
+          const x = uShapeProps.cutOff + uShapeProps.cutW * 0.25;
+          const tick = boxSize * 0.26;
+          return (
+            <g>
+              <line x1={x} y1={0} x2={x} y2={uShapeProps.topBarHeight} stroke="#64748b" strokeWidth={Math.max(w, h) * 0.003} />
+              <polygon points={`${x},0 ${x - tick},${tick * 2} ${x + tick},${tick * 2}`} fill="#64748b" />
+              <polygon points={`${x},${uShapeProps.topBarHeight} ${x - tick},${uShapeProps.topBarHeight - tick * 2} ${x + tick},${uShapeProps.topBarHeight - tick * 2}`} fill="#64748b" />
+              {/* λ лишає свою літеру: квадратика-бейджа в неї немає,
+                  без позначки цифра висіла б у повітрі. */}
+              <text
+                x={x + fontSize * 0.75}
+                y={uShapeProps.topBarHeight / 2 + fontSize * 1.5}
+                fill="#64748b"
+                fontSize={fontSize * 0.95}
+                fontFamily="sans-serif"
+                textAnchor="middle"
+                dominantBaseline="central"
+                transform={`rotate(-90, ${x + fontSize * 0.75}, ${uShapeProps.topBarHeight / 2 + fontSize * 1.5})`}
+              >
+                λ
+              </text>
+              <DimValue
+                x={x + fontSize * 0.75}
+                y={uShapeProps.topBarHeight / 2 - fontSize * 0.4}
+                rotate={-90}
+                fontSize={fontSize}
+                value={Math.round(uShapeProps.topBarHeight)}
+                editable={canEdit(WIDTH_SIDE)}
+                editing={editingSide === WIDTH_SIDE}
+                onStart={() => setEditingSide(WIDTH_SIDE)}
+                onCommit={(next) => commit(WIDTH_SIDE, next)}
+                onCancel={() => setEditingSide(null)}
+              />
+            </g>
+          );
+        })()}
       </svg>
     </div>
   );

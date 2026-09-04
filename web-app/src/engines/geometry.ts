@@ -640,7 +640,7 @@ function splitRingByChord(ring: Point[], from: ContourHit, to: ContourHit): [Poi
       if (hit.isFrom) idxFrom = pts.length;
       else idxTo = pts.length;
       // Точка вставлена всередину ребра — далі йде та сама сторона оригіналу.
-      pts.push({ x: hit.point.x, y: hit.point.y, sideId: ring[i].sideId });
+      pts.push({ x: hit.point.x, y: hit.point.y, sideId: ring[i].sideId, cut: ring[i].cut });
     }
   }
 
@@ -654,8 +654,10 @@ function splitRingByChord(ring: Point[], from: ContourHit, to: ContourHit): [Poi
       if (out.length > pts.length) break; // страховка від зациклення
     }
     // Останню точку замикає ребро самої хорди — це різ, а не сторона виробу.
-    // Кромку на нього ставити не можна, тому ім'я сторони знімаємо.
-    if (out.length) out[out.length - 1] = { ...out[out.length - 1], sideId: undefined };
+    // Кромку на нього ставити не можна, тому ім'я сторони знімаємо, а саме
+    // ребро позначаємо різом — щоб метраж сусідньої кромки не «дотягувався»
+    // по ньому як по кутовому переходу.
+    if (out.length) out[out.length - 1] = { ...out[out.length - 1], sideId: undefined, cut: true };
     return out;
   };
 
@@ -673,6 +675,7 @@ function dedupeRing(ring: Point[]): Point[] {
     if (prev && Math.abs(prev.x - p.x) < 0.01 && Math.abs(prev.y - p.y) < 0.01) {
       // Точки збіглися — далі йде ребро, що починається з ОСТАННЬОЇ з них.
       prev.sideId = p.sideId;
+      prev.cut = p.cut;
       continue;
     }
     out.push({ ...p });
@@ -682,6 +685,7 @@ function dedupeRing(ring: Point[]): Point[] {
     const last = out[out.length - 1];
     if (Math.abs(first.x - last.x) < 0.01 && Math.abs(first.y - last.y) < 0.01) {
       first.sideId = last.sideId;
+      first.cut = last.cut;
       out.pop();
     } else break;
   }
@@ -749,7 +753,7 @@ type JointCut = {
 };
 
 /** Шов, який фактично зробив різ: довжина хорди і тип з'єднання. */
-type JointSeam = { lengthMm: number; jointType?: string };
+type JointSeam = { lengthMm: number; jointType?: string; chord?: { from: Point; to: Point } };
 
 /**
  * Вішає перелік швів на ПЕРШИЙ парт, що з'явився після різу.
@@ -759,7 +763,7 @@ type JointSeam = { lengthMm: number; jointType?: string };
  * шматків про шов не знають. `before` — довжина масиву партів ДО різу.
  */
 function attachJointSeams(parts: DetailPart[], before: number, seams: JointSeam[]) {
-  const real = seams.filter((seam) => seam.lengthMm > 1);
+  const real = seams.filter((seam) => seam.lengthMm > 1).map(({ lengthMm, jointType }) => ({ lengthMm, jointType }));
   if (!real.length) return;
   const owner = parts.slice(before).find((part) => part.isMain) ?? parts[before];
   if (owner) owner.jointSeams = real;
@@ -822,6 +826,8 @@ function splitContourByJoints(contour: Point[], cuts: JointCut[], seams?: JointS
       seams?.push({
         lengthMm: Math.hypot(forward.point.x - backward.point.x, forward.point.y - backward.point.y),
         jointType: cut.jointType,
+        // Хорда потрібна, щоб виріз на стику (distributeHoles) знайшов свій шов.
+        chord: { from: { x: backward.point.x, y: backward.point.y }, to: { x: forward.point.x, y: forward.point.y } },
       });
 
       next.push(split[0], split[1]);
@@ -1881,6 +1887,44 @@ function snapJointOffArcs(
 }
 
 /**
+ * Довільний контур деталі в робочих координатах (лівий-верхній кут у 0,0)
+ * з обробкою кутів і ІМЕНАМИ СТОРІН за угодою customPoints:
+ *   id точки — ім'я ребра, що в ній ЗАКІНЧУЄТЬСЯ;
+ *   замикальне ребро — `points[0].closeId ?? points[0].id`.
+ * Точки без імен (імпорт DXF) віддаються як є — сторін у них немає, і
+ * вигадувати їх позиційно не можна (те саме правило, що в sideVertexIndices).
+ *
+ * Одне місце для обох шляхів — цілої деталі й деталі зі стиками, — щоб
+ * форма, кути та імена сторін не могли розійтись між ними.
+ */
+function namedCustomContour(g: NonNullable<Detail['geometry']>): {
+  points: Point[];
+  sideSegments?: Record<string, { start: Point; end: Point }>;
+  width: number;
+  height: number;
+} | undefined {
+  if (!g.customPoints?.length) return undefined;
+  const src = g.customPoints;
+  const n = src.length;
+  const normalized = normalizePoints(src);
+  const cornerIds = src.map((point) => (point as { id?: string }).id ?? '');
+  const closeId = (src[0] as { closeId?: string }).closeId;
+  // Ім'я ребра, що ПОЧИНАЄТЬСЯ в точці i, — id НАСТУПНОЇ точки.
+  const sideIds = src.map((_, index) => (index < n - 1 ? cornerIds[index + 1] : (closeId ?? cornerIds[0])));
+  const hasNames = sideIds.some(Boolean);
+  const cornerRecord = g.corners as Record<string, CornerProcessing> | undefined;
+  const hasCorners = Boolean(cornerRecord && cornerIds.some((id) => id && cornerRecord[id]));
+  if (!hasNames && !hasCorners) {
+    return { points: normalized.points, width: normalized.width, height: normalized.height };
+  }
+  const built = buildComplexPolygonPoints(normalized.points, hasCorners ? cornerRecord : undefined, cornerIds, sideIds);
+  const sideSegments = hasNames
+    ? Object.fromEntries(Object.entries(built.sideSegments).filter(([name]) => name))
+    : undefined;
+  return { points: built.points, sideSegments, width: normalized.width, height: normalized.height };
+}
+
+/**
  * Готовий контур деталі — з радіусами, фасками й Г-зарізами, з іменами сторін.
  * Це те, що ріжуть стики: форма шматка після різу виходить сама.
  */
@@ -1888,6 +1932,20 @@ function contourForDetail(detail: Detail): Point[] | undefined {
   const g = detail.geometry;
   if (!g) return undefined;
   const corners = g.corners;
+
+  /*
+   * ДОВІЛЬНИЙ КОНТУР ГОЛОВНІШИЙ ЗА ФОРМУ (03.09.2026, кейс 81-2009298).
+   *
+   * Стільниця «прямокутна» за типом, але з довільним контуром (ніша вікна,
+   * виступ за пенал) і двома стиками їхала в розкрій трьома РІВНИМИ
+   * прямокутниками 990 завширшки: ніж різав номінальний прямокутник
+   * width×height, а customPoints читала лише гілка «деталь цілком». Той
+   * самий пріоритет, що в 3D (shapeBuilder: контур головніший за kind) і
+   * в гілці цілої деталі нижче, — тепер і тут. Імена сторін — з id точок,
+   * за угодою customPoints, тому кромки й панелі на шматках лишаються.
+   */
+  const custom = namedCustomContour(g);
+  if (custom) return custom.points;
 
   if (detail.shape === 'П-подібна') {
     const base = uShapePoints(
@@ -1958,20 +2016,213 @@ function manualJointCuts(detail: Detail, ring: Point[]): JointCut[] {
   return cuts;
 }
 
-/** Вирізи, чий центр потрапив у цей шматок, переведені в його локальні координати. */
-function holesForRing(detail: Detail, ring: Point[], minX: number, minY: number, width: number, height: number): Point[][] | undefined {
-  const cutouts = detail.geometry?.cutouts;
-  if (!cutouts || Object.keys(cutouts).length === 0) return undefined;
-
-  const mine: Record<string, SurfaceCutout> = {};
-  for (const [id, cutout] of Object.entries(cutouts)) {
-    if (!isPointInRing(ring, { x: cutout.x, y: cutout.y })) continue;
-    mine[id] = { ...cutout, x: cutout.x - minX, y: cutout.y - minY };
+/**
+ * Усі отвори деталі в координатах її контуру (0,0 — лівий-верхній кут):
+ * вирізи з редактора (центр уже абсолютний) і готові отвори імпорту.
+ */
+function detailHoles(detail: Detail, contour: Point[], width: number, height: number): Point[][] {
+  const g = detail.geometry;
+  if (!g) return [];
+  const holes = buildHolesFromCutouts(g.cutouts, contour, width, height);
+  // Готові отвори довільного контуру (імпорт) — у координатах вихідних точок,
+  // а контур ножа вже зсунуто в 0,0: переносимо на той самий зсув.
+  // Раніше деталь із такими отворами і стиком їхала в цех без отворів.
+  if (g.customHoles?.length && g.customPoints?.length) {
+    const originX = Math.min(...g.customPoints.map((point) => point.x));
+    const originY = Math.min(...g.customPoints.map((point) => point.y));
+    g.customHoles.forEach((hole) => {
+      if (hole.length >= 3) holes.push(hole.map((point) => ({ x: point.x - originX, y: point.y - originY })));
+    });
   }
+  return holes;
+}
 
-  const localRing = ring.map((p) => ({ ...p, x: p.x - minX, y: p.y - minY }));
-  const holes = buildHolesFromCutouts(mine, localRing, width, height);
-  return holes.length ? holes : undefined;
+/** Точка перетину відрізка p→q з прямою a→b (за знаковими відстанями sp, sq). */
+function lineHit(p: Point, q: Point, sp: number, sq: number): Point {
+  const t = sp / (sp - sq);
+  return { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t };
+}
+
+/**
+ * Сазерленд–Ходжман по одній півплощині: лишає частину `subject` з того
+ * боку прямої a→b, куди показує `keepSign` (знак площі кільця-господаря).
+ */
+function clipByHalfPlane(subject: Point[], a: Point, b: Point, keepSign: number): Point[] {
+  const EPS = 1e-6;
+  const side = (p: Point) => ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) * keepSign;
+  const out: Point[] = [];
+  for (let i = 0; i < subject.length; i++) {
+    const cur = subject[i];
+    const prev = subject[(i + subject.length - 1) % subject.length];
+    const sc = side(cur);
+    const sp = side(prev);
+    const inCur = sc >= -EPS;
+    const inPrev = sp >= -EPS;
+    if (inCur) {
+      if (!inPrev) out.push(lineHit(prev, cur, sp, sc));
+      out.push({ x: cur.x, y: cur.y });
+    } else if (inPrev) {
+      out.push(lineHit(prev, cur, sp, sc));
+    }
+  }
+  // Точка полігона рівно на прямій дає перетин, що збігається з нею самою, —
+  // прибираємо такі дублі, інакше на різі з'являється ребро нульової довжини.
+  return out.filter((point, index) => {
+    const prev = out[(index + out.length - 1) % out.length];
+    return index === 0 || Math.hypot(point.x - prev.x, point.y - prev.y) > 0.01;
+  });
+}
+
+/** Параметр точки p уздовж відрізка a→b і її відстань від прямої. */
+function alongSegment(p: Point, a: Point, b: Point): { t: number; dist: number } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy || 1;
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  const dist = Math.abs(dx * (p.y - a.y) - dy * (p.x - a.x)) / Math.sqrt(len2);
+  return { t, dist };
+}
+
+/**
+ * ВИРІЗ НА СТИКУ (03.09.2026, кейс 81-2009298: варильна 562×492 стоїть
+ * рівно на шві Ст1/Ст2).
+ *
+ * Раніше отвір діставався ОДНОМУ шматку — тому, де опинився центр
+ * вирізу, — і 280 мм отвору висіли за краєм шматка, а сусід їхав у цех
+ * без своєї половини. Тепер частина отвору, що лежить у шматку,
+ * врізається в його контур ВИЇМКОЮ по ребру різу, а шов коротшає на
+ * ширину вирізу — цех клеїть рівно стільки, скільки лишилось матеріалу.
+ *
+ * Вхід: `clipped` — частина отвору з боку цього шматка (після відсікання
+ * всіма його ребрами різу). Рівно одне ребро `clipped` має лежати на
+ * ребрі різу кільця; решта ланцюга й стає виїмкою. Якщо ребер на різі
+ * два (отвір ширший за шматок) — виїмка розвалила б шматок надвоє, тож
+ * повертаємо порожньо, і виріз лишається отвором, як було.
+ */
+function spliceNotch(ring: Point[], clipped: Point[]): { ring: Point[]; line: { a: Point; b: Point }; spanMm: number } | undefined {
+  const n = ring.length;
+  const m = clipped.length;
+  if (m < 3) return undefined;
+  const ON_LINE = 0.05;
+  const found: Array<{ j: number; i: number; tp: number; tq: number }> = [];
+  for (let j = 0; j < m; j++) {
+    const p = clipped[j];
+    const q = clipped[(j + 1) % m];
+    if (Math.hypot(q.x - p.x, q.y - p.y) < 0.01) continue;
+    for (let i = 0; i < n; i++) {
+      if (!ring[i].cut) continue;
+      const a = ring[i];
+      const b = ring[(i + 1) % n];
+      const ap = alongSegment(p, a, b);
+      const aq = alongSegment(q, a, b);
+      if (ap.dist > ON_LINE || aq.dist > ON_LINE) continue;
+      if (ap.t < -1e-6 || ap.t > 1 + 1e-6 || aq.t < -1e-6 || aq.t > 1 + 1e-6) continue;
+      found.push({ j, i, tp: ap.t, tq: aq.t });
+    }
+  }
+  if (found.length !== 1) return undefined;
+  const { j, i, tp, tq } = found[0];
+
+  // Ланцюг виїмки — від q далі по отвору до p (усе, крім ребра на різі).
+  const chain: Point[] = [];
+  for (let k = 1; k <= m; k++) chain.push({ x: clipped[(j + k) % m].x, y: clipped[(j + k) % m].y });
+  // Вставляємо в напрямку обходу a→b: перша точка ланцюга — з меншим параметром.
+  if (tq > tp) chain.reverse();
+  const first = chain[0];
+  const last = chain[chain.length - 1];
+  const spanMm = Math.hypot(last.x - first.x, last.y - first.y);
+  if (spanMm < 1) return undefined;
+
+  // Ребра виїмки — без імені сторони і без позначки різу; лише останнє
+  // ребро ланцюга, що повертає на лінію різу, знову є різом.
+  const notch: Point[] = chain.map((point, index) => ({
+    ...point,
+    sideId: undefined,
+    cut: index === chain.length - 1 ? true : undefined,
+  }));
+  const next = dedupeRing([...ring.slice(0, i + 1), ...notch, ...ring.slice(i + 1)]);
+  if (next.length < 3 || Math.abs(signedRingArea(next)) < 1) return undefined;
+  return { ring: next, line: { a: ring[i], b: ring[(i + 1) % n] }, spanMm };
+}
+
+/** Шов, що лежить на цій лінії різу. */
+function seamOnLine(seams: JointSeam[], line: { a: Point; b: Point }): JointSeam | undefined {
+  return seams.find((item) => {
+    if (!item.chord) return false;
+    const from = alongSegment(item.chord.from, line.a, line.b);
+    const to = alongSegment(item.chord.to, line.a, line.b);
+    return from.dist < 0.5 && to.dist < 0.5;
+  });
+}
+
+/** Центроїд полігона — для перевірки «отвір у цьому шматку». */
+function ringCentroid(ring: Point[]): Point {
+  const n = ring.length || 1;
+  return {
+    x: ring.reduce((sum, p) => sum + p.x, 0) / n,
+    y: ring.reduce((sum, p) => sum + p.y, 0) / n,
+  };
+}
+
+/**
+ * Роздає отвори деталі шматкам після різу: отвір цілком усередині шматка —
+ * лишається отвором; отвір, який перетинає ребро різу, стає виїмкою на
+ * кожному шматку, якого торкається (див. spliceNotch).
+ */
+function distributeHoles(rings: Point[][], holes: Point[][], seams?: JointSeam[]): Array<{ ring: Point[]; holes: Point[][] }> {
+  const out = rings.map((ring) => ({ ring, holes: [] as Point[][] }));
+  holes.forEach((hole) => {
+    if (hole.length < 3) return;
+    const holeArea = Math.abs(signedRingArea(hole));
+    if (holeArea < 1) return;
+    // «Отвір у цьому шматку» — за центроїдом, як і раніше за центром вирізу
+    // (перша точка отвору може лежати рівно на межі й «випасти» з обох).
+    const centre = ringCentroid(hole);
+    // Один шов ділять два шматки, а виїмка на ньому одна — знімати ширину
+    // зі шва треба один раз на отвір, але з КОЖНОГО шва, якого він торкнувся.
+    const reducedSeams = new Set<JointSeam>();
+    for (const item of out) {
+      const ring = item.ring;
+      const sign = Math.sign(signedRingArea(ring)) || 1;
+      const cutEdges = ring.map((point, index) => (point.cut ? index : -1)).filter((index) => index >= 0);
+      if (!cutEdges.length) {
+        if (isPointInRing(ring, centre)) item.holes.push(hole);
+        continue;
+      }
+      let clipped = hole;
+      for (const index of cutEdges) {
+        clipped = clipByHalfPlane(clipped, ring[index], ring[(index + 1) % ring.length], sign);
+        if (clipped.length < 3) break;
+      }
+      const area = clipped.length >= 3 ? Math.abs(signedRingArea(clipped)) : 0;
+      if (area < 1) continue; // не в цьому шматку
+      if (Math.abs(area - holeArea) < 0.5) {
+        // Різ отвору не торкнувся — звичайний отвір, якщо він справді тут.
+        if (isPointInRing(ring, centre)) item.holes.push(hole);
+        continue;
+      }
+      const notched = spliceNotch(ring, clipped);
+      if (!notched) {
+        // Виріз наскрізь через вузький шматок (торкається двох різів) — виїмка
+        // розвалила б його надвоє. Як було: отвір цілком тому шматку, де центр,
+        // і гучно в консоль — таку деталь має побачити людина.
+        if (isPointInRing(ring, centre)) {
+          item.holes.push(hole);
+          console.warn('[ВИРІЗ] Виріз проходить крізь шматок між двома стиками — шматок лишено з отвором, що виходить за його межі. Перевір у розкрої.');
+        }
+        continue;
+      }
+      item.ring = notched.ring;
+      if (seams) {
+        const seam = seamOnLine(seams, notched.line);
+        if (seam && !reducedSeams.has(seam)) {
+          seam.lengthMm = Math.max(0, seam.lengthMm - notched.spanMm);
+          reducedSeams.add(seam);
+        }
+      }
+    }
+  });
+  return out;
 }
 
 /**
@@ -1980,15 +2231,15 @@ function holesForRing(detail: Detail, ring: Point[], minX: number, minY: number,
  * Порядок стабільний — зліва направо, згори вниз. Інакше нумерація Виріб.1/2/3
  * стрибала б між перерахунками, і менеджер щоразу бачив би інші номери.
  */
-function pushRingParts(parts: DetailPart[], detail: Detail, rings: Point[][], parentLabel: string) {
+function pushRingParts(parts: DetailPart[], detail: Detail, rings: Point[][], parentLabel: string, ringHoles?: Point[][][]) {
   const padX = Math.max(0, activeAllowances.detailLength);
   const padY = Math.max(0, activeAllowances.detailWidth);
 
   const ordered = rings
-    .map((ring) => {
+    .map((ring, ringIndex) => {
       const xs = ring.map((p) => p.x);
       const ys = ring.map((p) => p.y);
-      return { ring, minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+      return { ring, holes: ringHoles?.[ringIndex] ?? [], minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
     })
     .sort((a, b) => (Math.abs(a.minX - b.minX) > 1 ? a.minX - b.minX : a.minY - b.minY));
 
@@ -2007,7 +2258,7 @@ function pushRingParts(parts: DetailPart[], detail: Detail, rings: Point[][], pa
     let shiftY = 0;
     if (padX > 0 || padY > 0) {
       const offset = offsetPolygon(local, padX, padY);
-      finalPoints = offset.points.map((p, i) => ({ ...p, sideId: local[i]?.sideId }));
+      finalPoints = offset.points.map((p, i) => ({ ...p, sideId: local[i]?.sideId, cut: local[i]?.cut }));
       width = offset.width;
       height = offset.height;
       shiftX = offset.shiftX;
@@ -2016,7 +2267,9 @@ function pushRingParts(parts: DetailPart[], detail: Detail, rings: Point[][], pa
 
     const meta = splitMeta(label, item.minX, item.minY);
     meta.nominalPoints = local.map((p) => ({ x: p.x + shiftX, y: p.y + shiftY }));
-    meta.holes = holesForRing(detail, item.ring, item.minX - shiftX, item.minY - shiftY, width, height);
+    // Отвори шматка — у його локальних координатах (разом із припуском).
+    const localHoles = item.holes.map((hole) => hole.map((point) => ({ x: point.x - item.minX + shiftX, y: point.y - item.minY + shiftY })));
+    meta.holes = localHoles.length ? localHoles : undefined;
 
     const part = buildPart(detail, label, L_PART_SHAPE, finalPoints, width, height, true, label, undefined, undefined, meta);
     // Кромки шматок успадковує з імен сторін, що пережили різ.
@@ -2105,7 +2358,11 @@ function explodeDetails(details: Detail[]): DetailPart[] {
           const rings = splitContourByJoints(contour, cuts, seams);
           if (rings.length >= 2) {
             const before = parts.length;
-            pushRingParts(parts, detail, rings, parentLabel);
+            // Отвори — по шматках: усередині шматка лишаються отворами, на
+            // ребрі різу стають виїмками і вкорочують шов.
+            const bounds = pointsBounds(contour);
+            const shared = distributeHoles(rings, detailHoles(detail, contour, bounds.width, bounds.height), seams);
+            pushRingParts(parts, detail, shared.map((item) => item.ring), parentLabel, shared.map((item) => item.holes));
             attachJointSeams(parts, before, seams);
             continue;
           }
@@ -2139,24 +2396,15 @@ function explodeDetails(details: Detail[]): DetailPart[] {
          *
          * Кути шукаються за id точки — та сама угода, що в 3D. Точки без
          * імен (імпорт DXF) просто не матчаться, і контур не змінюється.
+         *
+         * 03.09.2026: будівник винесено в `namedCustomContour` — той самий,
+         * що дає контур ножу стиків. Заразом іменований контур БЕЗ кутів
+         * теж отримує таблицю сторін: раніше вона з'являлась лише разом із
+         * радіусом, і кромка на довільному контурі без кутів губила сторону.
          */
-        const cornersOnContour = (() => {
-          const cornerRecord = g.corners as Record<string, import('../domain/types').CornerProcessing> | undefined;
-          if (!cornerRecord || !Object.keys(cornerRecord).length) return undefined;
-          const src = g.customPoints!;
-          const n = src.length;
-          const cornerIds = src.map((point) => (point as { id?: string }).id ?? '');
-          if (!cornerIds.some((id) => id && cornerRecord[id])) return undefined;
-          // Ім'я ребра, що ПОЧИНАЄТЬСЯ в точці i: за угодою customPoints
-          // це id НАСТУПНОЇ точки; замикальне ребро — closeId ?? id першої.
-          const sideIds = src.map((point, index) => (index < n - 1
-            ? ((src[index + 1] as { id?: string }).id ?? `edge-${index + 1}`)
-            : ((src[0] as { closeId?: string; id?: string }).closeId ?? (src[0] as { id?: string }).id ?? 'close')));
-          return buildComplexPolygonPoints(normalized.points, cornerRecord, cornerIds, sideIds);
-        })();
-
-        const contourPoints = cornersOnContour?.points ?? normalized.points;
-        const sideSegments = cornersOnContour?.sideSegments ?? translatedSegments;
+        const named = namedCustomContour(g)!;
+        const contourPoints = named.points;
+        const sideSegments = named.sideSegments ?? translatedSegments;
         const useImportAllowance = activeAllowances.applyToImports;
         const isElementImport = detail.importRole === 'thickening' || detail.importRole === 'fold';
         const outerPadX = useImportAllowance ? (isElementImport ? activeAllowances.elementLength : activeAllowances.detailLength) : 0;

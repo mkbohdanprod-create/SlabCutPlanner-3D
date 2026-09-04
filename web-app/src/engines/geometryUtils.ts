@@ -128,6 +128,12 @@ export function sideSegmentOfPart(part: DetailPart, side: string) {
   const custom = part.sideSegments?.[side];
   if (custom) return custom;
   const resolvedSide = part.sideAliases?.[side] ?? side;
+  if (part.sideSegments?.[resolvedSide]) return part.sideSegments[resolvedSide];
+  // Є мапа сторін, але цієї сторони в ній немає — її зрізав стик. Позиційна
+  // таблиця нижче — лише для партів без мапи (те саме правило, що в
+  // sideVertexIndices, 03.09.2026): інакше сторона знаходилась «за номером»
+  // і кромка нараховувалась на ребро різу.
+  if (part.sideSegments && Object.keys(part.sideSegments).length > 0) return undefined;
   // ХВИЛЯ 3, крок 3.2. Тут жила копія «контурної» угоди, де A вважалась
   // ОСТАННІМ ребром. Через неї `edgeLengthForSide` віддавала для сторони A
   // стільниці 2000×600 довжину 600 мм — і рівно ця цифра йшла в метри
@@ -259,8 +265,30 @@ export function sideContourRange(
   const gapBefore = Math.min(...others.map((item) => forward(item.endIdx, mine.startIdx)));
   const gapAfter = Math.min(...others.map((item) => forward(mine.endIdx, item.startIdx)));
 
-  const takeBefore = opts?.noGapBefore ? 0 : opts?.fullGapBefore ? gapBefore : Math.floor(gapBefore / 2);
-  const takeAfter = opts?.noGapAfter ? 0 : opts?.fullGapAfter ? gapAfter : Math.ceil(gapAfter / 2);
+  /*
+   * РІЗ СТИКУ — НЕ КУТОВИЙ ПЕРЕХІД (03.09.2026, кейс 81-2009298).
+   *
+   * «Проміжок» між двома іменованими сторонами тут вважався дугою чи
+   * фаскою, і сторона забирала його половину — так кромка чесно доходить
+   * до середини радіуса. Але на шматку після різу стиком той самий
+   * проміжок — це ребро різу: сторона C 2221 мм на середньому шматку
+   * рахувалась як 2814 — разом із різом 593. Ребра різу позначені
+   * (`Point.cut`), і далі за них сторона не тягнеться.
+   */
+  const edgeIsCut = (fromIdx: number) => Boolean(part.points[((fromIdx % n) + n) % n]?.cut);
+  const clampAfter = (steps: number) => {
+    let taken = 0;
+    while (taken < steps && !edgeIsCut(mine.endIdx + taken)) taken += 1;
+    return taken;
+  };
+  const clampBefore = (steps: number) => {
+    let taken = 0;
+    while (taken < steps && !edgeIsCut(mine.startIdx - taken - 1)) taken += 1;
+    return taken;
+  };
+
+  const takeBefore = clampBefore(opts?.noGapBefore ? 0 : opts?.fullGapBefore ? gapBefore : Math.floor(gapBefore / 2));
+  const takeAfter = clampAfter(opts?.noGapAfter ? 0 : opts?.fullGapAfter ? gapAfter : Math.ceil(gapAfter / 2));
   return {
     startIdx: (mine.startIdx - takeBefore + n) % n,
     endIdx: (mine.endIdx + takeAfter) % n,
@@ -369,6 +397,12 @@ export function edgeLengthForSide(part: DetailPart, side: string) {
   }
   const segment = sideSegmentOfPart(part, side);
   if (segment) return pointDistance(segment.start, segment.end);
+  // Шматок після різу з мапою сторін, у якій цієї сторони немає: сторони
+  // на шматку НЕМАЄ, і кромки на ній — теж. До 03.09.2026 тут спрацьовував
+  // фолбек «середнє ребро контуру», і на кейсі 81-2009298 кромка C_s1
+  // (52 мм на правому шматку) нараховувалась по 1836 і 1053 мм на двох
+  // шматках, де її взагалі немає.
+  if (part.sideSegments && Object.keys(part.sideSegments).length > 0) return 0;
   const edges = Math.max(1, part.points.length);
   return polygonPerimeter(part.points) / edges;
 }

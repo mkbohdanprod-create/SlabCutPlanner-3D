@@ -9,6 +9,7 @@ import {
   visibleDetailTypes,
   baseDesigns,
   createDraft,
+  defaultsForKind,
   allSides
 } from '../forms/utils/draftHelpers';
 import { ShapeIcon } from '../forms/utils/sharedInputs';
@@ -31,7 +32,14 @@ export const AddProductWorkspace: React.FC<AddProductWorkspaceProps> = ({ onClos
   const sides = allSides;
 
   const updateDetail = (patch: Partial<DetailDraft>) => {
-    setDetail(prev => ({ ...prev, ...patch }));
+    setDetail(prev => ({
+      // Зміна форми тягне за собою її розміри (`defaultsForKind`) — так само,
+      // як у панелі деталей. Без цього П-подібна лишалась із розмірами
+      // прямокутника 1200 × 600, і сторона C виходила 1 мм (04.09.2026).
+      ...prev,
+      ...(patch.kind ? defaultsForKind(patch.kind, prev.kind) : {}),
+      ...patch,
+    }));
   };
 
   const handleCreate = () => {

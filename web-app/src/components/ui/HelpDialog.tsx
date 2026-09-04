@@ -2,7 +2,7 @@ import  { useEffect, useState } from 'react';
 import { useUIStore } from '../../store/useStore';
 import { X, Book, LayoutDashboard, Scissors, Box, Layers, Settings,  Trash2, FolderOpen, Save, FileText, Image, Search, Ruler, Monitor, MousePointerSquareDashed, Eraser, Copy, Lock } from 'lucide-react';
 
-type HelpSection = 'main' | 'quick' | '2d' | 'product_editor' | 'edges' | '3d_editor' | '3d_preview' | 'slab' | 'parts' | 'texture';
+type HelpSection = 'main' | 'quick' | '2d' | 'product_editor' | 'sizes' | 'edges' | '3d_editor' | '3d_preview' | 'slab' | 'parts' | 'texture';
 
 /** Скріншот у довідці: файл із public/help (копіюється в збірку як є). */
 function HelpShot({ src, caption }: { src: string; caption: string }) {
@@ -100,6 +100,12 @@ export function HelpDialog() {
               className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${activeSection === 'product_editor' ? 'bg-[#0084ff] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
             >
               <Ruler className="w-4 h-4" /> Редактор виробу
+            </button>
+            <button
+              onClick={() => setActiveSection('sizes')}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${activeSection === 'sizes' ? 'bg-[#0084ff] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
+            >
+              <Lock className="w-4 h-4" /> Розміри і замки
             </button>
             <button 
               onClick={() => setActiveSection('edges')}
@@ -333,6 +339,78 @@ export function HelpDialog() {
                     «Зберегти виріб» повертає вас у проєкт і одразу перераховує розкрій.
                     «Скасувати» виходить без змін. Поки ви в редакторі, Ctrl+Z відкочує кроки
                     саме в ньому, а не в проєкті.
+                  </HelpBlock>
+                </div>
+              </div>
+            )}
+
+            {activeSection === 'sizes' && (
+              <div className="animate-in slide-in-from-right-4 fade-in duration-300">
+                <h1 className="text-2xl font-bold mb-2 text-slate-800 border-b pb-4">Розміри і замки</h1>
+                <p className="text-slate-600 mb-6">
+                  Вікно «Налаштування розмірів та торців» відкривається <b>подвійним кліком по деталі
+                  в 3D</b>. Ліворуч креслення з підписами, праворуч вузька панель: рядок на кожну
+                  сторону — літера, розмір, замок. Кромки задаються не тут, а в панелі «Кромки
+                  (Обробка торців)» у властивостях деталі.
+                </p>
+
+                <div className="space-y-6">
+                  <HelpBlock icon={<Ruler className="w-5 h-5" />} accent title="Літери — це сторони, λ — константа">
+                    Сторони підписані <b>A–H</b> за обходом контуру: сторона закінчується в куті з тією
+                    самою назвою. Те, що стороною не є, позначаємо <b>грецькою літерою</b>: у П-подібної
+                    це <b>λ</b> — глибина верхньої перекладини (колишня «Ширина»). Літери на кресленні
+                    й у панелі — одні й ті самі.
+                  </HelpBlock>
+                  <HelpShot src="/help/sizes/panel.png" caption="Вікно розмірів: креслення ліворуч, панель праворуч. Сторона G закрита замком — зелена і на кресленні, і в списку; її поле сіре." />
+
+                  <HelpBlock icon={<Layers className="w-5 h-5" />} title="Чому розмір «сам» міняє сусіда">
+                    У Г- і П-подібної сторони зв'язані рівняннями — габарит дорівнює сумі часток:
+                    <br />
+                    <span className="font-mono text-[13px] text-slate-700">Г: A = C + E · F = B + D</span>
+                    <br />
+                    <span className="font-mono text-[13px] text-slate-700">П: A = G + E + C · H = F + λ · B = D + λ</span>
+                    <br />
+                    Тому змінити один розмір «просто так» неможливо: хтось мусить поступитись. Раніше
+                    вибір робила програма, завжди однаково. Тепер вибираєте ви — замками.
+                  </HelpBlock>
+
+                  <HelpBlock icon={<Lock className="w-5 h-5" />} title="Замок = це число не змінюється">
+                    Закритий замок означає рівно одне: розмір не поїде — ні сам, коли рухають сусідів,
+                    ні руками (поле стає сірим). Замикати можна <b>двома способами</b>: кнопкою-замком
+                    у рядку або <b>кліком по квадратику з літерою прямо на кресленні</b>. Білий
+                    квадратик — вільна сторона, зелений — закрита. Клік ще раз — знімає.
+                  </HelpBlock>
+                  <HelpShot src="/help/sizes/letters.png" caption="Квадратики на кресленні: G і C закриті (зелені), решта вільні (білі). Клік по квадратику замикає і відмикає, клік по числу — редагує розмір." />
+
+                  <HelpBlock icon={<Eraser className="w-5 h-5" />} title="Розмір міняється прямо на кресленні">
+                    Біля кожної сторони стоїть <b>просто число</b> — літера не дублюється, бо вона вже
+                    у квадратику поруч. Клацніть по числу — воно стає полем вводу на своєму ж місці:
+                    наберіть новий розмір, <b>Enter</b> застосує, <b>Esc</b> скасує, клік поза полем теж
+                    застосує. Числа <b>закритих замком</b> сторін бліді й не клікаються — стан замка
+                    видно по самому кресленню, без списку.
+                  </HelpBlock>
+
+                  <HelpBlock icon={<MousePointerSquareDashed className="w-5 h-5" />} title="Хто поступиться — приклад">
+                    Закрийте <b>G</b> і <b>C</b>, поставте <b>A = 3000</b> — виросте <b>E</b> (виріз).
+                    Закрийте <b>E</b> і <b>G</b>, поставте A = 3000 — виросте <b>C</b> (права нога).
+                    Наведіть на поле — підказка каже наперед, чий розмір поїде. Якщо в рівнянні закриті
+                    ВСІ сусіди, поле сіріє: поступитись нема кому, зніміть якийсь замок.
+                  </HelpBlock>
+                  <HelpShot src="/help/sizes/rows.png" caption="Замки на G і C: A 2400 → 3000 забрав виріз E (1200 → 1800). Ноги стоять там, де їх поставили." />
+
+                  <HelpBlock icon={<Settings className="w-5 h-5" />} title="λ — одна на обидві ноги">
+                    λ стоїть одразу в двох рівняннях висот, бо перекладина в деталі одна. Якщо ви
+                    міняєте висоту H, а ногу F закрили замком — поїде λ, і слідом підлаштується виріз
+                    D з іншого боку. Замкніть λ — і перекладина не попливе, хай що робите з висотами.
+                    Якщо рухатись нікуди (закриті і F, і вся права вертикаль), правка не застосується.
+                  </HelpBlock>
+                  <HelpShot src="/help/sizes/lambda.png" caption="Блок λ із власним замком: та сама математика, що й у сторін." />
+
+                  <HelpBlock icon={<Book className="w-5 h-5" />} title="Що варто знати ще">
+                    Замки живуть у вікні, а не в деталі: закрили вікно — замків немає, у файлі проєкту
+                    нічого зайвого не зберігається. Розмір застосовується на <b>Enter</b> або коли
+                    клікнете поза полем; <b>Esc</b> скасовує набране. Деталь із довільним контуром
+                    (з DXF або бланка) розмірів з поля не приймає — там форму задають точки контуру.
                   </HelpBlock>
                 </div>
               </div>

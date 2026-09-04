@@ -151,8 +151,9 @@ describe('gap-сегменти (переміщення)', () => {
 });
 
 describe('реєстр шаблонів', () => {
-  it('усі 4 шаблони генеруються з дефолтами без помилок', () => {
-    expect(METAL_TEMPLATES.map((template) => template.id)).toEqual(['table_frame', 'island_frame', 'sink_frame', 'truss']);
+  it('усі 5 шаблонів генеруються з дефолтами без помилок', () => {
+    // 03.09.2026: +wall_console (консоль під поличку, з кейса 81-2009298)
+    expect(METAL_TEMPLATES.map((template) => template.id)).toEqual(['table_frame', 'island_frame', 'sink_frame', 'truss', 'wall_console']);
     METAL_TEMPLATES.forEach((template) => {
       const result = template.generate(templateDefaults(template));
       expect(result.baseLength).toBeGreaterThan(0);

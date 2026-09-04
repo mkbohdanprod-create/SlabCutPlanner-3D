@@ -12,6 +12,9 @@ import { Scissors, FolderOpen, Loader2, UserCircle, Save, Image, Download, FileT
 import { downloadTextFile } from './utils/file';
 import { exportProjectPng } from './utils/export';
 import { PdfExportDialog } from './components/ui/PdfExportDialog';
+import { StudioGate } from './components/studio/StudioGate';
+import { StudioHome } from './components/studio/StudioHome';
+import { StudioReveal, prefersReducedMotion } from './components/studio/StudioReveal';
 import { LanguageDomTranslator } from './components/ui/LanguageDomTranslator';
 import { ProjectsDashboard } from './components/ui/ProjectsDashboard';
 import { HelpDialog } from './components/ui/HelpDialog';
@@ -80,6 +83,14 @@ function App() {
   const [isExportOpen, setIsExportMenuOpen] = useState(false);
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+  /* Viyar Stone Studio (04.09.2026) — пасхалка: клік по «stone» у шапці
+     відкриває віконце з фразою, правильна фраза веде на стартову лінійки
+     продуктів. Стан тримаємо локально: перезавантаження сторінки має
+     повертати застосунок, а не студію. */
+  const [studioGateOpen, setStudioGateOpen] = useState(false);
+  const [studioOpen, setStudioOpen] = useState(false);
+  /* Кам'яна плита, що відсувається, — окремий шар поверх студії. */
+  const [studioReveal, setStudioReveal] = useState(false);
   // Keycloak-сесія: бейдж користувача в шапці і вхід для збережених проєктів
   const { user, signOut, backend } = useAuth();
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
@@ -298,7 +309,10 @@ function App() {
           <div className="flex items-center gap-2.5 mr-4">
               <h1 className="flex items-center ml-1 text-white">
                 <span className="font-medium text-2xl tracking-tighter leading-none pt-1">viyar</span>
-                <span className="font-normal text-2xl tracking-tight leading-none ml-1.5 pt-1">stone</span>
+                <span
+                  className="font-normal text-2xl tracking-tight leading-none ml-1.5 pt-1 select-none"
+                  onClick={() => setStudioGateOpen(true)}
+                >stone</span>
                 <span className="font-bold text-sm tracking-widest leading-none ml-1.5">3D</span>
               </h1>
           </div>
@@ -784,6 +798,21 @@ function App() {
       <SettingsModal />
       <EdgeProfileSettingsModal isOpen={isEdgeProfileSettingsOpen} onClose={() => setIsEdgeProfileSettingsOpen(false)} />
       <EdgeProfileCatalogHost />
+
+      {/* Пасхалка → Viyar Stone Studio. Студія — шар ПОВЕРХ застосунку:
+          він лишається змонтованим, тож вихід повертає туди ж, де були,
+          без перезбирання 3D-сцени. */}
+      <StudioGate
+        open={studioGateOpen}
+        onClose={() => setStudioGateOpen(false)}
+        onUnlock={() => {
+          setStudioGateOpen(false);
+          setStudioOpen(true);
+          if (!prefersReducedMotion()) setStudioReveal(true);
+        }}
+      />
+      {studioOpen && <StudioHome onClose={() => { setStudioOpen(false); setStudioReveal(false); }} />}
+      {studioReveal && <StudioReveal onDone={() => setStudioReveal(false)} />}
     </div>
   );
 }
