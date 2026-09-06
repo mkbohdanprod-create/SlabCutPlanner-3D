@@ -22,10 +22,21 @@ export type PaneView = '2d' | '3d' | 'texture' | 'estimate' | 'quote' | 'room'
    * при цьому НЕ ховаються — конструктор дублює VS3D повністю, разом зі
    * «Спліт» і «2D Розкрій», і додає своє (рішення власника 04.09).
    */
-  | 'measure' | 'metal' | 'plywood' | 'merge' | 'services' | 'docs';
+  | 'measure' | 'metal' | 'plywood' | 'merge' | 'services' | 'docs'
+  /*
+   * АРХІТЕКТОР (06.09.2026). Третя програма на тому самому ядрі: замість
+   * виробів у центрі — розкладки по поверхнях приміщення. Три власні
+   * вкладки (`architectureMode`): план (PDF-підложка, обведення, масштаб)
+   * → розкладка → відомість обсягів. Вкладки VS3D лишаються (2D Розкрій,
+   * 3D, прорахунок), а конструкторські (замір, метал, фанера, зведення)
+   * в архітекторі не показуються — рішення власника 06.09.
+   */
+  | 'plan' | 'layout' | 'boq';
 
 /** Вкладки, які є лише в конструкторі. */
 export const CONSTRUCTOR_VIEWS: ReadonlySet<PaneView> = new Set(['measure', 'metal', 'plywood', 'merge', 'services', 'docs']);
+/** Вкладки, які є лише в архітекторі. */
+export const ARCHITECTURE_VIEWS: ReadonlySet<PaneView> = new Set(['plan', 'layout', 'boq']);
 export type MainView = PaneView | 'split';
 
 interface UIState {
@@ -110,6 +121,13 @@ interface UIState {
    */
   constructorMode: boolean;
   setConstructorMode: (enabled: boolean) => void;
+  /**
+   * Режим «Архітектор» (06.09): те саме ядро, вкладки план → розкладка →
+   * відомість. Вмикається з картки студії, вимикається чипом у смузі
+   * вкладок. Не зберігається між сесіями — так само, як конструктор.
+   */
+  architectureMode: boolean;
+  setArchitectureMode: (enabled: boolean) => void;
   setAdminUnlocked: (unlocked: boolean) => void;
   /**
    * Останній застосований шаблон виробу: id і введені числа. Тримаємо тут,
@@ -321,9 +339,18 @@ export const useUIStore = create<UIState>((set) => ({
   constructorMode: false,
   setConstructorMode: (constructorMode) => set((state) => ({
     constructorMode,
+    architectureMode: constructorMode ? false : state.architectureMode,
     // Виходимо з конструктора з його вкладки — повертаємось на розкрій,
     // інакше робоча область лишиться на вкладці, якої вже немає.
     mainView: !constructorMode && CONSTRUCTOR_VIEWS.has(state.mainView as PaneView) ? '2d' : state.mainView,
+  })),
+  architectureMode: false,
+  setArchitectureMode: (architectureMode) => set((state) => ({
+    architectureMode,
+    // Архітектор і конструктор — різні програми на одному ядрі; вмикаючи
+    // одну, другу гасимо, щоб смуга вкладок не зливала два набори.
+    constructorMode: architectureMode ? false : state.constructorMode,
+    mainView: !architectureMode && ARCHITECTURE_VIEWS.has(state.mainView as PaneView) ? '2d' : state.mainView,
   })),
   setAdminUnlocked: (isAdminUnlocked) => set({ isAdminUnlocked }),
   lastTemplate: null,

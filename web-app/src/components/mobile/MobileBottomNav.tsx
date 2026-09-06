@@ -1,5 +1,5 @@
-import { Layers, Box, Image, Calculator, SlidersHorizontal } from 'lucide-react';
-import type { MainView, PaneView } from '../../store/useStore';
+import { Layers, Box, Image, Calculator, SlidersHorizontal, Map, Grid3x3, Table2 } from 'lucide-react';
+import { useUIStore, type MainView, type PaneView } from '../../store/useStore';
 
 /**
  * Нижня навігація — головний орган керування на телефоні.
@@ -27,10 +27,20 @@ const TABS: { id: PaneView; label: string; Icon: typeof Layers }[] = [
   { id: 'quote', label: 'Прорахунок', Icon: Calculator },
 ];
 
+/** АРХІТЕКТОР (06.09): на телефоні — план, розкладка, розкрій, відомість. */
+const ARCHITECTURE_TABS: { id: PaneView; label: string; Icon: typeof Layers }[] = [
+  { id: 'plan', label: 'План', Icon: Map },
+  { id: 'layout', label: 'Розкладка', Icon: Grid3x3 },
+  { id: '2d', label: 'Розкрій', Icon: Layers },
+  { id: 'boq', label: 'Відомість', Icon: Table2 },
+];
+
 export function MobileBottomNav({ view, onChange, onOpenTools, toolsOpen }: Props) {
+  const architectureMode = useUIStore((s) => s.architectureMode);
+  const tabs = architectureMode ? ARCHITECTURE_TABS : TABS;
   return (
     <nav className="m-nav" aria-label="Основна навігація">
-      {TABS.map(({ id, label, Icon }) => {
+      {tabs.map(({ id, label, Icon }) => {
         const active = view === id;
         return (
           <button

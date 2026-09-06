@@ -982,6 +982,15 @@ export interface Project {
    * математика — domain/room.ts.
    */
   room?: import('./room').RoomModel;
+  /**
+   * АРХІТЕКТОР — 06.09.2026, рішення власника. План (PDF-підложка з
+   * масштабом), поверхні (підлоги, стіни) і розкладки по них. Живе в тому
+   * самому проєкті поруч із виробами: вироби й розкладки — одна пачка, з
+   * якої збираються розкрій, квадратури й комерційна. Необов'язкове поле —
+   * старі файли без нього. Модель — domain/architecture.ts, математика —
+   * engines/tileLayout.ts.
+   */
+  architecture?: import('./architecture').ArchitectureModel;
   products?: Product[];
   details: Detail[];
   placements: Placement[];

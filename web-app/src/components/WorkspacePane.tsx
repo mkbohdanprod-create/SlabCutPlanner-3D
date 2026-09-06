@@ -10,7 +10,7 @@ import { EstimatePanel } from './ui/EstimatePanel';
 import { QuotePanel } from './ui/QuotePanel';
 import { RoomEditor } from './room/RoomEditor';
 import { WorkspaceTabs } from './WorkspaceTabs';
-import { CONSTRUCTOR_VIEWS } from '../store/useStore';
+import { CONSTRUCTOR_VIEWS, ARCHITECTURE_VIEWS } from '../store/useStore';
 
 /*
  * КОНСТРУКТОР (04.09.2026): вкладки-пасхалки Студії. Ліниві — код
@@ -38,6 +38,34 @@ function ConstructorView({ view }: { view: PaneView }) {
             <div className="flex-1 flex flex-col items-center justify-center bg-slate-100 text-slate-500 w-full h-full gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
               <span className="font-medium">Завантаження конструктора...</span>
+            </div>
+          }
+        >
+          <Comp />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
+  );
+}
+
+/*
+ * АРХІТЕКТОР (06.09.2026): план → розкладка → відомість. Так само ліниві —
+ * pdf.js і редактори плану не вантажаться, доки людина у VS3D.
+ */
+const PlanEditor = lazy(() => import('../workspaces/architecture/plan/PlanEditor'));
+const LayoutEditor = lazy(() => import('../workspaces/architecture/layouts/LayoutEditor'));
+const BoqPanel = lazy(() => import('../workspaces/architecture/documents/BoqPanel'));
+
+function ArchitectureView({ view }: { view: PaneView }) {
+  const Comp = view === 'plan' ? PlanEditor : view === 'layout' ? LayoutEditor : BoqPanel;
+  return (
+    <div className="flex flex-col h-full relative">
+      <ErrorBoundary componentName={`Architecture:${view}`}>
+        <Suspense
+          fallback={
+            <div className="flex-1 flex flex-col items-center justify-center bg-[#f6f5f2] text-neutral-500 w-full h-full gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-neutral-800" />
+              <span className="font-medium">Завантаження архітектора...</span>
             </div>
           }
         >
@@ -151,6 +179,8 @@ export const WorkspacePane = memo(function WorkspacePane({
           </div>
         ) : CONSTRUCTOR_VIEWS.has(view) ? (
           <ConstructorView view={view} />
+        ) : ARCHITECTURE_VIEWS.has(view) ? (
+          <ArchitectureView view={view} />
         ) : view === 'room' ? (
           <div className="flex flex-col h-full relative">
             <ErrorBoundary componentName="RoomEditor">

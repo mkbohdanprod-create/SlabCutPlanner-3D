@@ -9,8 +9,12 @@ import { useEffect, useRef, useState } from 'react';
  * після двох невдач з'являється лише натяк про кількість слів.
  */
 
-/** Ключ. Порівнюємо не буквально: без розділових, зайвих пробілів і регістру. */
-const PHRASE = 'влад то батя відкривай';
+/**
+ * Ключ. Порівнюємо не буквально: без розділових, зайвих пробілів і
+ * регістру. 06.09.2026 — власник змінив фразу на код (цифри + vs3d):
+ * стара українська фраза більше не пускає.
+ */
+const PHRASE = '78907890vs3d';
 
 const normalize = (value: string) =>
   value
@@ -84,7 +88,7 @@ export function StudioGate({ open, onClose, onUnlock }: { open: boolean; onClose
           />
 
           <div className="mt-3 h-[18px] text-[13px] text-slate-400">
-            {tries > 0 && (tries >= 2 ? 'Не те. Чотири слова.' : 'Не те.')}
+            {tries > 0 && (tries >= 2 ? 'Не те. Код, не фраза.' : 'Не те.')}
           </div>
 
           <div className="mt-3 flex items-center justify-end gap-2">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useUIStore, type PaneView } from './store/useStore';
+import { useUIStore, ARCHITECTURE_VIEWS, type PaneView } from './store/useStore';
 import { useProjectStore } from './store/useProjectStore';
 import { Sidebar } from './components/ui/Sidebar';
 import { Sidebar3D } from './components/ui/Sidebar3D';
@@ -29,6 +29,9 @@ import { WorkspaceTabs } from './components/WorkspaceTabs';
 import { ProjectLoadingOverlay } from './components/ui/ProjectLoadingOverlay';
 import { AddProductWorkspace } from './components/ui/AddProductWorkspace';
 import { ProductEditorWorkspace } from './components/ui/ProductEditorWorkspace';
+import { ArchitectureSidebar } from './workspaces/architecture/ArchitectureSidebar';
+import { AddLayoutWorkspace } from './workspaces/architecture/layouts/AddLayoutWorkspace';
+import { useArchUIStore } from './workspaces/architecture/store';
 import { SettingsModal } from './components/ui/SettingsModal';
 import { EdgeProfileSettingsModal } from './components/ui/EdgeProfileSettingsModal';
 import { EdgeProfileCatalogHost } from './components/ui/EdgeProfileCatalog';
@@ -42,6 +45,8 @@ function App() {
   const setMainView = useUIStore((s) => s.setMainView);
   const mainView = useUIStore((s) => s.mainView);
   const isAddProductMode = useUIStore((s) => s.isAddProductMode);
+  // АРХІТЕКТОР (06.09): окреме меню «Створити розкладку» — на основі меню виробу
+  const isAddLayoutMode = useArchUIStore((s) => s.isAddLayoutMode);
   const isProductEditorMode = useUIStore((s) => s.productEditorSession !== null);
   const splitLeftView = useUIStore((s) => s.splitLeftView);
   const setSplitLeftView = useUIStore((s) => s.setSplitLeftView);
@@ -683,6 +688,8 @@ function App() {
           <ProductEditorWorkspace />
         ) : isAddProductMode ? (
           <AddProductWorkspace onClose={() => useUIStore.getState().setAddProductMode(false)} />
+        ) : isAddLayoutMode ? (
+          <AddLayoutWorkspace onClose={() => useArchUIStore.getState().setAddLayoutMode(false)} />
         ) : (
           <>
             {/* Left Sidebar - Tools & Parts.
@@ -694,9 +701,13 @@ function App() {
                 текстури», «Прорахунку» і «Послугах» лівого меню немає
                 (26.08): там воно керувало сценою, якої на екрані нема, —
                 зайвий стовпець, що відбирав ширину в робочої зони. */}
+            {/* АРХІТЕКТОР (06.09): на плані, розкладці й відомості — своя
+                колонка: «Додати виріб» + «Створити розкладку», поверхні,
+                розкладки, вироби. */}
             {mainView === '2d' || mainView === 'split'
               ? (!isMobile && <Sidebar />)
-              : mainView === '3d' ? <Sidebar3D /> : null}
+              : mainView === '3d' ? <Sidebar3D />
+                : ARCHITECTURE_VIEWS.has(mainView as PaneView) ? (!isMobile && <ArchitectureSidebar />) : null}
 
             <div className="flex-1 min-h-0 min-w-0 flex flex-col relative">
           {mainView === 'split' ? (
@@ -770,6 +781,7 @@ function App() {
               // а не «перемкнути тло під редактором».
               if (isProductEditorMode) useUIStore.getState().setProductEditorSession(null);
               if (isAddProductMode) useUIStore.getState().setAddProductMode(false);
+              if (isAddLayoutMode) useArchUIStore.getState().setAddLayoutMode(false);
               setMainView(v);
               setToolsOpen(false);
             }}
@@ -779,14 +791,14 @@ function App() {
           {/* Шухляда не живе поверх редактора виробу: відкрили редактор
               з неї — вона своє зробила і ховається (власник 01.09) */}
           <MobileSheet
-            open={toolsOpen && !isProductEditorMode && !isAddProductMode}
-            title="Деталі та слеби"
+            open={toolsOpen && !isProductEditorMode && !isAddProductMode && !isAddLayoutMode}
+            title={ARCHITECTURE_VIEWS.has(mainView as PaneView) ? 'Поверхні та розкладки' : 'Деталі та слеби'}
             onClose={() => setToolsOpen(false)}
           >
             {/* У 3D рейка інструментів уже лежить на сцені (Sidebar3D
                 на мобільному стає плаваючою колонкою праворуч), тому в
                 шухляді — список деталей і слебів, а не її дубль. */}
-            <Sidebar />
+            {ARCHITECTURE_VIEWS.has(mainView as PaneView) ? <ArchitectureSidebar /> : <Sidebar />}
           </MobileSheet>
         </>
       )}

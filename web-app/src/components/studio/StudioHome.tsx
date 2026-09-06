@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useUIStore } from '../../store/useStore';
-import { ArrowLeft, Box, Ruler, Building2, PackageCheck, Boxes, Factory } from 'lucide-react';
+import { ArrowLeft, Box, Ruler, Building2, PackageCheck, Boxes, Factory, FlaskConical } from 'lucide-react';
 import { prefersReducedMotion } from './StudioReveal';
 
 /**
@@ -132,7 +132,16 @@ export function StudioHome({ onClose }: { onClose: () => void }) {
       question: 'Скільки коштує облицювати об’єкт',
       what: 'Приміщення, поверхні й розкладки: підлоги, стіни, пано, сходи. КП, відомість обсягів і монтажна схема — з одних даних.',
       icon: Building2,
-      status: 'soon',
+      // Перша версія 06.09.2026: режим архітектора на тому самому ядрі —
+      // план (PDF + масштаб + обведення) → розкладки → відомість; вироби
+      // лишаються, конструкторські вкладки сховані.
+      status: 'live',
+      onOpen: () => {
+        const ui = useUIStore.getState();
+        ui.setArchitectureMode(true);
+        ui.setMainView('plan');
+        onClose();
+      },
     },
     {
       id: 'packing',
@@ -211,11 +220,17 @@ export function StudioHome({ onClose }: { onClose: () => void }) {
             MES — окрема система (Smart Factory MES/APS, Python + Next.js), не
             продовження VS3D (рішення власника 06.09): звідси лише посилання.
             Адреса — VITE_MES_URL; без неї — /mes/load/: статичний експорт фронту MES
-            лежить у web-app/public/mes (той самий Vercel), повний MES — Python-сервер на 8082. */}
-        <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
+            лежить у web-app/public/mes (той самий Vercel), повний MES — Python-сервер на 8082.
+            Лабораторія — окремий застосунок (06.09): правила обучалочки, кейси з кресленнями,
+            кімнати питань і бали. Публічна збірка лежить у web-app/public/lab (той самий
+            Vercel, /lab/) — у ній ПІБ/телефони/адреси замовників прибрано, штампи на
+            кресленнях замальовано; версія зі спільною базою — приватний артефакт claude.ai.
+            Адресу можна перекрити через VITE_LAB_URL. */}
+        <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
           {[
             { icon: Boxes, name: 'Склад слябів (WMS)', what: 'Комірки, задачі, заявки на виробництво — до буфера цеху.', href: (import.meta.env.VITE_WMS_URL as string | undefined) || undefined },
             { icon: Factory, name: 'Виробництво (MES)', what: 'Окрема система: термінали операторів, карта цеху, буфери, навантаження. Фундамент збирається на кейсах.', href: (import.meta.env.VITE_MES_URL as string | undefined) || '/mes/load/' },
+            { icon: FlaskConical, name: 'Лабораторія', what: 'Правила з обучалочки, бібліотека кейсів з кресленнями, кімнати питань по галузях, бали за відповіді.', href: (import.meta.env.VITE_LAB_URL as string | undefined) || '/lab/' },
           ].map(({ icon: Icon, name, what, href }) => {
             const inner = (
               <>

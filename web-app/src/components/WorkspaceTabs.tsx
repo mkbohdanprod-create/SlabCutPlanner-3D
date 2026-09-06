@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layers, Image, Box, Eye, Columns, ExternalLink, FileText, Calculator, Home, Ruler, Wrench, LayoutGrid, Combine, ClipboardList, FileOutput, X } from 'lucide-react';
+import { Layers, Image, Box, Eye, Columns, ExternalLink, FileText, Calculator, Home, Ruler, Wrench, LayoutGrid, Combine, ClipboardList, FileOutput, X, Map, Grid3x3, Table2, Building2 } from 'lucide-react';
 import { useUIStore, type MainView, type PaneView } from '../store/useStore';
 
 /**
@@ -25,6 +25,40 @@ const CONSTRUCTOR_TABS: Array<{ view: PaneView; label: string; title: string; ic
   { view: 'docs', label: 'Документи', title: 'Креслення, тех карта, бланк цеху, JSON для MES — з попереднім переглядом', icon: FileOutput },
 ];
 
+/**
+ * Вкладки архітектора (06.09). Дві стоять ПЕРЕД розкроєм — бо в архітекторі
+ * робота починається з плану й розкладки, а розкрій і 3D підтягуються за
+ * ними; відомість — після прорахунку, як його розгорнутий бік.
+ */
+const ARCHITECTURE_TABS_FRONT: typeof CONSTRUCTOR_TABS = [
+  { view: 'plan', label: 'План', title: 'План приміщення: PDF-підложка, масштаб по відомому розміру, обведення підлог, стін і отворів', icon: Map },
+  { view: 'layout', label: 'Розкладка', title: 'Розкладки по поверхнях: патерн, формат, шов, старт — і живі числа', icon: Grid3x3 },
+];
+const ARCHITECTURE_TABS_BACK: typeof CONSTRUCTOR_TABS = [
+  { view: 'boq', label: 'Відомість', title: 'Відомість обсягів по всіх розкладках: матеріал, роботи, витратні, логістика', icon: Table2 },
+];
+
+function TabButton({ tab, view, padX, onChangeView, tabLabel }: {
+  tab: typeof CONSTRUCTOR_TABS[number]; view: PaneView; padX: string; onChangeView: (view: MainView) => void; tabLabel: (label: string) => string | null;
+}) {
+  const Icon = tab.icon;
+  return (
+    <button
+      onClick={() => {
+        onChangeView(tab.view);
+        useUIStore.getState().setFloatingPreviewOpen(false);
+      }}
+      className={`pane-tab ${padX} h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ml-1 shrink-0 whitespace-nowrap ${
+        view === tab.view ? 'is-active' : ''
+      }`}
+      style={{ fontFamily: 'Roboto, sans-serif' }}
+      title={tab.title}
+    >
+      <Icon className="w-4 h-4" /> {tabLabel(tab.label)}
+    </button>
+  );
+}
+
 export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleSplit, centered = false }: {
   view: PaneView;
   onChangeView: (view: MainView) => void;
@@ -42,6 +76,10 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
   // вкладки VS3D лишаються всі, разом зі «Спліт» і «2D Розкрій».
   const constructorMode = useUIStore((s) => s.constructorMode);
   const setConstructorMode = useUIStore((s) => s.setConstructorMode);
+  // АРХІТЕКТОР (06.09): план і розкладка спереду, відомість після прорахунку;
+  // «2D Підбір» і «Приміщення» в цьому режимі не показуємо — план їх заміняє.
+  const architectureMode = useUIStore((s) => s.architectureMode);
+  const setArchitectureMode = useUIStore((s) => s.setArchitectureMode);
 
   // На телефоні стрічка вкладок прокручується — активна може опинитись
   // за краєм, і людина бачить обрубок «…крій». Підвозимо її в кадр.
@@ -56,7 +94,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
   }, [view, isFloatingPreviewOpen]);
   const tabLabel = (label: string) => (isExpertMode ? null : label);
   // У конструкторі вкладок на шість більше — корінці вужчі, щоб уся смуга влізла в 1600 px
-  const padX = isExpertMode ? 'px-3.5' : constructorMode ? 'px-3' : 'px-6';
+  const padX = isExpertMode ? 'px-3.5' : (constructorMode || architectureMode) ? 'px-3' : 'px-6';
 
   // Canvas Tabs
   // overflow-x-auto: у «Спліті» панель удвічі вужча, а вкладок сім —
@@ -75,6 +113,9 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
   // полем, хоча в коді все виглядало правильно.
   return (
       <div ref={stripRef} className={`workspace-tabs-desktop flex items-end z-10 relative bg-[#f0f3f5] pt-2 px-4 shrink-0 overflow-x-auto custom-scrollbar ${centered ? 'justify-center relative' : ''}`}>
+        {architectureMode && ARCHITECTURE_TABS_FRONT.map((tab) => (
+          <TabButton key={tab.view} tab={tab} view={view} padX={padX} onChangeView={onChangeView} tabLabel={tabLabel} />
+        ))}
         <button
           onClick={() => {
             onChangeView('2d');
@@ -89,6 +130,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
           <Layers className="w-4 h-4" />
           {tabLabel('2D Розкрій')}
         </button>
+        {!architectureMode && (
         <button
           onClick={() => {
             onChangeView('texture');
@@ -102,6 +144,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
         >
           <Image className="w-4 h-4" /> {tabLabel('2D Підбір')}
         </button>
+        )}
         <button
           onClick={() => {
             onChangeView('3d');
@@ -147,7 +190,8 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             <FileText className="w-4 h-4" /> {tabLabel('Послуги для виробництва')}
           </button>
         )}
-        {/* Приміщення (база) — 01.09: редактор кімнати, у розкрій не йде */}
+        {/* Приміщення (база) — 01.09: редактор кімнати, у розкрій не йде. В архітекторі його заміняє «План». */}
+        {!architectureMode && (
         <button
           onClick={() => {
             onChangeView('room');
@@ -161,6 +205,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
         >
           <Home className="w-4 h-4" /> {tabLabel('Приміщення')}
         </button>
+        )}
         <button
           onClick={() => {
             onChangeView('quote');
@@ -174,6 +219,9 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
         >
           <Calculator className="w-4 h-4" /> {tabLabel('Прорахунок')}
         </button>
+        {architectureMode && ARCHITECTURE_TABS_BACK.map((tab) => (
+          <TabButton key={tab.view} tab={tab} view={view} padX={padX} onChangeView={onChangeView} tabLabel={tabLabel} />
+        ))}
         {constructorMode && CONSTRUCTOR_TABS.map((tab) => {
           const Icon = tab.icon;
           return (
@@ -204,6 +252,15 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
           <Columns className="w-4 h-4" /> {tabLabel('Спліт')}
         </button>
         
+        {architectureMode && (
+          <button
+            onClick={() => setArchitectureMode(false)}
+            className={`pane-tab px-2.5 h-10 rounded-t-lg text-[12px] font-bold flex items-center gap-1 shrink-0 whitespace-nowrap !text-neutral-900 ${centered ? 'absolute right-14 bottom-0' : 'ml-auto'}`}
+            title="Архітектор увімкнено — клік: вийти назад у VS3D (план і розкладки лишаються в проєкті)"
+          >
+            <Building2 className="w-4 h-4" /><X className="w-3.5 h-3.5" />
+          </button>
+        )}
         {constructorMode && (
           <button
             onClick={() => setConstructorMode(false)}
@@ -221,7 +278,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             url.searchParams.set('popup', isFloatingPreviewOpen ? '3d-preview' : view);
             window.open(url.toString(), 'SlabCutPlannerPopup', 'width=1200,height=800');
           }}
-          className={`pane-tab px-4 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 shrink-0 hover:text-[var(--accent-color)] ${centered ? 'absolute right-4 bottom-0' : constructorMode ? '' : 'ml-auto'}`}
+          className={`pane-tab px-4 h-10 rounded-t-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 shrink-0 hover:text-[var(--accent-color)] ${centered ? 'absolute right-4 bottom-0' : (constructorMode || architectureMode) ? '' : 'ml-auto'}`}
           title="Відкрити поточний вид в окремому вікні"
         >
           <ExternalLink className="w-4 h-4" />
