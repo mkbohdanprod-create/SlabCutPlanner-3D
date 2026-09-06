@@ -210,11 +210,12 @@ export function StudioHome({ onClose }: { onClose: () => void }) {
         {/* Суміжні системи — не наші продукти, але в тому самому контурі.
             MES — окрема система (Smart Factory MES/APS, Python + Next.js), не
             продовження VS3D (рішення власника 06.09): звідси лише посилання.
-            Адреса — VITE_MES_URL (Vercel: змінна оточення), локально — сервер MES. */}
+            Адреса — VITE_MES_URL; без неї — /mes/load/: статичний експорт фронту MES
+            лежить у web-app/public/mes (той самий Vercel), повний MES — Python-сервер на 8082. */}
         <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
           {[
             { icon: Boxes, name: 'Склад слябів (WMS)', what: 'Комірки, задачі, заявки на виробництво — до буфера цеху.', href: (import.meta.env.VITE_WMS_URL as string | undefined) || undefined },
-            { icon: Factory, name: 'Виробництво (MES)', what: 'Окрема система: термінали операторів, карта цеху, буфери, навантаження. Фундамент збирається на кейсах.', href: (import.meta.env.VITE_MES_URL as string | undefined) || 'http://localhost:8082/mes/' },
+            { icon: Factory, name: 'Виробництво (MES)', what: 'Окрема система: термінали операторів, карта цеху, буфери, навантаження. Фундамент збирається на кейсах.', href: (import.meta.env.VITE_MES_URL as string | undefined) || '/mes/load/' },
           ].map(({ icon: Icon, name, what, href }) => {
             const inner = (
               <>
