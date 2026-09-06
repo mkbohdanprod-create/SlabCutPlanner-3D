@@ -207,22 +207,33 @@ export function StudioHome({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* Суміжні системи — не наші продукти, але в тому самому контурі */}
+        {/* Суміжні системи — не наші продукти, але в тому самому контурі.
+            MES — окрема система (Smart Factory MES/APS, Python + Next.js), не
+            продовження VS3D (рішення власника 06.09): звідси лише посилання.
+            Адреса — VITE_MES_URL (Vercel: змінна оточення), локально — сервер MES. */}
         <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
           {[
-            { icon: Boxes, name: 'Склад слябів (WMS)', what: 'Комірки, задачі, заявки на виробництво — до буфера цеху.' },
-            { icon: Factory, name: 'Виробництво (MES)', what: 'Ділянки, маршрути, пропускна. Фундамент збирається на кейсах.' },
-          ].map(({ icon: Icon, name, what }) => (
-            <div key={name} className="flex items-center gap-4 rounded-xl border border-white/[0.07] bg-white/[0.02] px-5 py-4">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.07]">
-                <Icon className="h-[18px] w-[18px] text-white/70" strokeWidth={1.8} />
-              </div>
-              <div>
-                <div className="text-[15px] font-semibold text-white/90">{name}</div>
-                <div className="text-[13.5px] text-slate-400">{what}</div>
-              </div>
-            </div>
-          ))}
+            { icon: Boxes, name: 'Склад слябів (WMS)', what: 'Комірки, задачі, заявки на виробництво — до буфера цеху.', href: (import.meta.env.VITE_WMS_URL as string | undefined) || undefined },
+            { icon: Factory, name: 'Виробництво (MES)', what: 'Окрема система: термінали операторів, карта цеху, буфери, навантаження. Фундамент збирається на кейсах.', href: (import.meta.env.VITE_MES_URL as string | undefined) || 'http://localhost:8082/mes/' },
+          ].map(({ icon: Icon, name, what, href }) => {
+            const inner = (
+              <>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.07]">
+                  <Icon className="h-[18px] w-[18px] text-white/70" strokeWidth={1.8} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[15px] font-semibold text-white/90">{name}{href ? <span className="ml-2 text-[11px] font-medium tracking-wide text-[#5eb4ff]">ВІДКРИТИ →</span> : null}</div>
+                  <div className="text-[13.5px] text-slate-400">{what}</div>
+                </div>
+              </>
+            );
+            const cls = 'flex items-center gap-4 rounded-xl border border-white/[0.07] bg-white/[0.02] px-5 py-4';
+            return href ? (
+              <a key={name} href={href} target="_blank" rel="noopener noreferrer" className={`${cls} transition-colors hover:bg-white/[0.05] hover:border-white/[0.14]`}>{inner}</a>
+            ) : (
+              <div key={name} className={cls}>{inner}</div>
+            );
+          })}
         </div>
 
         <div className="mt-auto pt-10 text-[12.5px] text-white/30">
