@@ -22,7 +22,7 @@ export const fmtMm = (v: number) => (Math.abs(v - Math.round(v)) < 0.05 ? String
 
 const LETTERS = 'ABCDEFGHIJKLMNOP';
 
-export interface Side { name: string; a: Pt; b: Pt; len: number; mid: Pt; /** одинична нормаль НАЗОВНІ */ n: Pt }
+export interface Side { name: string; a: Pt; b: Pt; len: number; mid: Pt; /** одинична нормаль НАЗОВНІ */ n: Pt; /** ребро розпилу між частинами однієї деталі (стик стільниць), не сторона з літерою */ seam?: boolean }
 
 /**
  * Сторони парта з літерами. Джерело — `sideSegments` рушія (Г/П-подібні);
@@ -39,8 +39,18 @@ export function sidesOf(pts: Pt[], sideSegments?: Record<string, { start: Pt; en
     return { name, a, b, len, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, n: { x: (dy / len) * s, y: (-dx / len) * s } };
   };
   if (sideSegments && Object.keys(sideSegments).length) {
-    for (const [name, seg] of Object.entries(sideSegments)) out.push(mk(name, seg.start, seg.end));
+    for (const [name, seg] of Object.entries(sideSegments)) out.push({ ...mk(name, seg.start, seg.end), seam: name.startsWith('~') || undefined });
     out.sort((p, q) => LETTERS.indexOf(p.name) - LETTERS.indexOf(q.name));
+    // ребра контуру, яких нема серед сторін з літерами, — розпил деталі на частини (рушій ділить П/Г під лист):
+    // це «стик стільниць», його теж треба показати й виміряти
+    const near = (p: Pt, q: Pt) => Math.hypot(p.x - q.x, p.y - q.y) < 1;
+    let k = 0;
+    for (let i = 0; i < pts.length; i += 1) {
+      const a = pts[i]; const b = pts[(i + 1) % pts.length];
+      if (Math.hypot(b.x - a.x, b.y - a.y) < 1) continue;
+      const covered = out.some((sd) => (near(sd.a, a) && near(sd.b, b)) || (near(sd.a, b) && near(sd.b, a)));
+      if (!covered) { k += 1; out.push({ ...mk(`~${k}`, a, b), seam: true }); }
+    }
     return out;
   }
   for (let i = 0; i < pts.length; i += 1) out.push(mk(LETTERS[i] ?? String(i), pts[i], pts[(i + 1) % pts.length]));
@@ -154,12 +164,20 @@ export function rectPts(c: Pt, w: number, h: number): Pt[] {
 /** Профіль кромки сторони (пряме ім'я або через alias розрізаного парта). */
 export function profileOfSide(detail: Detail | undefined, part: DetailPart, side: string): string | undefined {
   const ep = detail?.edgeProfiles ?? {};
-  const direct = ep[side];
-  if (typeof direct === 'string') return direct;
-  if (direct && typeof direct === 'object') { const top = (direct as unknown as { top?: unknown }).top; if (typeof top === 'string') return top; }
+  // у проєкті з застосунку кромка — EdgeTreatment { top: { profileId }, isFullLength… }, у фікстурах — рядок id
+  const idOf = (v: unknown): string | undefined => {
+    if (typeof v === 'string') return v;
+    if (v && typeof v === 'object') {
+      const top = (v as { top?: unknown }).top;
+      if (typeof top === 'string') return top;
+      if (top && typeof top === 'object') { const pid = (top as { profileId?: unknown }).profileId; if (typeof pid === 'string' && pid) return pid; }
+    }
+    return undefined;
+  };
+  const direct = idOf(ep[side]);
+  if (direct) return direct;
   const alias = part.sideAliases?.[side];
-  const v = alias ? ep[alias] : undefined;
-  return typeof v === 'string' ? v : undefined;
+  return alias ? idOf(ep[alias]) : undefined;
 }
 
 /** Слот доповнення з id елемента: «prod_x/element:thickening_C/detail:main» → «thickening_C». */
@@ -168,9 +186,10 @@ export function slotOf(id: string): string {
   return m ? m[1] : id;
 }
 
-export type AdditionKind = 'thickening' | 'fold' | 'leg' | 'wall_panel' | 'sink' | 'other';
+export type AdditionKind = 'thickening' | 'fold' | 'leg' | 'wall_panel' | 'skirting' | 'sink' | 'other';
 export function additionKind(slot: string): AdditionKind {
   if (slot.startsWith('thickening')) return 'thickening';
+  if (slot.startsWith('skirting')) return 'skirting';
   if (slot.startsWith('fold')) return 'fold';
   if (slot.startsWith('leg')) return 'leg';
   if (slot.startsWith('wall_panel')) return 'wall_panel';

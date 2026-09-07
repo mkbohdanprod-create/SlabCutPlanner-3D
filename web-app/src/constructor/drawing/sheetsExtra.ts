@@ -17,12 +17,12 @@
 import type { DrawingSheet, Entity, SectionView } from './model';
 import { SHEET, SHEET_A4P, TEXT } from './style';
 import { bbox, fitScaleDen, fmtMm, textW, rectPts, labelPoint } from './geom';
-import { chamferSection, dim, foldSection, legNode, profileSection, sinkCutSection, thickeningSection, wallPanelSection } from './sections';
+import { chamferSection, dim, foldSection, legNode, profileSection, sinkCutSection, skirtingSection, thickeningSection, wallPanelSection } from './sections';
 import { miterJointFor } from '../../engines/miterAssembly';
 import { layoutSections } from './layoutSections';
 import {
   ROW, bottomBandHeight, drawAdditionZones, drawContour, drawEdges, drawHoles, drawSideDims, edgeIndex, layoutBody, makeSheet, planHoleDims, stampFields,
-  type Ctx, type DrawModel, type SetInput, type Tf,
+  type Ctx, type DrawModel, type DrawPart, type SetInput, type Tf,
 } from './set';
 
 /* ── мийка ──────────────────────────────────────────────────────── */
@@ -139,7 +139,7 @@ export function composeSinkSheet(model: DrawModel, input: SetInput, sheetNo: num
 
 /* ── стики, фаски, склейка ──────────────────────────────────────── */
 
-interface JointRow { no: number; a: string; b: string; type: string; lengthMm: number; where: 'цех' | 'об’єкт'; texture: string; color: string }
+interface JointRow { no: number; a: string; b: string; type: string; lengthMm: number; where: 'цех' | 'об’єкт' | 'об’єкт*'; texture: string; color: string }
 
 export function composeJointsSheet(model: DrawModel, input: SetInput, sheetNo: number, sheetCount: number): DrawingSheet | null {
   if (!model.main.length || !model.additions.length) return null;
@@ -153,6 +153,8 @@ export function composeJointsSheet(model: DrawModel, input: SetInput, sheetNo: n
   const leg = model.additions.find((a) => a.kind === 'leg');
   if (leg) sections.push(legNode(model.thickness, model.main[0].name, leg.name));
   if (model.additions.some((a) => a.kind === 'wall_panel')) sections.push(wallPanelSection(model.thickness, '#ff00ff'));
+  const sk = model.additions.find((a) => a.kind === 'skirting');
+  if (sk) sections.push(skirtingSection(model.thickness, Math.min(sk.w, sk.h), '#f0b400'));
   if (model.additions.some((a) => a.kind === 'fold' || a.kind === 'leg')) sections.push(chamferSection(model.thickness));
   const stampRows = stampFields(model, input, 10, '').length;
   const band = bottomBandHeight(sections, stampRows);
@@ -160,16 +162,27 @@ export function composeJointsSheet(model: DrawModel, input: SetInput, sheetNo: n
 
   // ── таблиця стиків (праворуч)
   const rows: JointRow[] = [];
-  const host = model.main[0];
   model.additions.forEach((ad) => {
     if (!ad.joint) return;
+    const host = model.main.find((m) => m.productKey === ad.productKey) ?? model.main[0];
     const j = ad.joint;
     const len = Math.abs(j.a.to - j.a.from);
     const miter = ad.kind === 'fold' || ad.kind === 'leg' ? true : ad.kind === 'thickening' ? miterJointFor('thickening', material) : false;
-    const onSite = ad.kind === 'wall_panel';
-    const type = ad.kind === 'wall_panel' ? 'стик прямий, монтажний' : miter ? "з'єднання під 45°, клей" : 'пряма підклейка знизу, клей';
+    // панель — стик монтажний; опора (водоспад) — за словами власника 07.09 теж на об'єкті
+    const onSite = ad.kind === 'wall_panel' || ad.kind === 'leg';
+    const type = ad.kind === 'wall_panel' ? 'стик прямий, монтажний' : ad.kind === 'skirting' ? 'бортик на стільницю, клей' : miter ? "з'єднання під 45°, клей" : ad.kind === 'thickening' ? 'пряма підклейка знизу, клей' : `${j.type === 'miter45' ? "з'єднання під 45°" : j.type === 'butt' ? 'стик прямий' : 'склейка'}, клей`;
     rows.push({ no: rows.length + 1, a: `${host.name} · ${ad.parentSide}`, b: `${ad.name} · ${j.b.sideId}`, type, lengthMm: len, where: onSite ? 'об’єкт' : 'цех', texture: j.textureContinuity ? 'наскрізна' : '—', color: onSite ? '#ff00ff' : '#f0b400' });
   });
+  // стики стільниць — деталь, розпиляна рушієм на частини (шви `~N`): збірка на об'єкті — ГІПОТЕЗА, у моделі типу нема
+  const seamRows: Array<{ a: DrawPart; b: DrawPart; len: number }> = [];
+  for (let i = 0; i < model.main.length; i += 1) for (let k = i + 1; k < model.main.length; k += 1) {
+    const a = model.main[i]; const b = model.main[k];
+    if (!a.detail || a.detail !== b.detail) continue;
+    const sa = a.sides.filter((sd) => sd.seam); const sb = b.sides.filter((sd) => sd.seam);
+    for (const x of sa) { const y = sb.find((q) => Math.abs(q.len - x.len) < 1); if (y) { seamRows.push({ a, b, len: x.len }); break; } }
+  }
+  seamRows.forEach((r) => rows.push({ no: rows.length + 1, a: `${r.a.name} · стик`, b: `${r.b.name} · стик`, type: 'стик стільниць (розпил під лист)', lengthMm: r.len, where: 'об’єкт*', texture: r.a.part.textureGroupLabel && r.a.part.textureGroupLabel === r.b.part.textureGroupLabel ? 'наскрізна' : '—', color: '#ff00ff' }));
+  if (seamRows.length) gaps.push('* стик стільниць: де збирати (цех/об’єкт) у моделі немає — на аркуші як монтажний (ГІПОТЕЗА)');
 
   const tableW = 168;
   const tx = fr.x + fr.w - tableW - 4; const ty = fr.y + 14; const rh = 4.6;
@@ -190,9 +203,10 @@ export function composeJointsSheet(model: DrawModel, input: SetInput, sheetNo: n
   const rule = miterJointFor('thickening', material) ? 'Потовщення на керамограніті — стик 45° (каталог цеху).' : 'Потовщення на кварциті/акрилі — пряма підклейка знизу без скосу (каталог цеху).';
   const notes = [
     'Кольори: помаранчевий — стик у цеху (склейка), пурпуровий — стик на об’єкті (монтажний).',
-    'Підворот і опора — з’єднання під 45° (водоспад), фаска 2×2 на ребрі стику; текстура підвороту — наскрізна.',
+    'Підворот і опора — з’єднання під 45° (водоспад), фаска 2×2 на ребрі стику; підворот клеїться в цеху, опора — на об’єкті (власник, 07.09).',
     rule,
     'Клей, час витримки, кріплення — за техпроцесом цеху (на кресленні не пишуться, ІНС-7).',
+    ...(seamRows.length ? ['* Стик стільниць — деталь розпиляна під лист; збирати на об’єкті чи в цеху — вирішує технолог (у моделі не задано).'] : []),
   ];
   notes.forEach((n, i) => E.push({ kind: 'text', layer: 'Размер робочий', rule: 'КЛ-1', at: { x: tx, y: legendY + i * 4.2 }, text: n, style: 'note' }));
 
@@ -232,9 +246,9 @@ export function composeJointsSheet(model: DrawModel, input: SetInput, sheetNo: n
     if (pl.dp.kind === 'main') drawAdditionZones(ctx, model, pl.dp, T, pl.sides, false);
   }
   // балони стиків: на середині ділянки стику, лінія стику кольором
-  const hostPl = placed[0];
   model.additions.forEach((ad, i) => {
     if (!ad.joint) return;
+    const hostPl = placed.find((p) => p.dp.productKey === ad.productKey) ?? placed[0];
     const side = hostPl.sides.find((s) => s.name === ad.parentSide); if (!side) return;
     const ux = (side.b.x - side.a.x) / side.len; const uy = (side.b.y - side.a.y) / side.len;
     const p0 = T({ x: side.a.x + ux * ad.joint.a.from, y: side.a.y + uy * ad.joint.a.from });
@@ -244,6 +258,14 @@ export function composeJointsSheet(model: DrawModel, input: SetInput, sheetNo: n
     const mid = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
     const at = { x: mid.x + side.n.x * 9, y: mid.y + side.n.y * 9 };
     E.push({ kind: 'balloon', layer: 'Виноска', rule: 'КС-15', c: at, r: 3.2, text: String(row?.no ?? i + 1), color: row?.color, target: mid });
+  });
+  // балони стиків стільниць — на середині шва першої частини
+  seamRows.forEach((r, k) => {
+    const pl = placed.find((p) => p.dp === r.a); if (!pl) return;
+    const sd = pl.sides.find((q) => q.seam && Math.abs(q.len - r.len) < 1); if (!sd) return;
+    const no = rows.length - seamRows.length + k + 1;
+    const mid = T(sd.mid);
+    E.push({ kind: 'balloon', layer: 'Виноска', rule: 'КС-15', c: { x: mid.x + sd.n.x * 9, y: mid.y + sd.n.y * 9 + (Math.abs(sd.n.x) > 0.5 ? -9 : 0) }, r: 3.2, text: String(no), color: '#ff00ff', target: mid });
   });
   gaps.push('Марка клею й час витримки — не на кресленні (ІНС-7), у техпроцесі');
   return makeSheet(model, input, { title: 'Стики, фаски, склейка — що з чим і як', entities: E, sections, den, sheetNo, sheetCount, typeLabel: 'Схема склейки', gaps });

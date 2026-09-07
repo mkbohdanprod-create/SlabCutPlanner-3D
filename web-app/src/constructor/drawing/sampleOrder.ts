@@ -21,6 +21,7 @@ const draft = (type: string, patch: Partial<DetailDraft> = {}): DetailDraft => (
 
 export const SAMPLE_ORDER_NUMBER = '81-0000001';
 export const SAMPLE_PRODUCT_NAME = 'Кухня Г-подібна (тест)';
+export const SAMPLE_U_PRODUCT_NAME = 'Кухня П-подібна (тест)';
 
 /** Сесія редактора виробу — так само її бачить `buildProductFromSession` після «Зберегти». */
 export function sampleKitchenSession(): Parameters<typeof buildProductFromSession>[0] {
@@ -66,3 +67,38 @@ export const SAMPLE_PROJECT_HEADER: Partial<Project> = {
   projectMaterial: 'Кварцит',
   projectThickness: 20,
 };
+
+/**
+ * П-подібна 3000×1500 (виріз 1800×900 зі зсувом 600 → ноги по 600, перекладина 600):
+ * A (3000) до стіни зі стіновою панеллю, лицьові D, E, F і торець C — AR20,
+ * E (1800) — підворот 100 під 45°, G (лівий торець) — водоспадна опора 880,
+ * мийка з каменю 500×400×200 і змішувач у перекладині, варильна праворуч.
+ */
+export function sampleUKitchenSession(): Parameters<typeof buildProductFromSession>[0] {
+  return {
+    activeDetailId: 'main',
+    mainDetail: {
+      ...createDraft(),
+      kind: 'u' as const,
+      type: 'Стільниця' as const,
+      thickness: 20,
+      width: 3000, height: 1500, innerCutWidth: 1800, innerCutDepth: 900, innerCutOffset: 600, leftLegHeight: 1500, rightLegHeight: 1500,
+      edgeProfiles: { C: 'ar_20', D: 'ar_20', E: 'ar_20', F: 'ar_20' },
+      cutouts: {
+        hob: { id: 'hob', shape: 'rect', type: 'custom', bindCorner: 'AB', x: 200, y: 55, width: 560, height: 490, cornerRadius: 5 },
+        faucet: { id: 'faucet', shape: 'circle', type: 'faucet', bindCorner: 'HA', x: 1500, y: 70, radius: 17.5 },
+      } as never,
+      sinks: { s1: { id: 's1', kind: 'rect', bindCorner: 'HA', x: 1200, y: 110, width: 500, height: 400, depth: 200 } },
+    } as DetailDraft,
+    subDetails: {
+      fold_E: draft('Підворот', { width: 1800, height: 100 }),
+      leg_G: draft('Опора', { width: 600, height: 880, edgeProfiles: { B: 'ar_20', D: 'ar_20' } }),
+      wall_panel_A: draft('Стінова панель', { width: 3000, height: 600, edgeProfiles: { A: 'polished_straight' } }),
+    },
+  } as Parameters<typeof buildProductFromSession>[0];
+}
+
+export function buildSampleUProduct(productId = 'kitchen_u_sample', material: Project['projectMaterial'] = 'Кварцит'): Product {
+  const product = buildProductFromSession(sampleUKitchenSession(), productId, material);
+  return { ...product, name: SAMPLE_U_PRODUCT_NAME };
+}

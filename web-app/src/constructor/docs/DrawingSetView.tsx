@@ -42,20 +42,88 @@ async function sheetJpeg(sheet: DrawingSheet, pxW: number): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.88);
 }
 
-export async function exportDrawingSetPdf(sheets: DrawingSheet[], project: Project) {
-  if (!sheets.length) return;
-  const first = sheets[0];
-  const orient = (s: DrawingSheet) => (s.size.w >= s.size.h ? 'landscape' : 'portrait');
-  const format = (s: DrawingSheet) => (Math.max(s.size.w, s.size.h) > 300 ? 'a3' : 'a4');
-  const pdf = new jsPDF({ orientation: orient(first), unit: 'mm', format: format(first), compress: true });
+const orientOf = (s: DrawingSheet) => (s.size.w >= s.size.h ? 'landscape' : 'portrait');
+const formatOf = (s: DrawingSheet) => (Math.max(s.size.w, s.size.h) > 300 ? 'a3' : 'a4');
+
+async function addSheets(pdf: jsPDF, sheets: DrawingSheet[], first: boolean) {
   for (let i = 0; i < sheets.length; i += 1) {
     const s = sheets[i];
-    if (i > 0) pdf.addPage(format(s), orient(s));
+    if (!(first && i === 0)) pdf.addPage(formatOf(s), orientOf(s));
     // 6 px/мм ≈ 150 dpi — цифра 2,5 мм читається, аркуш A3 ≈ 300–500 КБ
     const jpg = await sheetJpeg(s, Math.round(s.size.w * 6));
     pdf.addImage(jpg, 'JPEG', 0, 0, s.size.w, s.size.h);
   }
+}
+
+export async function exportDrawingSetPdf(sheets: DrawingSheet[], project: Project) {
+  if (!sheets.length) return;
+  const pdf = new jsPDF({ orientation: orientOf(sheets[0]), unit: 'mm', format: formatOf(sheets[0]), compress: true });
+  await addSheets(pdf, sheets, true);
   pdf.save(`Креслення_${safeFilePart(project.orderNumber, 'без номера')}_${safeFilePart(project.customer, 'замовник')}.pdf`);
+}
+
+/** CSS друку html-документів (тех карта, бланк цеху) — ті самі правила, що у вікні «Друк пакета». */
+export const DOC_PRINT_CSS = 'body{margin:0;font-family:Arial,sans-serif;color:#111} .no-print{display:none} .grid{display:grid;grid-template-columns:140px 1fr;gap:2px 12px;padding:8px;border:1px solid #ddd;border-radius:6px;background:#f8fafc;margin:8px 0 14px} .flex{display:flex;flex-wrap:wrap;gap:6px 16px} h2{margin:6px 0 2px;font-size:20px} h3{margin:14px 0 4px;border-bottom:1px solid #ddd;padding-bottom:2px;font-size:15px} p{margin:4px 0} table{border-collapse:collapse;font-size:12px;width:100%} td,th{border:1px solid #999;padding:3px 6px;vertical-align:top;text-align:left} .ctor-route td,.ctor-route th{font-size:11px} .p-6{padding:24px} .text-slate-400{color:#94a3b8} .text-slate-500{color:#64748b} .text-slate-600{color:#475569} .text-slate-700{color:#334155} .font-bold{font-weight:700} .font-semibold{font-weight:600} .uppercase{text-transform:uppercase} .text-\\[10px\\]{font-size:10px} .text-\\[11px\\]{font-size:11px} .text-\\[12px\\]{font-size:12px} .text-\\[13px\\]{font-size:13px} .mb-1{margin-bottom:4px} .mb-3{margin-bottom:12px} .mb-4{margin-bottom:16px} .mt-1{margin-top:4px}';
+
+/**
+ * HTML-документ (тех карта, бланк цеху) → сторінки A4 портрет.
+ * Не html2canvas (він не знає oklch-кольорів Tailwind 4): клон елемента
+ * серіалізується в XHTML, кладеться у <foreignObject> SVG з CSS друку і
+ * растеризується браузером; висоту дає прихований клон поза екраном.
+ */
+async function addHtmlDoc(pdf: jsPDF, el: HTMLElement) {
+  const W = 900;
+  const holder = document.createElement('div');
+  holder.className = 'ctor-doc';
+  holder.style.cssText = `position:fixed;left:-20000px;top:0;width:${W}px;background:#fff;z-index:-1`;
+  const clone = el.cloneNode(true) as HTMLElement;
+  clone.style.display = 'block';
+  holder.appendChild(clone);
+  document.body.appendChild(holder);
+  let H = 1200;
+  let xhtml = '';
+  try {
+    H = Math.max(200, Math.ceil(clone.scrollHeight) + 24);
+    xhtml = new XMLSerializer().serializeToString(clone);
+  } finally { holder.remove(); }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" class="ctor-doc" style="width:${W}px;background:#fff"><style>${DOC_PRINT_CSS}</style>${xhtml}</div></foreignObject></svg>`;
+  const img = await loadImage(svgToDataUrl(svg));
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = W * scale; canvas.height = H * scale;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas unavailable');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const pageW = 210; const pageH = 297; const margin = 8;
+  const contentW = pageW - 2 * margin; const contentH = pageH - 2 * margin;
+  const pxPerMm = canvas.width / contentW;
+  const sliceH = Math.floor(contentH * pxPerMm);
+  for (let y = 0; y < canvas.height; y += sliceH) {
+    const h = Math.min(sliceH, canvas.height - y);
+    const c = document.createElement('canvas'); c.width = canvas.width; c.height = h;
+    const cctx = c.getContext('2d')!; cctx.fillStyle = '#fff'; cctx.fillRect(0, 0, c.width, c.height);
+    cctx.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+    pdf.addPage('a4', 'portrait');
+    pdf.addImage(c.toDataURL('image/jpeg', 0.9), 'JPEG', margin, margin, contentW, h / pxPerMm);
+  }
+}
+
+/** Пакет для цеху одним файлом: набір креслень + тех карта + бланк цеху (html-документи за id елементів). */
+export async function exportPackagePdf(sheets: DrawingSheet[], project: Project, htmlDocIds: string[]) {
+  const first = sheets[0];
+  const pdf = first
+    ? new jsPDF({ orientation: orientOf(first), unit: 'mm', format: formatOf(first), compress: true })
+    : new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+  await addSheets(pdf, sheets, true);
+  let addedAny = sheets.length > 0;
+  for (const id of htmlDocIds) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (!addedAny) { pdf.deletePage(1); addedAny = true; }
+    await addHtmlDoc(pdf, el);
+  }
+  pdf.save(`Пакет_цех_${safeFilePart(project.orderNumber, 'без номера')}_${safeFilePart(project.customer, 'замовник')}.pdf`);
 }
 
 export function DrawingSetView({ project, parts, details, instructions }: DrawingSetViewProps) {

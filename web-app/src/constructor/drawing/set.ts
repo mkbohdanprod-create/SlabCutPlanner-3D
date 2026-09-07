@@ -66,6 +66,8 @@ export interface DrawPart {
   holes: Hole[];
   /** сторона батьківської деталі, до якої кріпиться */
   parentSide?: string;
+  /** Ключ виробу (`prod_…` з id деталі) — доповнення шукає СВОЮ стільницю, а не першу в проєкті. */
+  productKey: string;
   joint?: Joint;
   thickness: number;
 }
@@ -94,8 +96,10 @@ export function buildDrawModel(input: SetInput): DrawModel {
   const { project, parts, details } = input;
   const detailById = new Map(details.map((d) => [d.id, d]));
   const products: Product[] = project.products ?? [];
+  // стики: ключ разом із виробом — у двох виробах бувають однакові joint_leg_B
+  const productKeyOf = (id: string) => (/^(?:part:)?([^/]+)\/element:/.exec(id)?.[1] ?? id);
   const joints = new Map<string, Joint>();
-  for (const pr of products) for (const el of pr.elements) for (const j of el.joints ?? []) joints.set(j.id, j);
+  for (const pr of products) for (const el of pr.elements) for (const j of el.joints ?? []) joints.set(`${productKeyOf(j.a.elementPath)}|${j.id}`, j);
   const thickness = project.projectThickness ?? parts[0]?.thickness ?? 20;
   const material = project.projectMaterial;
 
@@ -110,6 +114,7 @@ export function buildDrawModel(input: SetInput): DrawModel {
   const toDraw = (part: DetailPart): DrawPart => {
     const detail = detailById.get(part.detailId);
     const slot = slotOf(part.detailId);
+    const productKey = productKeyOf(part.detailId);
     const kind: DrawPart['kind'] = slot === 'main' || (part.isMain && part.type === 'Стільниця' && !part.parentDetailSide) ? 'main' : additionKind(slot);
     const src = part.nominalPoints ?? part.points;
     const b = bbox(src);
@@ -118,17 +123,18 @@ export function buildDrawModel(input: SetInput): DrawModel {
     const sides = sidesOf(pts, segs);
     const profiles = new Map<string, string>();
     for (const s of sides) { const id = profileOfSide(detail, part, s.name); if (id) { profiles.set(s.name, id); colorFor(id); } }
-    const base = kind === 'main' ? 'Стільниця' : kind === 'leg' ? 'Опора' : kind === 'wall_panel' ? 'Стінова панель' : kind === 'thickening' ? 'Потовщення' : kind === 'fold' ? 'Підворот' : (TYPE_NAMES[part.type] ?? part.type);
+    const base = kind === 'main' ? 'Стільниця' : kind === 'leg' ? 'Опора' : kind === 'wall_panel' ? 'Стінова панель' : kind === 'thickening' ? 'Потовщення' : kind === 'fold' ? 'Підворот' : kind === 'skirting' ? 'Бортик' : (TYPE_NAMES[part.type] ?? part.type);
     const n = (counters.get(base) ?? 0) + 1; counters.set(base, n);
     return {
       part, detail, slot, kind, no: 0, name: `${base} ${n}`, pts, w: b.w, h: b.h, off: { x: b.minX, y: b.minY }, sides, profiles,
       holes: holesOf(part, detail, { x: b.minX, y: b.minY }),
-      parentSide: part.parentDetailSide ?? detail?.parentDetailSide, joint: joints.get(`joint_${slot}`), thickness: part.thickness ?? thickness,
+      parentSide: part.parentDetailSide ?? detail?.parentDetailSide, joint: joints.get(`${productKey}|joint_${slot}`), thickness: part.thickness ?? thickness,
+      productKey,
     };
   };
   const all = bodyRaw.map(toDraw);
   const main = all.filter((p) => p.kind === 'main');
-  const order: DrawPart['kind'][] = ['main', 'leg', 'wall_panel', 'fold', 'thickening', 'other', 'sink'];
+  const order: DrawPart['kind'][] = ['main', 'leg', 'wall_panel', 'skirting', 'fold', 'thickening', 'other', 'sink'];
   const body = [...all].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.name.localeCompare(b.name, 'uk', { numeric: true }));
   body.forEach((p, i) => { p.no = i + 1; });
   const gaps: string[] = [];
@@ -148,6 +154,8 @@ export function drawContour(ctx: Ctx, dp: DrawPart, T: Tf, pts: Pt[], sides: Sid
   const corners = (dp.detail?.geometry?.corners ?? {}) as Record<string, { type?: string; radius?: number }>;
   const rounded = roundedContour(pts, sides, corners);
   ctx.E.push({ kind: 'polyline', layer: 'Стільниця', rule: 'ЛН-1', points: rounded.map(T), closed: true, fill: 'white' });
+  // розпил деталі на частини — стик стільниць, пурпуровим як монтажний (КЛ-1); тип збірки — ГІПОТЕЗА (на об'єкті)
+  for (const sd of sides) if (sd.seam) ctx.E.push({ kind: 'polyline', layer: 'Монтажный стык', rule: 'КЛ-1', points: [T(sd.a), T(sd.b)], closed: false, weight: 0.9 });
 }
 
 /** Кромки зигзагом з підписом усередині деталі (КР-1/КР-2, КЛ-1). */
@@ -199,14 +207,16 @@ export function drawSideLetters(ctx: Ctx, T: Tf, sides: Side[]) {
   for (const s of sides) {
     if (s.len * ctx.S < 8) continue;
     const mid = T(s.mid);
+    if (s.seam) { ctx.E.push({ kind: 'text', layer: 'Монтажный стык', rule: 'КЛ-1', at: { x: mid.x - s.n.x * 2.6, y: mid.y - s.n.y * 2.6 + 0.9 }, text: 'стик стільниць', style: 'dim', anchor: 'middle', color: '#ff00ff', rotate: Math.abs(s.n.x) > 0.5 ? -90 : 0 }); continue; }
     ctx.E.push({ kind: 'text', layer: 'Размер', rule: 'П-2', at: { x: mid.x + s.n.x * 2.2, y: mid.y + s.n.y * 2.2 + 0.9 }, text: s.name, style: 'dim', anchor: 'middle', color: '#808080' });
   }
 }
 
 /** Розміри всіх сторін зовні (ряд 1) — для аркуша деталі. */
-export function drawSideDims(ctx: Ctx, T: Tf, sides: Side[], row = 1) {
+export function drawSideDims(ctx: Ctx, T: Tf, sides: Side[], row = 1, withSeams = true) {
   for (const s of sides) {
     if (s.len < 1) continue;
+    if (s.seam && !withSeams) continue;
     let a = T(s.a); let b = T(s.b);
     // DimView: від'ємний offset = угору/ліворуч лише коли a→b іде вправо/вниз — нормалізуємо порядок
     const horizontal = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
@@ -430,12 +440,12 @@ function marginRows(plan: DimPlan, dp: DrawPart): Record<Band, number> {
 }
 
 /** Зони потовщень (смуга під ребром, штрих) і підворотів (позначка стику) на плані деталі. */
-export function drawAdditionZones(ctx: Ctx, model: DrawModel, _host: DrawPart, T: Tf, sides: Side[], labels = true, rows?: Record<Band, number>, foldLabels = labels) {
+export function drawAdditionZones(ctx: Ctx, model: DrawModel, host: DrawPart, T: Tf, sides: Side[], labels = true, rows?: Record<Band, number>, foldLabels = labels) {
   const S = ctx.S;
   const bandOf = (side: Side): Band => (Math.abs(side.n.x) > Math.abs(side.n.y) ? (side.n.x > 0 ? 'right' : 'left') : (side.n.y > 0 ? 'bottom' : 'top'));
   const labelRow = (side: Side) => ((rows?.[bandOf(side)] ?? 1) + 0.9);
   const thick = new Map<string, { at: Pt; targets: Pt[]; vertical: boolean; rule: string }>();
-  for (const ad of model.additions) {
+  for (const ad of model.additions.filter((a) => a.productKey === host.productKey)) {
     if (!ad.parentSide || !ad.joint) continue;
     if (ad.parentSide === undefined) continue;
     const side = sides.find((s) => s.name === ad.parentSide); if (!side) continue;
@@ -454,8 +464,12 @@ export function drawAdditionZones(ctx: Ctx, model: DrawModel, _host: DrawPart, T
         const text = `Потовщення ${fmtMm(band)}`;
         const lr = labelRow(side);
         // біля вертикальної сторони текст усе одно горизонтальний — від ряду за розмірами, назовні (ВН-1)
+        const topP = T(p0.y < p1.y ? p0 : p1);
         const at = vertical
-          ? { x: midS.x + side.n.x * (ROW * lr + (side.n.x > 0 ? 0 : textW(text, TEXT.node.size))), y: midS.y + 1 }
+          ? (side.n.x > 0
+            ? { x: midS.x + side.n.x * ROW * lr, y: midS.y + 1 }
+            // ліва зовнішня сторона: ліворуч — поле аркуша, тож текст над верхнім кінцем зони, вправо по деталі
+            : { x: topP.x + 1.5, y: topP.y - 2.4 })
           : { x: midS.x - textW(text, TEXT.node.size) / 2, y: midS.y + side.n.y * ROW * lr + (side.n.y > 0 ? 2.5 : 0) };
         // однакові смуги (Г-стільниця: дві по 40) — один підпис із двома виносками; горизонтальна сторона — головна
         const prev = thick.get(text);
@@ -470,8 +484,9 @@ export function drawAdditionZones(ctx: Ctx, model: DrawModel, _host: DrawPart, T
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         const vertical = Math.abs(b.y - a.y) > Math.abs(b.x - a.x);
         const lr = Math.max(2.2, labelRow(side));
+        const topF = a.y < b.y ? a : b;
         const at = vertical
-          ? { x: mid.x + side.n.x * (ROW * lr + (side.n.x > 0 ? 0 : textW(text, TEXT.node.size))), y: mid.y + 1 }
+          ? (side.n.x > 0 ? { x: mid.x + side.n.x * ROW * lr, y: mid.y + 1 } : { x: topF.x + 1.5, y: topF.y - 2.4 })
           : { x: mid.x - textW(text, TEXT.node.size) / 2, y: mid.y + side.n.y * ROW * lr + (side.n.y > 0 ? 2.5 : 0) };
         // однакові підвороти (обидві лицьові сторони Г) — один підпис із двома виносками (ВН-3)
         const prev = thick.get(text);
@@ -486,7 +501,7 @@ export function drawAdditionZones(ctx: Ctx, model: DrawModel, _host: DrawPart, T
 
 /* ── збірка ─────────────────────────────────────────────────────── */
 
-export interface PlacedPart { dp: DrawPart; pts: Pt[]; sides: Side[]; holesT: Tf; x: number; y: number; w: number; h: number; rot: number }
+export interface PlacedPart { dp: DrawPart; pts: Pt[]; sides: Side[]; holesT: Tf; x: number; y: number; w: number; h: number; rot: number; /** стільниця, до якої прикладене доповнення */ host?: PlacedPart }
 
 /** Розкласти тіло виробу в площині: стільниця, доповнення розгорнуті біля своїх сторін. */
 export function layoutBody(model: DrawModel, gapMm = 90): { placed: PlacedPart[]; box: { w: number; h: number } } {
@@ -494,14 +509,29 @@ export function layoutBody(model: DrawModel, gapMm = 90): { placed: PlacedPart[]
   const main = model.main[0];
   if (!main) return { placed, box: { w: 1, h: 1 } };
   let cursorX = 0;
+  const seamGap = Math.max(20, gapMm * 0.35);
   for (const m of model.main) {
+    const prev = placed[placed.length - 1];
+    // частини однієї деталі (рушій розпиляв П/Г під лист): кладемо впритул по шву, а не в ряд через зазор
+    const mySeam = m.sides.find((sd) => sd.seam);
+    const prevSeam = prev && prev.dp.detail && prev.dp.detail === m.detail ? prev.sides.find((sd) => sd.seam && Math.abs(sd.len - (mySeam?.len ?? -1)) < 1) : undefined;
+    if (prev && mySeam && prevSeam) {
+      // шов сусіда і мій мають збігтися: зсув = (середина шва сусіда + нормаль·зазор) − середина мого шва
+      const dx = prevSeam.mid.x + prevSeam.n.x * seamGap - mySeam.mid.x; const dy = prevSeam.mid.y + prevSeam.n.y * seamGap - mySeam.mid.y;
+      const pts = translate(m.pts, dx, dy);
+      placed.push({ dp: m, pts, sides: sidesOf(pts, shiftSegs(m, dx, dy)), holesT: (p) => ({ x: p.x + dx, y: p.y + dy }), x: dx, y: dy, w: m.w, h: m.h, rot: 0 });
+      cursorX = Math.max(cursorX, dx + m.w) + gapMm;
+      continue;
+    }
     const cx = cursorX; // не замикатись на змінну, що росте далі в циклі
     placed.push({ dp: m, pts: translate(m.pts, cx, 0), sides: sidesOf(translate(m.pts, cx, 0), shiftSegs(m, cx, 0)), holesT: (p) => ({ x: p.x + cx, y: p.y }), x: cx, y: 0, w: m.w, h: m.h, rot: 0 });
     cursorX += m.w + gapMm;
   }
-  const host = placed[0];
   const perSide = new Map<string, number>();
   for (const ad of model.additions) {
+    // своя стільниця, і саме та частина, у якої є ця сторона (після розпилу літери розходяться по частинах)
+    const host = placed.find((p) => p.dp.kind === 'main' && p.dp.productKey === ad.productKey && p.sides.some((sd) => sd.name === ad.parentSide))
+      ?? placed.find((p) => p.dp.kind === 'main' && p.dp.productKey === ad.productKey) ?? placed[0];
     // потовщення й підвороти на плані — лінія стику + підпис на своїй стороні (ОФ-45, КС-12); окремо вони на аркуші смуг.
     // Дві смуги у внутрішньому куті Г інакше перетинались би.
     if (ad.kind === 'thickening' || ad.kind === 'fold' || ad.kind === 'sink' || !ad.parentSide) continue;
@@ -514,7 +544,8 @@ export function layoutBody(model: DrawModel, gapMm = 90): { placed: PlacedPart[]
     const rb = bbox(rp);
     const local = rp.map((p) => ({ x: p.x - rb.minX, y: p.y - rb.minY }));
     // положення: уздовж сторони — від from стику; назовні — зазор
-    const k = perSide.get(side.name) ?? 0; perSide.set(side.name, k + 1);
+    const sideKey = `${host.dp.productKey}|${side.name}`;
+    const k = perSide.get(sideKey) ?? 0; perSide.set(sideKey, k + 1);
     const from = ad.joint?.a.from ?? 0; const to = ad.joint?.a.to ?? side.len;
     const ux = (side.b.x - side.a.x) / side.len; const uy = (side.b.y - side.a.y) / side.len;
     const pMid = { x: side.a.x + ux * ((from + to) / 2), y: side.a.y + uy * ((from + to) / 2) };
@@ -525,7 +556,7 @@ export function layoutBody(model: DrawModel, gapMm = 90): { placed: PlacedPart[]
     const x = centre.x - rb.w / 2; const y = centre.y - rb.h / 2;
     const pts = translate(local, x, y);
     const tf: Tf = (p) => { const q = { x: p.x * c - p.y * s, y: p.x * s + p.y * c }; return { x: q.x - rb.minX + x, y: q.y - rb.minY + y }; };
-    placed.push({ dp: ad, pts, sides: sidesOf(pts, shiftSegsRot(ad, tf)), holesT: tf, x, y, w: rb.w, h: rb.h, rot });
+    placed.push({ dp: ad, pts, sides: sidesOf(pts, shiftSegsRot(ad, tf)), holesT: tf, x, y, w: rb.w, h: rb.h, rot, host });
   }
   // нормалізуємо в (0,0)
   const all = bbox(placed.flatMap((p) => p.pts));
@@ -566,7 +597,7 @@ export function stampFields(model: DrawModel, input: SetInput, den: number, type
     { key: 'Декор', value: decor },
     { key: 'Матеріал / товщина', value: `${model.material ?? '—'} / ${fmtMm(model.thickness)} мм` },
     { key: 'Підбір текстури', value: project.textureSelectionEnabled ? 'Так' : 'Ні' },
-    { key: 'Мийка', value: ownSink ? 'ViyarStone (камінь)' : 'Замовника (не передають)' },
+    { key: 'Мийка', value: ownSink ? 'ViyarStone (камінь)' : model.main.some((m) => m.holes.some((h) => h.isSink)) ? 'Замовника (не передають)' : 'Немає' },
     ...(model.additions.some((a) => a.kind === 'wall_panel') ? [{ key: 'Декор стін.панель / плінтус', value: extra['Декор стін.панель / плінтус'] ?? decor }] : []),
     { key: 'Площа м²', value: String(areaM2).replace('.', ',') },
     { key: 'Масштаб', value: `1:${den}` },
@@ -630,7 +661,7 @@ export function composeAssembly(model: DrawModel, input: SetInput, sheetNo: numb
     const thin = Math.min(pl.w, pl.h) * S < 9;
     if (thin) {
       // вузька смуга (підворот): ім'я поруч, уздовж довгої сторони, з того боку, де немає стільниці
-      const host = placed[0]; const side = host.sides.find((sd) => sd.name === dp.parentSide);
+      const host = pl.host ?? placed[0]; const side = host.sides.find((sd) => sd.name === dp.parentSide);
       const nx = side?.n.x ?? 0; const ny = side?.n.y ?? 1;
       const at = { x: c.x + nx * (pl.w * S / 2 + 3.5) + (vertical ? 1.2 : 0), y: c.y + ny * (pl.h * S / 2 + 3.5) + (vertical ? 0 : 1) };
       E.push({ kind: 'text', layer: 'Стільниця', rule: 'ВН-6', at, text: dp.name, style: 'name', anchor: 'middle', rotate: vertical ? -90 : 0 });
@@ -641,11 +672,23 @@ export function composeAssembly(model: DrawModel, input: SetInput, sheetNo: numb
     // ЗБІРКА — про те, що з чим і як; розміри й підписи вирізів — на аркушах деталей
     drawHoles(ctx, dp, TH, dp.sides, { dims: false, ownSink: Boolean(model.sinkDetail), sinkText: 'short', labels: false, insideLabels: true });
     drawCorners(ctx, dp, T, pl.sides);
-    if (dp.kind === 'main') { drawSideDims(ctx, T, pl.sides, 1); drawAdditionZones(ctx, model, dp, T, pl.sides, true, undefined, true); }
+    if (dp.kind === 'main') {
+      drawSideDims(ctx, T, pl.sides, 1, false); drawAdditionZones(ctx, model, dp, T, pl.sides, true, undefined, true);
+      // стик стільниць (розпил): підпис у зазорі між частинами, один на пару
+      for (const sd of pl.sides) {
+        if (!sd.seam) continue;
+        const partner = placed.find((q) => q !== pl && q.dp.kind === 'main' && q.dp.detail === dp.detail && q.sides.some((x) => x.seam && Math.abs(x.len - sd.len) < 1));
+        if (!partner || placed.indexOf(partner) < placed.indexOf(pl)) continue;
+        const ps = partner.sides.find((x) => x.seam && Math.abs(x.len - sd.len) < 1)!;
+        const c = T({ x: (sd.mid.x + ps.mid.x) / 2, y: (sd.mid.y + ps.mid.y) / 2 });
+        const vert = Math.abs(sd.n.x) > 0.5;
+        E.push({ kind: 'text', layer: 'Монтажный стык', rule: 'КЛ-1', at: { x: c.x + (vert ? 1.1 : 0), y: c.y + (vert ? 0 : 1.1) }, text: 'Стик стільниць', style: 'node', anchor: 'middle', rotate: vert ? -90 : 0, underline: true, color: '#ff00ff' });
+      }
+    }
     else {
       // габарит доповнення — два розміри, з боків, ДАЛЬНІХ від стільниці (у зазорі — підпис стику)
       const bb = bbox(pl.pts);
-      const host = placed[0]; const side = host.sides.find((s) => s.name === dp.parentSide);
+      const host = pl.host ?? placed[0]; const side = host.sides.find((s) => s.name === dp.parentSide);
       const nx = side?.n.x ?? 0; const ny = side?.n.y ?? 1;
       const wOff = ny > 0.5 ? ROW : -ROW; // доповнення знизу → розмір ширини знизу
       const hOff = nx < -0.5 ? -ROW : ROW; // доповнення ліворуч → розмір висоти ліворуч
@@ -665,7 +708,7 @@ export function composeAssembly(model: DrawModel, input: SetInput, sheetNo: numb
         const off = Math.min(dist * 0.72, (ROW * 1.9) / S);
         const mid = T({ x: onSide.x + towards.x * off, y: onSide.y + towards.y * off });
         const miter = miterJointFor(dp.kind === 'other' ? undefined : dp.kind, model.material) || dp.joint?.type === 'miter45';
-        const text = dp.kind === 'fold' ? `Підворот ${fmtMm(Math.min(bb.w, bb.h))}, 45°` : miter ? "З'єднання під 45°" : dp.kind === 'wall_panel' ? 'Стик монтажний' : 'Стик стільниць';
+        const text = dp.kind === 'fold' ? `Підворот ${fmtMm(Math.min(bb.w, bb.h))}, 45°` : miter ? "З'єднання під 45°" : dp.kind === 'wall_panel' ? 'Стик монтажний' : dp.kind === 'skirting' ? 'Бортик, клей' : 'Стик стільниць';
         const vert = Math.abs(side.n.y) > Math.abs(side.n.x);
         const pA = T({ x: side.a.x + ux * from, y: side.a.y + uy * from }); const pB = T({ x: side.a.x + ux * to, y: side.a.y + uy * to });
         if (vert) {
@@ -711,9 +754,10 @@ export function composeDetailSheet(model: DrawModel, input: SetInput, dp: DrawPa
   for (const id of new Set(dp.profiles.values())) sections.push(profileSection(id, edgeIndex(id, model.profileColor), model.profileColor.get(id) ?? '#000', dp.thickness));
   if (dp.kind === 'main') {
     if (dp.holes.some((h) => h.isSink)) sections.push(sinkCutSection(model.thickness, Boolean(model.sinkDetail)));
-    const th = model.additions.find((a) => a.kind === 'thickening');
+    const own = model.additions.filter((a) => a.productKey === dp.productKey);
+    const th = own.find((a) => a.kind === 'thickening');
     if (th) sections.push(thickeningSection(model.thickness, Math.min(th.w, th.h), miterJointFor('thickening', model.material)));
-    const fold = model.additions.find((a) => a.kind === 'fold');
+    const fold = own.find((a) => a.kind === 'fold');
     if (fold) sections.push(foldSection(model.thickness, Math.min(fold.w, fold.h)));
   }
   if (dp.kind === 'leg') sections.push(legNode(model.thickness, model.main[0]?.name ?? 'Стільниця', dp.name));
@@ -825,7 +869,8 @@ export function composeStripsSheet(model: DrawModel, input: SetInput, strips: Dr
 
 export interface DrawingSetResult { sheets: DrawingSheet[]; model: DrawModel }
 
-export function composeDrawingSet(input: SetInput, extra?: { sink?: (model: DrawModel, input: SetInput, no: number, count: number) => DrawingSheet | null; joints?: (model: DrawModel, input: SetInput, no: number, count: number) => DrawingSheet | null; spec?: (model: DrawModel, input: SetInput, no: number, count: number) => DrawingSheet | null }): DrawingSetResult {
+type SheetFn = (model: DrawModel, input: SetInput, no: number, count: number) => DrawingSheet | null;
+export function composeDrawingSet(input: SetInput, extra?: { sink?: SheetFn; joints?: SheetFn; explodedShop?: SheetFn; explodedSink?: SheetFn; explodedSite?: SheetFn; spec?: SheetFn }): DrawingSetResult {
   const model = buildDrawModel(input);
   const plan: Array<(no: number, count: number) => DrawingSheet | null> = [];
   plan.push((no, count) => composeAssembly(model, input, no, count));
@@ -834,6 +879,9 @@ export function composeDrawingSet(input: SetInput, extra?: { sink?: (model: Draw
   if (strips.length) plan.push((no, count) => composeStripsSheet(model, input, strips, no, count));
   if (extra?.sink && (model.sinkDetail || model.main.some((m) => m.holes.some((h) => h.isSink)))) plan.push((no, count) => extra.sink!(model, input, no, count));
   if (extra?.joints && model.additions.length) plan.push((no, count) => extra.joints!(model, input, no, count));
+  if (extra?.explodedShop) plan.push((no, count) => extra.explodedShop!(model, input, no, count));
+  if (extra?.explodedSink && model.sinkDetail) plan.push((no, count) => extra.explodedSink!(model, input, no, count));
+  if (extra?.explodedSite) plan.push((no, count) => extra.explodedSite!(model, input, no, count));
   if (extra?.spec) plan.push((no, count) => extra.spec!(model, input, no, count));
   const count = plan.length;
   const sheets = plan.map((fn, i) => fn(i + 1, count)).filter((s): s is DrawingSheet => Boolean(s));

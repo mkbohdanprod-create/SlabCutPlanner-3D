@@ -13,7 +13,7 @@ export interface Pt { x: number; y: number }
 
 interface Base { layer: LayerName; rule: string }
 
-export interface PolylineEntity extends Base { kind: 'polyline'; points: Pt[]; closed: boolean; fill?: 'none' | 'white' | 'hatch-stone' | 'hatch-plywood' | 'hatch-red' | 'hatch-grey' | 'glue'; color?: string; rx?: number; dashed?: boolean; weight?: number }
+export interface PolylineEntity extends Base { kind: 'polyline'; points: Pt[]; closed: boolean; fill?: 'none' | 'white' | 'hatch-stone' | 'hatch-plywood' | 'hatch-red' | 'hatch-grey' | 'glue'; /** довільний колір заливки (грані ізометрії) — має пріоритет над `fill` */ fillColor?: string; color?: string; rx?: number; dashed?: boolean; weight?: number }
 export interface CircleEntity extends Base { kind: 'circle'; c: Pt; r: number; fill?: 'none' | 'white' }
 export interface ZigzagEntity extends Base { kind: 'zigzag'; a: Pt; b: Pt; color?: string }
 export interface TextEntity extends Base { kind: 'text'; at: Pt; text: string; style: TextStyleName; anchor?: 'start' | 'middle' | 'end'; rotate?: number; underline?: boolean; color?: string; bold?: boolean }

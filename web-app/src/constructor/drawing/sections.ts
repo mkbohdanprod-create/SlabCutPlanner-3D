@@ -187,3 +187,24 @@ export function chamferSection(thickness: number, size = 2, color?: string): Sec
     w: W + 20, h: y0 + t + 7,
   };
 }
+
+/** Бортик (плінтус із каменю) на стільниці: смуга стоїть на плиті вздовж стіни, клей у основі (ОФ-ФП: власний переріз). */
+export function skirtingSection(thickness: number, heightMm: number, color?: string): SectionView {
+  const t = thickness * K; const H = Math.min(28, heightMm * K); const y0 = Y0 + 7; const x0 = 4; const W = 26;
+  const yTop = y0 + H; // низ бортика = верх плити
+  return {
+    title: 'Бортик', color,
+    entities: [
+      slab({ x: x0 + W / 2, y: yTop + t / 2 }, W, t),
+      slab({ x: x0 + W - t / 2, y: y0 + H / 2 }, t, H, 'ІНС-5'),
+      { kind: 'polyline', layer: 'Стены', rule: 'ІНС-4', points: rectPts({ x: x0 + W + 2.5, y: y0 + (H + t) / 2 }, 5, H + t), closed: true, fill: 'hatch-grey' },
+      glueLine({ x: x0 + W - t, y: yTop }, { x: x0 + W, y: yTop }),
+      { kind: 'leader', layer: 'Виноска', rule: 'ВН-2', at: { x: x0, y: yTop + t + 5.5 }, text: 'клей', targets: [{ x: x0 + W - t / 2, y: yTop }], underline: true },
+      { kind: 'text', layer: 'Стільниця', rule: 'ІНС-5', at: { x: x0, y: yTop - 1.5 }, text: 'Стільниця', style: 'dim' },
+      { kind: 'text', layer: 'Стены', rule: 'ВН-10', at: { x: x0 + W + 2.6, y: y0 + (H + t) / 2 }, text: 'стіна', style: 'dim', anchor: 'middle', rotate: -90, color: '#808080' },
+      dim({ x: x0 + W - t, y: y0 }, { x: x0 + W, y: y0 }, -4, fmtMm(thickness), false, 'ШР-3'),
+      dim({ x: x0 + W, y: y0 }, { x: x0 + W, y: yTop }, 9, fmtMm(heightMm), false, 'ШР-3'),
+    ],
+    w: W + 20, h: yTop + t + 8,
+  };
+}

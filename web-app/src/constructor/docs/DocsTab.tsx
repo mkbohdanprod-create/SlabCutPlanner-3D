@@ -11,7 +11,7 @@
  * по ділянках (ВЦ-1), бланк цеху (МЕС-1), JSON для MES.
  */
 import React, { useMemo, useState } from 'react';
-import { Printer, Download, Copy, Layers, FlaskConical } from 'lucide-react';
+import { Printer, Download, Copy, Layers, FlaskConical, FileDown } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useConstructorStore } from '../store';
@@ -20,8 +20,9 @@ import { getAllProjectDetails } from '../../store/projectHelpers';
 import { buildTechCard } from './techCard';
 import { buildMesJson } from './mesJson';
 import { AssemblySheet } from './AssemblySheet';
-import { DrawingSetView } from './DrawingSetView';
-import { buildSampleKitchenProduct, SAMPLE_PROJECT_HEADER, SAMPLE_PRODUCT_NAME } from '../drawing/sampleOrder';
+import { DrawingSetView, exportPackagePdf } from './DrawingSetView';
+import { composeFullDrawingSet } from '../drawing';
+import { buildSampleKitchenProduct, buildSampleUProduct, SAMPLE_PROJECT_HEADER, SAMPLE_PRODUCT_NAME, SAMPLE_U_PRODUCT_NAME } from '../drawing/sampleOrder';
 import { needsSubstrate, buildPlywoodLayout } from '../plywood/plywoodRules';
 import { DecisionsLog } from '../merge/MergeTab';
 import { buildRouteModel, type RouteModel } from './routeMap';
@@ -123,14 +124,24 @@ export function DocsTab() {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
   const copyJson = () => { void navigator.clipboard?.writeText(JSON.stringify(mes, null, 2)); };
-  const hasSample = Boolean(project.products?.some((p) => p.name === SAMPLE_PRODUCT_NAME));
-  /** Тестове замовлення для перегляду набору: Г-кухня з мийкою, потовщеннями, підворотом, опорою і панеллю. */
-  const addSample = () => {
+  const hasSample = Boolean(project.products?.some((p) => p.name === SAMPLE_PRODUCT_NAME || p.name === SAMPLE_U_PRODUCT_NAME));
+  /** Тестове замовлення для перегляду набору: Г-кухня (опори, підвороти, мийка, панель) або П-подібна (кромки, підворот, опора, панель, мийка). */
+  const addSample = (kind: 'l' | 'u') => {
     const st = useProjectStore.getState();
     if (!project.orderNumber) st.updateProjectHeader({ orderNumber: SAMPLE_PROJECT_HEADER.orderNumber, customer: project.customer || SAMPLE_PROJECT_HEADER.customer, customerContactPhone: project.customerContactPhone || SAMPLE_PROJECT_HEADER.customerContactPhone });
     if (!project.projectThickness || !project.projectMaterial) st.updateProject({ projectThickness: project.projectThickness || 20, projectMaterial: project.projectMaterial || 'Кварцит' });
-    st.addProduct(buildSampleKitchenProduct(`kitchen_l_sample_${Date.now().toString(36)}`, project.projectMaterial || 'Кварцит'));
+    const id = `kitchen_${kind}_sample_${Date.now().toString(36)}`;
+    st.addProduct(kind === 'l' ? buildSampleKitchenProduct(id, project.projectMaterial || 'Кварцит') : buildSampleUProduct(id, project.projectMaterial || 'Кварцит'));
     setDoc('drawings');
+  };
+  const [pkgBusy, setPkgBusy] = useState(false);
+  /** Пакет для цеху одним PDF: креслення + тех карта + бланк цеху. */
+  const packagePdf = async () => {
+    setPkgBusy(true);
+    try {
+      const { sheets } = stone.length ? composeFullDrawingSet({ project, parts: stone, details, instructions: instrList }) : { sheets: [] };
+      await exportPackagePdf(sheets, project, ['ctor-doc-techcard', 'ctor-doc-shopsheet']);
+    } finally { setPkgBusy(false); }
   };
 
   return (
@@ -153,14 +164,20 @@ export function DocsTab() {
           <div className="flex flex-col gap-1.5">
             <button type="button" className={`${BTN_BLUE} justify-center`} onClick={print}><Printer className="w-4 h-4" /> Друк цього документа</button>
             <button type="button" className={`${BTN_BLUE} justify-center`} onClick={printAll} title="Усі документи пакета, крім JSON, кожен зі своєї сторінки"><Layers className="w-4 h-4" /> Друк пакета</button>
+            <button type="button" className={`${BTN_BLUE} justify-center`} onClick={() => void packagePdf()} disabled={pkgBusy} title="Один PDF: набір креслень (A3) + тех карта і бланк цеху (A4)"><FileDown className="w-4 h-4" /> {pkgBusy ? 'Збираю пакет…' : 'PDF пакета'}</button>
             <button type="button" className={`${BTN_IDLE} justify-center`} onClick={downloadJson}><Download className="w-4 h-4" /> JSON для MES (файл)</button>
             <button type="button" className={`${BTN_IDLE} justify-center`} onClick={copyJson}><Copy className="w-4 h-4" /> Копіювати JSON</button>
           </div>
         </Panel>
         <Panel title="Тест">
-          <button type="button" className={`${BTN_IDLE} justify-center w-full`} onClick={addSample} title="Додає в проєкт виріб «Кухня Г-подібна (тест)»: стільниця 2600×1600 з мийкою з каменю, варильною, потовщеннями 40, підворотом 100, опорою і стіновою панеллю — щоб подивитися повний набір креслень">
-            <FlaskConical className="w-4 h-4" /> {hasSample ? 'Ще одна тестова кухня' : 'Тестове замовлення: кухня'}
-          </button>
+          <div className="flex flex-col gap-1.5">
+            <button type="button" className={`${BTN_IDLE} justify-center w-full`} onClick={() => addSample('l')} title="Додає виріб «Кухня Г-подібна (тест)»: 2600×1600, дві опори, два підвороти, мийка з каменю, варильна, стінова панель">
+              <FlaskConical className="w-4 h-4" /> {hasSample ? 'Ще одна: Г-подібна' : 'Тестове замовлення: Г-подібна'}
+            </button>
+            <button type="button" className={`${BTN_IDLE} justify-center w-full`} onClick={() => addSample('u')} title="Додає виріб «Кухня П-подібна (тест)»: 3000×1500, кромки AR20, підворот 100, опора, стінова панель, мийка з каменю, варильна">
+              <FlaskConical className="w-4 h-4" /> {hasSample ? 'Ще одна: П-подібна' : 'Тестове замовлення: П-подібна'}
+            </button>
+          </div>
           <p className="text-[11.5px] text-slate-500 mt-1 mb-0">Умовні дані замовника; виріб можна видалити у списку виробів.</p>
         </Panel>
       </aside>
@@ -189,8 +206,8 @@ export function DocsTab() {
           {stone.length > 0 && <div className="pg"><AssemblySheet project={project} parts={stone} details={details} title="Збиральне креслення" sheetNo={1} sheetCount={sheetCount} instructions={instrList} /></div>}
           {plywood.length > 0 && <div className="pg"><AssemblySheet project={project} parts={plywood} details={details} title="Підклад фанерний" kind="plywood" sheetNo={2} sheetCount={sheetCount} instructions={instrList} overlay={plywoodOverlay} /></div>}
           {metal.length > 0 && <div className="pg"><AssemblySheet project={project} parts={metal} details={details} title="Металокаркас" kind="metal" sheetNo={sheetCount} sheetCount={sheetCount} instructions={instrList} /></div>}
-          <div className="pg"><TechCardView card={card} route={route} /></div>
-          <div className="pg"><ShopSheetView card={card} /></div>
+          <div className="pg" id="ctor-doc-techcard"><TechCardView card={card} route={route} /></div>
+          <div className="pg" id="ctor-doc-shopsheet"><ShopSheetView card={card} /></div>
         </div>
       </div>
 

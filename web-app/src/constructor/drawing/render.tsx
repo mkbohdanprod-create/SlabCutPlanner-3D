@@ -90,7 +90,7 @@ export function EntityView({ e }: { e: Entity }) {
   switch (e.kind) {
     case 'polyline': {
       const d = e.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ') + (e.closed ? ' Z' : '');
-      const fill = e.fill === 'white' ? '#fff' : e.fill === 'hatch-stone' ? `url(#${HATCH.stone.id})` : e.fill === 'hatch-plywood' ? `url(#${HATCH.plywood.id})` : e.fill === 'hatch-red' ? `url(#${HATCH.red.id})` : e.fill === 'hatch-grey' ? `url(#${HATCH.grey.id})` : e.fill === 'glue' ? '#ffe28a' : 'none';
+      const fill = e.fillColor ? e.fillColor : e.fill === 'white' ? '#fff' : e.fill === 'hatch-stone' ? `url(#${HATCH.stone.id})` : e.fill === 'hatch-plywood' ? `url(#${HATCH.plywood.id})` : e.fill === 'hatch-red' ? `url(#${HATCH.red.id})` : e.fill === 'hatch-grey' ? `url(#${HATCH.grey.id})` : e.fill === 'glue' ? '#ffe28a' : 'none';
       const dash = e.dashed ? DASH.dashed : DASH[L.linetype];
       if (e.rx && e.points.length === 4) {
         const xs = e.points.map((p) => p.x); const ys = e.points.map((p) => p.y);
