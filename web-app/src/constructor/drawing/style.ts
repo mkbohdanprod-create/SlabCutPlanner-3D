@@ -59,6 +59,10 @@ export const TEXT = {
   /** заголовок над рамкою (ЗГ-1) */
   title: { size: 5, family: 'Arial, Helvetica, sans-serif', weight: 400, italic: false },
   stamp: { size: 2.6, family: 'Arial, Helvetica, sans-serif', weight: 400, italic: false },
+  /** підзаголовок аркуша всередині рамки (деталь, мийка, стики) */
+  subtitle: { size: 4, family: 'Arial, Helvetica, sans-serif', weight: 700, italic: false },
+  /** таблиця специфікації */
+  table: { size: 2.8, family: 'Arial, Helvetica, sans-serif', weight: 400, italic: false },
 } as const;
 export type TextStyleName = keyof typeof TEXT;
 
@@ -80,6 +84,10 @@ export const DIMSTYLE = {
 export const HATCH = {
   stone: { id: 'h-stone', pattern: 'ANSI31', angle: 45, step: 1.6 },
   plywood: { id: 'h-ply', pattern: 'ANGLE', angle: 45, step: 1.4 },
+  /** зона дії людини / вимога — червона (ВН-7, ОФ-МС) */
+  red: { id: 'h-red', pattern: 'ANSI31', angle: 45, step: 1.6 },
+  /** стіни й меблі замовника — сіра сітка (ІНС-4) */
+  grey: { id: 'h-grey', pattern: 'ANGLE', angle: 45, step: 1.6 },
 } as const;
 
 /**
@@ -101,6 +109,9 @@ export const SHEET = {
   /** ШП-1: штамп ліворуч унизу, дві колонки */
   stamp: { w: 128, keyW: 52, rowH: 5.6 },
 } as const;
+
+/** Аркуш A4 портретний — специфікація (СП-1). */
+export const SHEET_A4P = { w: 210, h: 297, frame: { x: 10, y: 10, w: 190, h: 277 } } as const;
 
 /** «Круглі» масштаби, як у штампі цеху. */
 export const SCALES = [2, 2.5, 4, 5, 6, 8, 10, 12.5, 15, 20, 25, 30, 40, 50] as const;

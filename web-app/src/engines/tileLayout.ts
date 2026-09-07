@@ -216,6 +216,9 @@ function tileQuad(t: LocalTile, origin: PlanPoint, rad: number): PlanPoint[] {
  */
 export function balancedStart(min: number, L: number, s: number, t: number, norms: ArchitectureNorms): number {
   if (s <= 0 || L <= 0) return min;
+  // Плитка (панель) не коротша за поверхню — один шматок на всю довжину,
+  // без шва посередині (РЗ-7: панель на всю висоту стіни).
+  if (L <= t) return min;
   const r = L - Math.floor(L / s) * s;
   const half = r / 2;
   if (half < 1e-6) return min;                       // ідеально вкладається — без підрізів
@@ -319,7 +322,12 @@ function computeStats(surface: Surface, layout: TileLayout, pieces: TilePiece[],
   // бордюр: смуги borderMm × tileW ріжуться з плиток; одна плитка дає floor(tileH/borderMm) смуг
   const stripsPerTile = layout.pattern === 'perimeter_center' ? Math.max(1, Math.floor(layout.tileH / Math.max(1, layout.borderMm))) : 1;
   const borderTiles = layout.pattern === 'perimeter_center' ? borderPieces / stripsPerTile : 0;
-  const tilesRaw = fullCount + cutAreaMm2 / tileArea + borderTiles;
+  // Скільки плиток з'їдають підрізи: шматок більший за пів плитки — ціла
+  // плитка (другий такий з решти не вийде), менший — за площею (два
+  // вузькі підрізи ріжуться з однієї). Панель, підрізана по висоті, —
+  // це одна панель, а не 0,9.
+  const cutTiles = cutPieces.reduce((s, p) => s + (p.areaMm2 > tileArea * 0.5 ? 1 : p.areaMm2 / tileArea), 0);
+  const tilesRaw = fullCount + cutTiles + borderTiles;
   const tilesNeeded = Math.ceil(tilesRaw * (1 + wastePct / 100));
   let tilesPerSheet = 0;
   const m = layout.material;

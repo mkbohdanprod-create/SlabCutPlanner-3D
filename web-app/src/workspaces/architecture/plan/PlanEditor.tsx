@@ -26,28 +26,58 @@ import { BTN_IDLE, BTN_BLUE, fmt } from '../../../constructor/ui';
 
 const BTN_ACTIVE = BTN_BLUE;
 
+const isPdf = (file: File) => /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+
+async function openPdf(file: File) {
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
+  const data = new Uint8Array(await file.arrayBuffer());
+  return pdfjsLib.getDocument({ data }).promise;
+}
+
+async function renderPage(page: { getViewport: (o: { scale: number }) => { width: number; height: number }; render: (o: unknown) => { promise: Promise<unknown> } }, maxPx: number, quality: number) {
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(4, maxPx / Math.max(base.width, base.height));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(viewport.width); canvas.height = Math.round(viewport.height);
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+  return { dataUrl: canvas.toDataURL('image/jpeg', quality), w: canvas.width, h: canvas.height };
+}
+
+export interface PdfThumb { page: number; dataUrl: string; w: number; h: number }
+
+/**
+ * Мініатюри всіх сторінок PDF — щоб вибрати, яку підвантажити (архітектурний
+ * PDF часто на 10–40 аркушів). Віддає по одній через `onThumb`, щоб вікно
+ * вибору відкривалось одразу, а не після останньої сторінки.
+ */
+export async function loadPdfThumbnails(file: File, onThumb?: (t: PdfThumb, total: number) => void, cancelled?: () => boolean): Promise<PdfThumb[]> {
+  const pdf = await openPdf(file);
+  const out: PdfThumb[] = [];
+  for (let i = 1; i <= pdf.numPages; i += 1) {
+    if (cancelled?.()) break;
+    const page = await pdf.getPage(i);
+    const r = await renderPage(page as never, 260, 0.7);
+    const t = { page: i, ...r };
+    out.push(t); onThumb?.(t, pdf.numPages);
+  }
+  return out;
+}
+
 /** Растр сторінки PDF / картинки → підложка. Викликає pdf.js ліниво. */
 async function loadUnderlayFile(file: File, pageIndex: number): Promise<{ underlay: PlanUnderlay; pages: number }> {
   const MAX = 2400;
-  if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
-    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
-    const data = new Uint8Array(await file.arrayBuffer());
-    const pdf = await pdfjsLib.getDocument({ data }).promise;
+  if (isPdf(file)) {
+    const pdf = await openPdf(file);
     const page = await pdf.getPage(Math.min(Math.max(1, pageIndex), pdf.numPages));
-    const base = page.getViewport({ scale: 1 });
-    const scale = Math.min(4, MAX / Math.max(base.width, base.height));
-    const viewport = page.getViewport({ scale });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(viewport.width); canvas.height = Math.round(viewport.height);
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport, canvas } as never).promise;
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    const r = await renderPage(page as never, MAX, 0.85);
     // Стартова оцінка масштабу: аркуш ≈ 20 м завширшки. До калібрування —
     // лише щоб план був видимий; справжній масштаб задає людина.
     return {
-      underlay: { name: file.name, dataUrl, widthPx: canvas.width, heightPx: canvas.height, mmPerPx: 20000 / canvas.width, calibrated: false, pageIndex: page.pageNumber, opacity: 0.85 },
+      underlay: { name: file.name, dataUrl: r.dataUrl, widthPx: r.w, heightPx: r.h, mmPerPx: 20000 / r.w, calibrated: false, pageIndex: page.pageNumber, opacity: 0.85 },
       pages: pdf.numPages,
     };
   }
@@ -116,6 +146,9 @@ export default function PlanEditor() {
   const [busy, setBusy] = useState<string | null>(null);
   const [pages, setPages] = useState(1);
   const [lastFile, setLastFile] = useState<File | null>(null);
+  /** Вибір сторінки багатосторінкового PDF: мініатюри до того, як щось підвантажено. */
+  const [pick, setPick] = useState<{ file: File; thumbs: PdfThumb[]; total: number } | null>(null);
+  const pickCancel = useRef(false);
   const [hoverEdge, setHoverEdge] = useState<{ surface: Surface; edgeIndex: number } | null>(null);
   const drag = useRef<{ sx: number; sy: number; cx: number; cy: number; moved: boolean } | null>(null);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -137,10 +170,12 @@ export default function PlanEditor() {
     const w = host.clientWidth; const h = host.clientHeight;
     let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
     const take = (p: PlanPoint) => { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); };
-    if (underlay) { take({ x: 0, y: 0 }); take({ x: underlay.widthPx * underlay.mmPerPx, y: underlay.heightPx * underlay.mmPerPx }); }
-    floors.forEach((s) => s.points.forEach(take));
+    // Є обведені підлоги — кадр по них (аркуш PDF зазвичай утричі більший
+    // за приміщення); нема — по всьому аркушу.
+    if (floors.length) floors.forEach((s) => s.points.forEach(take));
+    else if (underlay) { take({ x: 0, y: 0 }); take({ x: underlay.widthPx * underlay.mmPerPx, y: underlay.heightPx * underlay.mmPerPx }); }
     if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 10000; maxY = 7000; }
-    const zoom = Math.min(w / Math.max(1, maxX - minX), h / Math.max(1, maxY - minY)) * 0.92;
+    const zoom = Math.min(w / Math.max(1, maxX - minX), h / Math.max(1, maxY - minY)) * (floors.length ? 0.8 : 0.92);
     setCam({ zoom, x: minX - (w / zoom - (maxX - minX)) / 2, y: minY - (h / zoom - (maxY - minY)) / 2 });
   }, [underlay, floors]);
 
@@ -193,7 +228,30 @@ export default function PlanEditor() {
     setTool('floor');
   }, [calib, underlay, patch, setTool]);
 
+  /** Новий файл: PDF на кілька сторінок — спершу мініатюри й вибір, інакше одразу підложка. */
+  const onPick = async (file: File) => {
+    if (!isPdf(file)) { void onFile(file, 1); return; }
+    setBusy('Читаю сторінки…');
+    pickCancel.current = false;
+    let opened = false;
+    try {
+      const thumbs = await loadPdfThumbnails(file, (t, total) => {
+        if (total <= 1) return;
+        // перша мініатюра — відкриваємо вікно, далі дописуємо
+        if (!opened) { opened = true; setBusy(null); }
+        setPick((prev) => (prev && prev.file === file ? { ...prev, thumbs: [...prev.thumbs, t] } : { file, thumbs: [t], total }));
+      }, () => pickCancel.current);
+      setBusy(null);
+      if (thumbs.length === 1) { void onFile(file, 1); return; }
+    } catch (e) {
+      setBusy(null); setPick(null);
+      window.alert(`Не вдалося прочитати PDF: ${(e as Error).message}`);
+    }
+  };
+  const closePick = () => { pickCancel.current = true; setPick(null); };
+
   const onFile = async (file: File, pageIndex = 1) => {
+    pickCancel.current = true; setPick(null);
     setBusy('Читаю план…');
     try {
       const { underlay: u, pages: n } = await loadUnderlayFile(file, pageIndex);
@@ -363,11 +421,12 @@ export default function PlanEditor() {
         <button type="button" className={BTN_IDLE} onClick={() => fileRef.current?.click()} title="Підвантажити PDF плану або картинку" disabled={Boolean(busy)}>
           <Upload className="w-4 h-4" /> {busy ?? 'План'}
         </button>
-        <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = ''; }} />
+        <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPick(f); e.target.value = ''; }} />
         {underlay && pages > 1 && lastFile && (
-          <label className="flex items-center gap-1 text-[12px] text-slate-600">Сторінка
-            <input type="number" min={1} max={pages} value={underlay.pageIndex} onChange={(e) => void onFile(lastFile, Number(e.target.value) || 1)} className="w-14 h-7 px-1 border border-slate-300 rounded text-center" /> з {pages}
-          </label>
+          <span className="inline-flex items-center gap-1 text-[12px] text-slate-600 whitespace-nowrap">Стор.
+            <input type="number" min={1} max={pages} value={underlay.pageIndex} onChange={(e) => void onFile(lastFile, Number(e.target.value) || 1)} className="!w-12 !m-0 !h-7 !px-1 border border-slate-300 rounded text-center" style={{ width: 48 }} /> з {pages}
+            <button type="button" className="!px-1.5 !py-0.5 !min-h-0 rounded border border-slate-300 bg-white text-[11.5px] text-slate-700" title="Показати всі сторінки мініатюрами й вибрати іншу" onClick={() => void onPick(lastFile)}>інша…</button>
+          </span>
         )}
         <span className="w-px h-6 bg-slate-200 mx-1" />
         {TOOLS.map((t) => {
@@ -500,6 +559,26 @@ export default function PlanEditor() {
             <span className="text-[13px] text-slate-700">мм</span>
             <button type="button" className={BTN_BLUE} onClick={finishCalibration}>Задати</button>
             <button type="button" className={BTN_IDLE} onClick={() => setCalib(null)}>Скасувати</button>
+          </div>
+        )}
+        {pick && (
+          <div className="absolute inset-0 z-20 bg-slate-900/40 flex items-center justify-center p-4" onClick={closePick}>
+            <div className="bg-white rounded-xl shadow-xl max-w-[960px] w-full max-h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-200">
+                <div className="font-semibold text-slate-800 text-[14px]">Яку сторінку підвантажити?</div>
+                <div className="text-[12px] text-slate-500 truncate">{pick.file.name} · {pick.total} стор.{pick.thumbs.length < pick.total ? ` · читаю ${pick.thumbs.length}/${pick.total}…` : ''}</div>
+                <button type="button" className={`${BTN_IDLE} ml-auto`} onClick={closePick}>Закрити</button>
+              </div>
+              <div className="overflow-auto custom-scrollbar p-3 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>
+                {pick.thumbs.map((t) => (
+                  <button key={t.page} type="button" onClick={() => void onFile(pick.file, t.page)} title={`Сторінка ${t.page}`}
+                    className="!p-1.5 rounded-lg border border-slate-200 bg-white hover:border-sky-400 hover:shadow text-left">
+                    <img src={t.dataUrl} alt={`Сторінка ${t.page}`} className="w-full h-auto border border-slate-100 rounded" />
+                    <div className="text-[12px] text-slate-700 mt-1 text-center">{t.page}{underlay && lastFile === pick.file && underlay.pageIndex === t.page ? ' · зараз' : ''}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
         {underlay && !underlay.calibrated && !calib && (

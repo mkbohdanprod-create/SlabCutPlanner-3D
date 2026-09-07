@@ -11,7 +11,7 @@
  * по ділянках (ВЦ-1), бланк цеху (МЕС-1), JSON для MES.
  */
 import React, { useMemo, useState } from 'react';
-import { Printer, Download, Copy, Layers } from 'lucide-react';
+import { Printer, Download, Copy, Layers, FlaskConical } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useConstructorStore } from '../store';
@@ -20,13 +20,15 @@ import { getAllProjectDetails } from '../../store/projectHelpers';
 import { buildTechCard } from './techCard';
 import { buildMesJson } from './mesJson';
 import { AssemblySheet } from './AssemblySheet';
+import { DrawingSetView } from './DrawingSetView';
+import { buildSampleKitchenProduct, SAMPLE_PROJECT_HEADER, SAMPLE_PRODUCT_NAME } from '../drawing/sampleOrder';
 import { needsSubstrate, buildPlywoodLayout } from '../plywood/plywoodRules';
 import { DecisionsLog } from '../merge/MergeTab';
 import { buildRouteModel, type RouteModel } from './routeMap';
 import { PartsRouteTable, RouteLegend, RouteMap } from './RouteView';
 import { BTN_BLUE, BTN_IDLE, Empty, Panel, Tag, fmt } from '../ui';
 
-type DocId = 'assembly' | 'plywood' | 'metal' | 'techcard' | 'shopsheet' | 'mes';
+type DocId = 'drawings' | 'assembly' | 'plywood' | 'metal' | 'techcard' | 'shopsheet' | 'mes';
 
 export function DocsTab() {
   const project = useProjectStore((s) => s.project);
@@ -37,7 +39,7 @@ export function DocsTab() {
   const customRules = useSettingsStore((s) => s.customRules);
   const decisions = useConstructorStore((s) => s.decisions);
   const plywoodParams = useConstructorStore((s) => s.plywood);
-  const [doc, setDoc] = useState<DocId>('assembly');
+  const [doc, setDoc] = useState<DocId>('drawings');
   const [instructions, setInstructions] = useState('');
 
   const estimate = useMemo(() => {
@@ -77,7 +79,8 @@ export function DocsTab() {
     [card, decisions, metal.length, plywood.length, instructions, route]);
 
   const docs: Array<{ id: DocId; label: string; hint: string; available: boolean }> = [
-    { id: 'assembly', label: 'Збиральне креслення', hint: 'аркуш 1: вироби, розміри, кромки, вирізи', available: stone.length > 0 },
+    { id: 'drawings', label: 'Креслення цеху (набір)', hint: 'по аркушу: збірка, деталі, смуги, мийка, стики і склейка, специфікація', available: stone.length > 0 },
+    { id: 'assembly', label: 'Збиральне креслення (старе)', hint: 'усі парти на одному аркуші', available: stone.length > 0 },
     { id: 'plywood', label: 'Підклад (фанера)', hint: 'аркуш 2: рама і ребра, ТБ-1', available: plywood.length > 0 },
     { id: 'metal', label: 'Металокаркас', hint: 'окремий аркуш, свій штамп (МК-1)', available: metal.length > 0 },
     { id: 'techcard', label: 'Тех карта по ділянках', hint: 'ВЦ-1: пила → вода → ЧПК → … → косметика', available: true },
@@ -120,6 +123,15 @@ export function DocsTab() {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
   const copyJson = () => { void navigator.clipboard?.writeText(JSON.stringify(mes, null, 2)); };
+  const hasSample = Boolean(project.products?.some((p) => p.name === SAMPLE_PRODUCT_NAME));
+  /** Тестове замовлення для перегляду набору: Г-кухня з мийкою, потовщеннями, підворотом, опорою і панеллю. */
+  const addSample = () => {
+    const st = useProjectStore.getState();
+    if (!project.orderNumber) st.updateProjectHeader({ orderNumber: SAMPLE_PROJECT_HEADER.orderNumber, customer: project.customer || SAMPLE_PROJECT_HEADER.customer, customerContactPhone: project.customerContactPhone || SAMPLE_PROJECT_HEADER.customerContactPhone });
+    if (!project.projectThickness || !project.projectMaterial) st.updateProject({ projectThickness: project.projectThickness || 20, projectMaterial: project.projectMaterial || 'Кварцит' });
+    st.addProduct(buildSampleKitchenProduct(`kitchen_l_sample_${Date.now().toString(36)}`, project.projectMaterial || 'Кварцит'));
+    setDoc('drawings');
+  };
 
   return (
     <div className="flex h-full min-h-0">
@@ -145,11 +157,20 @@ export function DocsTab() {
             <button type="button" className={`${BTN_IDLE} justify-center`} onClick={copyJson}><Copy className="w-4 h-4" /> Копіювати JSON</button>
           </div>
         </Panel>
+        <Panel title="Тест">
+          <button type="button" className={`${BTN_IDLE} justify-center w-full`} onClick={addSample} title="Додає в проєкт виріб «Кухня Г-подібна (тест)»: стільниця 2600×1600 з мийкою з каменю, варильною, потовщеннями 40, підворотом 100, опорою і стіновою панеллю — щоб подивитися повний набір креслень">
+            <FlaskConical className="w-4 h-4" /> {hasSample ? 'Ще одна тестова кухня' : 'Тестове замовлення: кухня'}
+          </button>
+          <p className="text-[11.5px] text-slate-500 mt-1 mb-0">Умовні дані замовника; виріб можна видалити у списку виробів.</p>
+        </Panel>
       </aside>
 
       <div className="flex-1 min-w-0 bg-[#e9edf1] overflow-auto custom-scrollbar p-4">
-        <div id="ctor-doc-preview" className="mx-auto bg-white shadow-md ctor-doc" style={{ maxWidth: doc === 'assembly' || doc === 'plywood' || doc === 'metal' ? 1180 : 900 }}>
+        <div id="ctor-doc-preview" className="mx-auto bg-white shadow-md ctor-doc" style={{ maxWidth: doc === 'drawings' || doc === 'assembly' || doc === 'plywood' || doc === 'metal' ? 1180 : 900 }}>
           <style>{`.ctor-doc table{border-collapse:collapse;width:100%}.ctor-doc th,.ctor-doc td{padding:3px 8px;border-bottom:1px solid #e2e8f0;vertical-align:top}.ctor-doc th{font-weight:600}`}</style>
+          {doc === 'drawings' && (stone.length
+            ? <DrawingSetView project={project} parts={stone} details={details} instructions={instrList} />
+            : <Empty>Немає кам'яних виробів — додайте виріб або натисніть «Тестове замовлення».</Empty>)}
           {doc === 'assembly' && (stone.length
             ? <AssemblySheet project={project} parts={stone} details={details} title="Збиральне креслення" sheetNo={1} sheetCount={sheetCount} instructions={instrList} showGaps />
             : <Empty>Немає кам'яних виробів.</Empty>)}

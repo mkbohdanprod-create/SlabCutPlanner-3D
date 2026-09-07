@@ -131,6 +131,18 @@ describe('правила старту РЗ-1 / РЗ-4 (auto)', () => {
     expect(r.stats.fullCount).toBe(24);
     r.pieces.filter((p) => !p.full).forEach((p) => expect(p.areaMm2).toBeCloseTo(400 * 1000, 0));
   });
+  it('РЗ-7: панель вища за стіну — один шматок без шва посередині', () => {
+    expect(balancedStart(0, 3000, 3201.5, 3200, N)).toBe(0);
+    const wall = wallFromEdge(floor(), 0, 3000, 'Стіна A');
+    const r = generateLayout(wall, layout({ surfaceId: wall.id, origin: 'auto', tileW: 1600, tileH: 3200, jointMm: 1.5 }));
+    expect(r.pieces.length).toBe(5); // 598 + 3 × 1600 + 598 по ширині, по висоті — один ряд
+    // кожна панель підрізана по висоті (3000 < 3200) — цілих нема; три широкі
+    // шматки = по панелі кожен, два крайні по 598 ріжуться з однієї панелі
+    expect(r.stats.fullCount).toBe(0);
+    expect(r.stats.cutCount).toBe(5);
+    const edge = (598 * 3000) / (1600 * 3200);
+    expect(r.stats.tilesNeeded).toBe(Math.ceil((3 + 2 * edge) * 1.12)); // 5
+  });
   it('auto для діагоналі — центр габариту (симетрія по діагоналях), покриття повне', () => {
     const r = generateLayout(floor(), layout({ origin: 'auto', pattern: 'diagonal', tileW: 600, tileH: 600 }));
     expect(sumArea(r)).toBeCloseTo(24e6, -2);
