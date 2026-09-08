@@ -256,7 +256,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
           <button
             onClick={() => setArchitectureMode(false)}
             className={`pane-tab px-2.5 h-10 rounded-t-lg text-[12px] font-bold flex items-center gap-1 shrink-0 whitespace-nowrap !text-neutral-900 ${centered ? 'absolute right-14 bottom-0' : 'ml-auto'}`}
-            title="Архітектор увімкнено — клік: вийти назад у VS3D (план і розкладки лишаються в проєкті)"
+            title="BUILDING увімкнено — клік: вийти назад у Studio (план і розкладки лишаються в проєкті)"
           >
             <Building2 className="w-4 h-4" /><X className="w-3.5 h-3.5" />
           </button>
@@ -265,7 +265,7 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
           <button
             onClick={() => setConstructorMode(false)}
             className={`pane-tab px-2.5 h-10 rounded-t-lg text-[12px] font-bold flex items-center gap-1 shrink-0 whitespace-nowrap !text-violet-700 ${centered ? 'absolute right-14 bottom-0' : 'ml-auto'}`}
-            title="Конструктор увімкнено — клік: вийти назад у VS3D (нічого не губиться)"
+            title="CAD увімкнено — клік: вийти назад у Studio (нічого не губиться)"
           >
             <Ruler className="w-4 h-4" /><X className="w-3.5 h-3.5" />
           </button>

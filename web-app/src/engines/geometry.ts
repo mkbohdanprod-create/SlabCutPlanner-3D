@@ -383,8 +383,16 @@ function buildComplexRectPoints(
   } else if (cornerAB?.type === 'l-cut') {
     endA = { x: w - eff.AB.b, y: 0 };
     points.push(endA);
-    points.push({ x: w - eff.AB.b, y: eff.AB.c });
-    points.push({ x: w, y: eff.AB.c });
+    const midAB = { x: w - eff.AB.b, y: eff.AB.c };
+    const outAB = { x: w, y: eff.AB.c };
+    points.push(midAB);
+    points.push(outAB);
+    // Ребра Г-зарізу — іменовані сторони (Б-002, 07.09.2026): ключі ті
+    // самі, що дає 3D-контур (`buildDetailShape`), тож кромка з панелі
+    // знаходить свою ділянку і в розкрої, і в грошах, і на карті крою.
+    // lcut1 — паралельне наступній стороні кута, lcut2 — попередній.
+    sideSegments['AB_lcut1'] = { start: endA, end: midAB };
+    sideSegments['AB_lcut2'] = { start: midAB, end: outAB };
   } else if (rAB > 0) {
     endA = { x: w - rAB, y: 0 };
     points.push(endA);
@@ -405,8 +413,12 @@ function buildComplexRectPoints(
   } else if (cornerBC?.type === 'l-cut') {
     endB = { x: w, y: h - eff.BC.b };
     points.push(endB);
-    points.push({ x: w - eff.BC.c, y: h - eff.BC.b });
-    points.push({ x: w - eff.BC.c, y: h });
+    const midBC = { x: w - eff.BC.c, y: h - eff.BC.b };
+    const outBC = { x: w - eff.BC.c, y: h };
+    points.push(midBC);
+    points.push(outBC);
+    sideSegments['BC_lcut1'] = { start: endB, end: midBC };
+    sideSegments['BC_lcut2'] = { start: midBC, end: outBC };
   } else if (rBC > 0) {
     endB = { x: w, y: h - rBC };
     points.push(endB);
@@ -427,8 +439,12 @@ function buildComplexRectPoints(
   } else if (cornerCD?.type === 'l-cut') {
     endC = { x: eff.CD.b, y: h };
     points.push(endC);
-    points.push({ x: eff.CD.b, y: h - eff.CD.c });
-    points.push({ x: 0, y: h - eff.CD.c });
+    const midCD = { x: eff.CD.b, y: h - eff.CD.c };
+    const outCD = { x: 0, y: h - eff.CD.c };
+    points.push(midCD);
+    points.push(outCD);
+    sideSegments['CD_lcut1'] = { start: endC, end: midCD };
+    sideSegments['CD_lcut2'] = { start: midCD, end: outCD };
   } else if (rCD > 0 && cornerCD?.reflex) {
     // УВІГНУТИЙ кут (внутрішній кут вирізу складної форми).
     // Матеріал ДОДАЄТЬСЯ: під нижнім лівим кутом з'являється округлий виступ.
@@ -458,8 +474,12 @@ function buildComplexRectPoints(
   } else if (cornerDA?.type === 'l-cut') {
     endD = { x: 0, y: eff.DA.b };
     points.push(endD);
-    points.push({ x: eff.DA.c, y: eff.DA.b });
-    points.push({ x: eff.DA.c, y: 0 });
+    const midDA = { x: eff.DA.c, y: eff.DA.b };
+    const outDA = { x: eff.DA.c, y: 0 };
+    points.push(midDA);
+    points.push(outDA);
+    sideSegments['DA_lcut1'] = { start: endD, end: midDA };
+    sideSegments['DA_lcut2'] = { start: midDA, end: outDA };
   } else if (rDA > 0) {
     endD = { x: 0, y: rDA };
     points.push(endD);
@@ -769,6 +789,17 @@ type JointCut = {
   start: Point;
   dir: { x: number; y: number };
   line?: { axis: 'vertical' | 'horizontal'; position: number };
+  /**
+   * ПОЛЕ СТИКУ (№141, 08.09.2026) — точка всередині тієї ділянки, між якою
+   * парою сторін стик поставлено. Різ застосовується РІВНО до того шматка, у
+   * якому ця точка лежить, і рівно раз.
+   *
+   * Без неї наскрізна лінія різала кожен шматок, крізь який проходила: стик
+   * «між H і F» (лівий виступ П-подібної) заодно розрізав і праву ногу —
+   * власник спіймав це на 3D: «у редакторі ріже лише лівий виступ, а по факту
+   * ріже всю стільницю навпіл».
+   */
+  field?: Point;
   /** Тип з'єднання — з нього кошторис бере, це пряма склейка чи заусовка 45°. */
   jointType?: string;
 };
@@ -803,9 +834,10 @@ function splitContourByJoints(contour: Point[], cuts: JointCut[], seams?: JointS
   for (const cut of cuts) {
     const next: Point[][] = [];
     // Промінь із увігнутого кута застосовується РІВНО раз: він виходить з одної
-    // конкретної точки, і другого шматка з тим самим кутом не існує. Наскрізна
-    // лінія довільного стику — навпаки, ріже все, крізь що проходить.
-    const onceOnly = !cut.line;
+    // конкретної точки, і другого шматка з тим самим кутом не існує. Стик із
+    // полем пари (№141) — теж рівно раз: він живе у своїй ділянці. Наскрізна
+    // лінія БЕЗ поля (старі стики) — навпаки, ріже все, крізь що проходить.
+    const onceOnly = !cut.line || Boolean(cut.field);
     let applied = false;
 
     for (const ring of rings) {
@@ -814,9 +846,14 @@ function splitContourByJoints(contour: Point[], cuts: JointCut[], seams?: JointS
       // Для наскрізної лінії початок різу шукаємо всередині САМЕ цього шматка.
       // Без цього другий стик відштовхувався б від точки, що лежить у сусідньому
       // шматку, і хорда йшла б повз матеріал.
-      const start = cut.line
-        ? interiorPointOnLine(ring, cut.line.axis, cut.line.position)
-        : cut.start;
+      // Якщо стик має поле пари — беремо точку цього поля і ріжемо лише той
+      // шматок, у якому вона лежить: інакше «стик між H і F» різав би і праву
+      // ногу теж (правка власника 08.09).
+      const start = cut.field
+        ? (isPointInRing(ring, cut.field) ? cut.field : undefined)
+        : cut.line
+          ? interiorPointOnLine(ring, cut.line.axis, cut.line.position)
+          : cut.start;
       if (!start) { next.push(ring); continue; }
 
       const nearest = findContourHit(ring, start);
@@ -981,14 +1018,21 @@ function buildComplexPolygonPoints(
     } else if (corner?.type === 'l-cut') {
       const sizeB = effPrev[i];
       const sizeC = effNext[i];
-      const S = { x: px + dirPrev.x * sizeB, y: py + dirPrev.y * sizeB };
-      const M = { x: px + dirPrev.x * sizeB + dirNext.x * sizeC, y: py + dirPrev.y * sizeB + dirNext.y * sizeC };
+      const S: Point = { x: px + dirPrev.x * sizeB, y: py + dirPrev.y * sizeB };
+      const M: Point = { x: px + dirPrev.x * sizeB + dirNext.x * sizeC, y: py + dirPrev.y * sizeB + dirNext.y * sizeC };
       const E = { x: px + dirNext.x * sizeC, y: py + dirNext.y * sizeC };
       cornerEnds.push(S);
       points.push(S);
       points.push(M);
       points.push(E);
       cornerStarts.push(E);
+      // Ребра Г-зарізу — іменовані сторони (Б-002, 07.09.2026): ключі ті
+      // самі, що в 3D-контурі. Точки несуть sideId, щоб шматки після
+      // різу стиками впізнали свої кромки, як і на звичайних сторонах.
+      S.sideId = `${cornerId}_lcut1`;
+      M.sideId = `${cornerId}_lcut2`;
+      sideSegments[`${cornerId}_lcut1`] = { start: S, end: M };
+      sideSegments[`${cornerId}_lcut2`] = { start: M, end: E };
     } else {
       // Одна й та сама точка в усіх трьох масивах — щоб позначення сторони
       // нижче лягло і на контур, а не лише на службові масиви.
@@ -2020,13 +2064,18 @@ function manualJointCuts(detail: Detail, ring: Point[]): JointCut[] {
   // Опорні точки беремо спільною функцією: вона знає і прямокутник теж,
   // а саме на прямокутних деталях довільні стики й потрібні найчастіше.
   const anchors = jointAnchorPoints(detail.shape, detail.geometry);
+  /* Сторони контуру за іменами — з них рахується поле пари (№141). */
+  const sides = ringSideSegments(ring);
   const cuts: JointCut[] = [];
 
   // Два стики на тому самому місці — не два різи, а один. Так буває, коли
   // менеджер тисне «+ Вертикальний» двічі: обидва лягають на типову відстань,
   // і другий «система не бачить» (FG-07). Прибираємо дублі тут, у рушії, щоб
   // жоден шлях створення стику не міг завести деталь у різ нульової ширини.
-  const seen: Array<{ axis: string; position: number }> = [];
+  // №141: дубль — це той самий різ у ТОМУ САМОМУ полі. Два стики на одній
+  // координаті, але в різних полях (H↔F у лівій нозі і D↔B у правій) — два
+  // різні шви, і схлопувати їх не можна: поле входить у ключ.
+  const seen: Array<{ axis: string; position: number; field: string }> = [];
 
   for (const joint of joints) {
     // Позицію рахує СПІЛЬНА manualJointPosition (domain/joints) — тут жила її
@@ -2035,8 +2084,12 @@ function manualJointCuts(detail: Detail, ring: Point[]): JointCut[] {
     // у 3D лінія зникала, а в розкрої різ ішов повз матеріал.
     const { requested } = manualJointPosition(anchors, detail.geometry?.corners, joint);
     const position = snapJointOffArcs(detail, joint.axis, requested);
-    if (seen.some((item) => item.axis === joint.axis && Math.abs(item.position - position) < 1)) continue;
-    seen.push({ axis: joint.axis, position });
+    const fieldKey = joint.sideId && joint.oppositeSideId
+      ? [joint.sideId, joint.oppositeSideId].sort().join('|')
+      : '';
+    if (seen.some((item) => item.axis === joint.axis && item.field === fieldKey
+      && Math.abs(item.position - position) < 1)) continue;
+    seen.push({ axis: joint.axis, position, field: fieldKey });
 
     const start = interiorPointOnLine(ring, joint.axis, position);
     if (!start) continue; // лінія не перетинає деталь — стик ігноруємо
@@ -2044,11 +2097,40 @@ function manualJointCuts(detail: Detail, ring: Point[]): JointCut[] {
       start,
       dir: joint.axis === 'vertical' ? { x: 0, y: -1 } : { x: -1, y: 0 },
       line: { axis: joint.axis, position },
+      field: jointFieldPoint(sides, joint, position),
       jointType: joint.jointType,
     });
   }
 
   return cuts;
+}
+
+/**
+ * ТОЧКА ПОЛЯ СТИКУ (№141, 08.09.2026).
+ *
+ * Стик, поставлений на кресленні, знає свою пару сторін — «між H і F». Пара
+ * однозначно вказує ділянку деталі: беремо середину між цими двома сторонами
+ * впоперек різу, і разом із координатою лінії це точка всередині потрібного
+ * шматка. Далі `splitContourByJoints` ріже тільки той шматок, у якому вона
+ * лежить, а не все, крізь що проходить пряма.
+ *
+ * Порожньо — стик без пари (панель «+ Вертикальний», омега/лямбда): для таких
+ * лишається стара наскрізна поведінка, щоб збережені проєкти не поїхали.
+ */
+function jointFieldPoint(
+  sides: Record<string, { start: Point; end: Point }>,
+  joint: { axis: 'vertical' | 'horizontal'; sideId?: string; oppositeSideId?: string },
+  position: number,
+): Point | undefined {
+  if (!joint.sideId || !joint.oppositeSideId) return undefined;
+  const a = sides[joint.sideId];
+  const b = sides[joint.oppositeSideId];
+  if (!a || !b) return undefined;
+  /* Впоперек різу: вертикальний різ іде по X, значить «поперек» — це Y. */
+  const across = (s: { start: Point; end: Point }) =>
+    joint.axis === 'vertical' ? (s.start.y + s.end.y) / 2 : (s.start.x + s.end.x) / 2;
+  const mid = (across(a) + across(b)) / 2;
+  return joint.axis === 'vertical' ? { x: position, y: mid } : { x: mid, y: position };
 }
 
 /**

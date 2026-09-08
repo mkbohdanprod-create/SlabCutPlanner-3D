@@ -375,6 +375,14 @@ export interface ManualJointLike {
   anchorCorner?: string;
   offset: number;
   jointType?: string;
+  /**
+   * Пара сторін, між якими стоїть стик (№141). Стик, поставлений на
+   * кресленні, знає своє поле — і рушій ріже тільки його, а не все, крізь що
+   * проходить пряма. Порожньо у «формових» стиків (омега/лямбда, кутовий Г):
+   * вони наскрізні за визначенням.
+   */
+  sideId?: string;
+  oppositeSideId?: string;
 }
 
 export function legacyJointsToManual(
@@ -500,4 +508,263 @@ export function shapeJointDirection(
   kind: ShapeJointKind,
 ): 'vertical' | 'horizontal' | undefined {
   return (current ?? []).find((joint) => joint.id === SHAPE_JOINT_ID[kind])?.axis;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   ПОЛЯ СТИКІВ (№142, 08.09.2026)
+
+   Стик іде між сторонами, які стоять НАПРОТИ одна одної. У складної форми в
+   однієї сторони таких напроти кілька: у П-подібної верхня A стоїть напроти і
+   G, і E, і C — і на кожну пару в редакторі стоїть свій бейдж, бо один бейдж
+   не давав зробити другий стик («стик до стика не робиться», №139).
+
+   Пара — це ще не поле. Стик іде наскрізь, тому він можливий лише там, де між
+   двома сторонами СУЦІЛЬНИЙ матеріал: пара H↔B у П-подібної перекривається по
+   всій висоті, але нижче рівня E — виріз, і лінія там повисне в повітрі
+   (правка власника 08.09). Тому діапазон обрізається по контуру.
+
+   Математика лежить тут, а не в компоненті: креслення (2D) і модель (3D)
+   мусять показувати ОДНІ І ТІ САМІ поля, інакше стик, поставлений в одному
+   місці, з'явиться в іншому. Це те саме правило, що й для позиції різу —
+   одна функція на рушій і на інтерфейс.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/** Поле, у якому можна поставити стик між двома сторонами. */
+export type JointFieldPair = {
+  sideId: string;
+  otherId: string;
+  /** Напрямок лінії різу між цими сторонами. */
+  axis: 'vertical' | 'horizontal';
+  /** Межі поля вздовж сторони `sideId`, мм від її початку. */
+  from: number;
+  to: number;
+  /** Середина поля вздовж сторони — сюди стає бейдж. */
+  mid: number;
+  /** Точка на стороні `sideId` посередині поля. */
+  at: Point;
+  /** Одиничний напрямок сторони `sideId` і її ЗОВНІШНЯ нормаль. */
+  dir: Point;
+  normal: Point;
+  /** Відстань до протилежної сторони. */
+  depth: number;
+  /** Прямокутник поля — для підсвітки на кресленні. */
+  zone: Point[];
+  /** Габарит поля — з нього видно, які сторони його обмежують. */
+  box: { minX: number; maxX: number; minY: number; maxY: number };
+};
+
+/** Чи лежить точка в контурі (промінь управо, парність перетинів). */
+function pointInOutline(outline: Array<{ x: number; y: number }>) {
+  return (p: { x: number; y: number }) => {
+    let hit = false;
+    for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+      const yi = outline[i].y;
+      const yj = outline[j].y;
+      if ((yi > p.y) === (yj > p.y)) continue;
+      const x = outline[i].x + ((p.y - yi) / (yj - yi)) * (outline[j].x - outline[i].x);
+      if (p.x < x) hit = !hit;
+    }
+    return hit;
+  };
+}
+
+/**
+ * Усі поля стиків деталі.
+ *
+ * `sides` — сторони контуру в міліметрах, `outline` — сам контур (для перевірки
+ * матеріалу). Пари повертаються в ОБИДВА боки (A↔G і G↔A): бейдж стоїть на
+ * кожній стороні пари, і кожному потрібна своя середина поля.
+ */
+export function jointFieldPairs(
+  sides: JointSideSegment[],
+  outline: Array<{ x: number; y: number }>,
+): JointFieldPair[] {
+  const out: JointFieldPair[] = [];
+  if (sides.length < 2 || outline.length < 3) return out;
+  const inside = pointInOutline(outline);
+
+  const info = sides.map((side) => {
+    const dx = side.v2.x - side.v1.x;
+    const dy = side.v2.y - side.v1.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const dir = { x: dx / len, y: dy / len };
+    /* Нормаль має дивитись НАЗОВНІ. Знак залежить від напрямку обходу контуру,
+       а обхід у 2D і 3D може бути різний — тому перевіряємо пробною точкою, а
+       не покладаємось на угоду. */
+    let normal = { x: dy / len, y: -dx / len };
+    const mid = { x: (side.v1.x + side.v2.x) / 2, y: (side.v1.y + side.v2.y) / 2 };
+    const probe = Math.max(1, len * 0.01);
+    if (inside({ x: mid.x + normal.x * probe, y: mid.y + normal.y * probe })) {
+      normal = { x: -normal.x, y: -normal.y };
+    }
+    return { side, dir, normal, len, mid };
+  });
+
+  for (const a of info) {
+    if (a.len < 20) continue;
+    for (const b of info) {
+      if (b.side.id === a.side.id || b.len < 20) continue;
+      // паралельні
+      if (Math.abs(a.dir.x * b.dir.y - a.dir.y * b.dir.x) >= 0.05) continue;
+      // нормалі назустріч — інакше це «сходинка», а не пара
+      if (a.normal.x * b.normal.x + a.normal.y * b.normal.y > -0.9) continue;
+      // b має лежати з ВНУТРІШНЬОГО боку a (нормаль дивиться назовні)
+      const toB = { x: b.mid.x - a.mid.x, y: b.mid.y - a.mid.y };
+      if (toB.x * a.normal.x + toB.y * a.normal.y >= 0) continue;
+
+      // перекриття проекцій на напрямок сторони a
+      const t = (p: { x: number; y: number }) =>
+        (p.x - a.side.v1.x) * a.dir.x + (p.y - a.side.v1.y) * a.dir.y;
+      const b1 = t(b.side.v1);
+      const b2 = t(b.side.v2);
+      const rawFrom = Math.max(0, Math.min(b1, b2));
+      const rawTo = Math.min(a.len, Math.max(b1, b2));
+      if (rawTo - rawFrom < Math.max(20, a.len * 0.02)) continue;
+
+      const depth = -((b.mid.x - a.mid.x) * a.normal.x + (b.mid.y - a.mid.y) * a.normal.y);
+      if (depth <= 1) continue;
+
+      /* Діапазон по матеріалу: беремо найдовшу неперервну ділянку, де відрізок
+         «від сторони до сторони» цілком лежить у контурі. */
+      const solidAt = (u: number) => {
+        const px = a.side.v1.x + a.dir.x * u;
+        const py = a.side.v1.y + a.dir.y * u;
+        for (let k = 1; k <= 6; k++) {
+          const d = (depth * k) / 7;
+          if (!inside({ x: px - a.normal.x * d, y: py - a.normal.y * d })) return false;
+        }
+        return true;
+      };
+      const steps = 64;
+      let from = NaN;
+      let to = NaN;
+      let runFrom = NaN;
+      let runTo = NaN;
+      for (let s = 0; s <= steps; s++) {
+        const u = rawFrom + ((rawTo - rawFrom) * s) / steps;
+        if (solidAt(u)) {
+          if (Number.isNaN(runFrom)) runFrom = u;
+          runTo = u;
+        } else if (!Number.isNaN(runFrom)) {
+          if (Number.isNaN(from) || runTo - runFrom > to - from) { from = runFrom; to = runTo; }
+          runFrom = NaN;
+          runTo = NaN;
+        }
+      }
+      if (!Number.isNaN(runFrom) && (Number.isNaN(from) || runTo - runFrom > to - from)) {
+        from = runFrom;
+        to = runTo;
+      }
+      if (Number.isNaN(from) || to - from < Math.max(20, a.len * 0.02)) continue;
+
+      /* Проби йдуть кроком, тому межа поля знаходиться з точністю кроку —
+         на метровій стороні це сантиметр, і поле візуально «не доходить» до
+         краю вирізу. Уточнюємо обидві межі діленням навпіл: 24 ітерації дають
+         частку мікрона, а коштують нічого — це той самий `solidAt`. */
+      const step = (rawTo - rawFrom) / steps;
+      const refine = (solid: number, empty: number) => {
+        let lo = solid;
+        let hi = empty;
+        for (let i = 0; i < 24; i++) {
+          const m = (lo + hi) / 2;
+          if (solidAt(m)) lo = m; else hi = m;
+        }
+        return lo;
+      };
+      if (from - step > rawFrom) from = refine(from, from - step);
+      else from = rawFrom;
+      if (to + step < rawTo) to = refine(to, to + step);
+      else to = rawTo;
+
+      const mid = (from + to) / 2;
+      const pad = Math.min(a.len * 0.03, (to - from) / 6, depth / 6);
+      const q1 = { x: a.side.v1.x + a.dir.x * (from + pad), y: a.side.v1.y + a.dir.y * (from + pad) };
+      const q2 = { x: a.side.v1.x + a.dir.x * (to - pad), y: a.side.v1.y + a.dir.y * (to - pad) };
+      const near = pad;
+      const far = depth - pad;
+
+      out.push({
+        sideId: a.side.id,
+        otherId: b.side.id,
+        axis: jointAxisForSide(a.side),
+        from,
+        to,
+        mid,
+        at: { x: a.side.v1.x + a.dir.x * mid, y: a.side.v1.y + a.dir.y * mid },
+        dir: a.dir,
+        normal: a.normal,
+        depth,
+        zone: [
+          { x: q1.x - a.normal.x * near, y: q1.y - a.normal.y * near },
+          { x: q2.x - a.normal.x * near, y: q2.y - a.normal.y * near },
+          { x: q2.x - a.normal.x * far, y: q2.y - a.normal.y * far },
+          { x: q1.x - a.normal.x * far, y: q1.y - a.normal.y * far },
+        ],
+        box: (() => {
+          const p1 = { x: a.side.v1.x + a.dir.x * from, y: a.side.v1.y + a.dir.y * from };
+          const p2 = { x: a.side.v1.x + a.dir.x * to, y: a.side.v1.y + a.dir.y * to };
+          const p3 = { x: p2.x - a.normal.x * depth, y: p2.y - a.normal.y * depth };
+          const p4 = { x: p1.x - a.normal.x * depth, y: p1.y - a.normal.y * depth };
+          const xs = [p1.x, p2.x, p3.x, p4.x];
+          const ys = [p1.y, p2.y, p3.y, p4.y];
+          return {
+            minX: Math.min(...xs), maxX: Math.max(...xs),
+            minY: Math.min(...ys), maxY: Math.max(...ys),
+          };
+        })(),
+      });
+    }
+  }
+
+  return out;
+}
+
+
+/**
+ * СТОРОНА-ЛІНІЙКА В МЕЖАХ ПОЛЯ (№143, 08.09.2026).
+ *
+ * Власник: «не зрозуміло, від якої сторони відступ». Причина була в тому, що
+ * `referenceSideForJoint` шукала найближчу паралельну сторону по всій деталі,
+ * не дивлячись, чи вона взагалі є в цьому полі. У П-подібної низ лівої ноги
+ * (G) і низ правої (C) лежать на одній висоті — і для стику в ЛІВІЙ нозі
+ * лінійкою оголошувалась C, сторона з іншого виступа. Число було правильне,
+ * а підпис — брехливий.
+ *
+ * Тут сторона-лінійка шукається ТІЛЬКИ серед тих, що обмежують саме це поле:
+ * паралельна лінії різу і перетинається з габаритом поля впоперек.
+ */
+export function referenceSideInField(
+  sides: JointSideSegment[],
+  axis: 'vertical' | 'horizontal',
+  anchorPoint: Point | undefined,
+  box: { minX: number; maxX: number; minY: number; maxY: number },
+): { id: string; position: number } | undefined {
+  if (!anchorPoint) return undefined;
+  const eps = 1;
+
+  let best: { id: string; position: number; distance: number } | undefined;
+  for (const side of sides) {
+    // Лінійка ПАРАЛЕЛЬНА різу: з неї вийшов би стик іншої осі.
+    if (jointAxisForSide(side) === axis) continue;
+
+    const lo = axis === 'horizontal'
+      ? Math.min(side.v1.x, side.v2.x)
+      : Math.min(side.v1.y, side.v2.y);
+    const hi = axis === 'horizontal'
+      ? Math.max(side.v1.x, side.v2.x)
+      : Math.max(side.v1.y, side.v2.y);
+    const fieldLo = axis === 'horizontal' ? box.minX : box.minY;
+    const fieldHi = axis === 'horizontal' ? box.maxX : box.maxY;
+    // Сторона з іншого виступа поле не обмежує — вона тут не лінійка.
+    if (hi < fieldLo - eps || lo > fieldHi + eps) continue;
+
+    const position = axis === 'horizontal'
+      ? (side.v1.y + side.v2.y) / 2
+      : (side.v1.x + side.v2.x) / 2;
+    const distance = axis === 'horizontal'
+      ? Math.abs(position - anchorPoint.y)
+      : Math.abs(position - anchorPoint.x);
+    if (!best || distance < best.distance) best = { id: side.id, position, distance };
+  }
+  return best ? { id: best.id, position: best.position } : undefined;
 }

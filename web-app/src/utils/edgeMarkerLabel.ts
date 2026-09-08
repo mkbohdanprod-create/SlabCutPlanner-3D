@@ -24,7 +24,15 @@ export type EdgeMarkerLabel = {
 const CORNER_SEGMENT = /^(.+?)_(chamfer|lcut1|lcut2|radius)$/;
 const UNNAMED = /^(close|start|edge-\d+)$/;
 
-export function edgeMarkerLabel(id: string): EdgeMarkerLabel {
+/**
+ * `sideLabels` (Б-002, 07.09.2026) — показувані імена ребер Г-зарізу з
+ * `domain/sideNaming.lcutEdgeLabels` (`CD_lcut1` → «D1»). З ними таке
+ * ребро підписується як повноцінна сторона — великим шрифтом, власним
+ * ім'ям, — а не дрібною літерою кута, що дублювала сусідню сторону.
+ */
+export function edgeMarkerLabel(id: string, sideLabels?: Record<string, string>): EdgeMarkerLabel {
+  const named = sideLabels?.[id];
+  if (named) return { text: named, isCornerSegment: false };
   const segment = CORNER_SEGMENT.exec(id);
   if (segment) {
     const base = segment[1];

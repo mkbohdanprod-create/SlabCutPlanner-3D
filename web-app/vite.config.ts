@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -13,6 +15,33 @@ export default defineConfig({
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           if (req.url && req.url.endsWith('.usdz')) res.setHeader('Content-Type', 'model/vnd.usdz+zip');
+          next();
+        });
+      },
+    },
+    /*
+     * СТАТИКА З public/ ЗА АДРЕСОЮ ТЕКИ (07.09.2026, №128).
+     * Симптом: у dev `localhost:5173/lab/` показував… VS3D. Не краш, не
+     * помилка в консолі — просто інша сторінка, тому й «вилітає назад у
+     * Студію». Причина: dev-сервер Vite віддає public/ через `sirv` з
+     * `extensions: []`, і запит на ТЕКУ (`/lab/`) не перетворюється на
+     * `/lab/index.html`; далі спрацьовує SPA-fallback і повертає index.html
+     * самого застосунку. У бою (Vercel) теки віддаються правильно, тому
+     * баг видно тільки локально. Дописуємо те, чого бракує: якщо адреса
+     * закінчується на «/» і в public/ лежить index.html — віддаємо його.
+     */
+    {
+      name: 'public-dir-index',
+      configureServer(server) {
+        const publicDir = server.config.publicDir;
+        server.middlewares.use((req, _res, next) => {
+          const url = req.url?.split('?')[0] ?? '';
+          if (publicDir && url.length > 1 && url.endsWith('/')) {
+            const file = path.join(publicDir, url, 'index.html');
+            if (file.startsWith(publicDir) && fs.existsSync(file)) {
+              req.url = url + 'index.html' + (req.url!.includes('?') ? '?' + req.url!.split('?')[1] : '');
+            }
+          }
           next();
         });
       },

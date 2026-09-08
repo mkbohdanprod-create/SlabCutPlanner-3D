@@ -9,6 +9,7 @@ import { translateStaticUiText } from '../../i18n';
 import type { DetailDraft, ShapeKind } from '../forms/utils/draftHelpers';
 import { parseAdditionSlot, buildElementPath, toSlot, EDGE_KIND_LABEL } from '../../domain/ids';
 import { occupiedEdgeSides } from '../../domain/edgeOccupancy';
+import { lcutEdgeLabels } from '../../domain/sideNaming';
 import { clickEdgeSideLetter } from '../../store/useEdgeSourceSide';
 import { jointAnchorPoints, manualJointPosition, reflexCornerIds, setShapeJoint } from '../../domain/joints';
 import type { JointShapeFields, JointSideSelection } from '../../domain/joints';
@@ -686,6 +687,11 @@ export function ProductEditorWorkspace() {
     if (!session.mainDetail) return undefined;
     const product = buildProductFromSession(session, session.editingProductId || 'preview', session.material ?? project.projectMaterial);
     for (const el of product.elements) {
+      /* №144: Нога і Стінова панель за §3 — САМОСТІЙНІ Елементи виробу
+         (сусіди Стільниці), а не доповнення. Пошук дивився тільки в
+         additions — тому подвійний клік по панелі «не знаходив» чернетку і
+         відкривав стару маленьку модалку замість великого вікна (№134). */
+      if (toSlot(el.id) === slotId) return el.baseDefinition as DetailDraft;
       for (const add of el.additions) {
         if (toSlot(add.id) === slotId) return add.baseDefinition as DetailDraft;
       }
@@ -710,6 +716,40 @@ export function ProductEditorWorkspace() {
   const isMetalDetail = detail?.kind === 'metal_profile';
 
   /*
+   * РЕБРА Г-ЗАРІЗУ — ПОВНОЦІННІ СТОРОНИ (Б-002, 07.09.2026, рішення
+   * власника). Ключ у даних — `CD_lcut1/2` (як у 3D-контурі й слотах
+   * доповнень), показуване ім'я — «D1»/«C1» (літера паралельної сторони
+   * + номер). Список сторін для панелей доповнюється цими ребрами, а
+   * підпис скрізь іде через `lcutSideLabels`.
+   */
+  const lcutSideLabels = React.useMemo(
+    () => lcutEdgeLabels(detail?.corners, detail?.kind),
+    [detail?.corners, detail?.kind],
+  );
+  const lcutSides = React.useMemo(() => Object.keys(lcutSideLabels), [lcutSideLabels]);
+  /** Вплести ребра зарізу одразу ПІСЛЯ їхньої батьківської сторони (C → C1, C2…), а не хвостом списку. */
+  const weaveLcuts = React.useCallback((base: string[], lcuts: string[]) => {
+    const byParent = new Map<string, string[]>();
+    for (const side of lcuts) {
+      const parent = (lcutSideLabels[side] ?? side).replace(/\d+$/, '');
+      if (!byParent.has(parent)) byParent.set(parent, []);
+      byParent.get(parent)!.push(side);
+    }
+    const out: string[] = [];
+    for (const side of base) {
+      out.push(side);
+      const kids = byParent.get(side);
+      if (kids) {
+        kids.sort((a, b) => (lcutSideLabels[a] ?? a).localeCompare(lcutSideLabels[b] ?? b, undefined, { numeric: true }));
+        out.push(...kids);
+        byParent.delete(side);
+      }
+    }
+    for (const kids of byParent.values()) out.push(...kids);
+    return out;
+  }, [lcutSideLabels]);
+
+  /*
    * Сторони активної деталі, закриті доповненням, що звисає з ребра
    * (нога, потовщення, підворот) — у панелі кромок форму туди не обрати,
    * у 3D літера бліда (власник 01.09). Рахується для головної деталі
@@ -719,7 +759,8 @@ export function ProductEditorWorkspace() {
     subDetails: session.subDetails,
     ownerSlot: isMainActive ? undefined : session.activeDetailId ?? undefined,
     legacy: isMainActive && detail ? { fold: detail.fold, thickening: detail.thickening } : null,
-  }), [session.subDetails, session.activeDetailId, isMainActive, detail]);
+    sideLabels: lcutSideLabels,
+  }), [session.subDetails, session.activeDetailId, isMainActive, detail, lcutSideLabels]);
 
   const updateDetail = (patch: Partial<DetailDraft>) => {
     if (!detail) return;
@@ -887,6 +928,10 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     axis: 'vertical' | 'horizontal';
     anchorCorner?: string;
     offset?: number;
+    /** Пара сторін, між якими стоїть стик (№141–142) — робить різ адресним. */
+    sideId?: string;
+    oppositeSideId?: string;
+    referenceSideId?: string;
   }) => {
     if (!detail) return;
     const joints = detail.manualJoints ?? [];
@@ -903,9 +948,15 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
      * Тепер новий стик стає ПОРУЧ із зайнятим місцем, а не поверх нього.
      */
     const step = joint.axis === 'vertical' ? 600 : 400;
+    /* №142: «те саме місце» — це та сама лінія В ТОМУ САМОМУ полі. Два стики
+       на одній висоті, але в різних виступах П-подібної (H↔F і D↔B) — два
+       різні шви, і зсувати другий на крок не можна. */
+    const fieldKey = (a: { sideId?: string; oppositeSideId?: string }) =>
+      a.sideId && a.oppositeSideId ? [a.sideId, a.oppositeSideId].sort().join('|') : '';
     const sameLine = (a: ManualJoint, offset: number) =>
       a.axis === joint.axis
       && (a.anchorCorner ?? '') === (joint.anchorCorner ?? '')
+      && fieldKey(a) === fieldKey(joint)
       && Math.abs(a.offset - offset) < 1;
 
     let offset = joint.offset ?? step;
@@ -921,6 +972,9 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           axis: joint.axis,
           anchorCorner: joint.anchorCorner,
           offset,
+          sideId: joint.sideId,
+          oppositeSideId: joint.oppositeSideId,
+          referenceSideId: joint.referenceSideId,
         },
       ],
     });
@@ -957,6 +1011,285 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
       apply: (edgeProfiles) => updateDetail({ edgeProfiles }),
     });
   };
+
+  /* №134: панелі властивостей деталі оголошені один раз і рендеряться
+     у двох місцях — у правій колонці редактора виробу (як було) і в
+     секціях 2–5 вікна «Налаштування розмірів та торців» (задум власника
+     08.09: усе редагування деталі — в одному вікні). Це той самий JSX,
+     той самий стан і той самий updateDetail — не копія. */
+  /* detail? — щоб TS звузив тип усередині панелей так само, як він робив
+     це на старому місці всередині гілки з перевіркою. */
+  const detailPanels = detail ? {
+    edges: (
+      <>
+                  <Accordion title="Кромки (Обробка торців)" info="edges">
+                    <EdgeProfilesPanel
+                      edgeProfiles={detail.edgeProfiles}
+                      /* Матеріал виробу (01.09) — від нього порядок груп у випадачці кромок */
+                      material={session.material ?? project.projectMaterial}
+                      sides={(() => {
+                        /* Ребра Г-зарізу (Б-002) — повноцінні рядки панелі
+                           кромок, одразу після своїх сторін за канонічним
+                           порядком кутів. */
+                        const lens = realEdgeLengths(detail);
+                        const known = Object.keys(lens).length > 0;
+                        const lcuts = lcutSides.filter((side) => !known || (lens[side] ?? 0) > 0.5);
+                        return weaveLcuts(sideOptionsFor(detail.kind, detail), lcuts);
+                      })()}
+                      sideLabels={lcutSideLabels}
+                      /* Реальні довжини ребер (радіус і Г-заріз укорочують
+                         сторону) — щоб «Довільна» затискалась по факту, а
+                         «Факт. розмір» показував правду. */
+                      sideLengths={realEdgeLengths(detail)}
+                      /* Сторони, закриті ногою/потовщенням/підворотом — форму не обрати (01.09) */
+                      occupiedSides={occupiedSides}
+                      scope={session.activeDetailId ?? 'main'}
+                      onChange={(edgeProfiles) => updateDetail({ edgeProfiles })}
+                    />
+                  </Accordion>
+      </>
+    ),
+    corners: (
+      <>
+          <Accordion title="Обробка кутів (Радіуси)">
+            <div className="p-4 flex flex-col gap-2">
+              {detail.corners && Object.keys(detail.corners).length > 0 ? (
+                Object.entries(detail.corners).map(([cornerId, corner]) => (
+                  <div key={cornerId} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
+                    <div className="flex flex-col">
+                      <span className="font-bold text-[#1f2d3a] text-sm">Кут {cornerDisplayName(cornerId, detail.kind)}</span>
+                      <span className="text-xs text-slate-500">
+                        {corner.type === 'radius' && `Радіус: ${corner.radius} мм`}
+                        {corner.type === 'chamfer' && `Фаска: ${corner.sizeB}x${corner.sizeC} мм`}
+                        {corner.type === 'l-cut' && `Г-виріз: ${corner.sizeB}x${corner.sizeC} мм`}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => setModalCornerId(cornerId)}
+                        className="text-[#0084ff] hover:bg-[#0084ff]/10 px-2 py-1 rounded-sm text-xs font-medium transition-colors"
+                      >
+                        Редагувати
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteCorner(cornerId)}
+                        className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
+                        title="Видалити"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-slate-500 text-center py-4">
+                  Щоб налаштувати кут, клікніть на плюсик (+) у 2D або правим кліком на кут у 3D моделі.
+                </div>
+              )}
+            </div>
+          </Accordion>
+      </>
+    ),
+    cutouts: (
+      <>
+          <Accordion title="Обробка площин (Вирізи)">
+            <div className="p-4 flex flex-col gap-2">
+              {detail.cutouts && Object.keys(detail.cutouts).length > 0 ? (
+                Object.entries(detail.cutouts).map(([cutoutId, cutout]) => (
+                  <div key={cutoutId} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
+                    <div className="flex flex-col">
+                      <span className="font-bold text-[#1f2d3a] text-sm">Виріз {cutout.type === 'socket' ? '(Розетка)' : cutout.type === 'faucet' ? '(Кран)' : '(Довільний)'}</span>
+                      <span className="text-xs text-slate-500">
+                        {cutout.shape === 'circle' ? `Радіус: ${cutout.radius} мм` : `Розмір: ${cutout.width}x${cutout.height} мм`}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => setModalCutoutId(cutoutId)}
+                        className="text-[#0084ff] hover:bg-[#0084ff]/10 px-2 py-1 rounded-sm text-xs font-medium transition-colors"
+                      >
+                        Редагувати
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteCutout(cutoutId)}
+                        className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
+                        title="Видалити"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-slate-500 text-center py-4">
+                  Немає вирізів. Створіть їх через праве меню на поверхні.
+                </div>
+              )}
+            </div>
+          </Accordion>
+      </>
+    ),
+    millings: (
+      <>
+          <Accordion title="Фрезерування площини (Проточки для води)">
+            <SurfaceGroovesPanel
+              groups={detail.surfaceGrooves}
+              partWidthMm={realEdgeLengths(detail).A || detail.width || 1000}
+              partHeightMm={realEdgeLengths(detail).B || detail.height || 600}
+              thicknessMm={detail.thickness || 20}
+              material={useProjectStore.getState().project.slabs?.[0]?.material}
+              onChange={(surfaceGrooves) => updateDetail({ surfaceGrooves })}
+            />
+          </Accordion>
+      </>
+    ),
+    joints: (
+      <>
+          <Accordion title="Стики (З'єднання деталей)">
+            <div className="p-4 flex flex-col gap-2">
+              {/* Кому дістається дуга, коли стик стоїть у куті з радіусом.
+                  Поля `jointOmegaRadiusSide` / `jointLambdaRadiusSide` давно
+                  працювали в рушії, але кнопок не було — діяв мовчазний `second`.
+                  Показуємо перемикач ЛИШЕ коли питання справді стоїть: форма
+                  П-подібна (тільки для неї рушій ці поля читає), на увігнутому
+                  куті справді радіус, і на цьому куті справді заданий стик. */}
+              {detail.kind === 'u' && (() => {
+                const reflexIds = reflexCornerIds(toDetailShape(detail.kind), Boolean((detail as { mirrorL?: boolean }).mirrorL));
+                const rows = [
+                  {
+                    cornerId: 'E',
+                    title: 'Стик у куті E (омега)',
+                    direction: detail.jointOmegaDirection,
+                    value: detail.jointOmegaRadiusSide ?? 'second',
+                    apply: (side: 'first' | 'second') => updateDetail({ jointOmegaRadiusSide: side }),
+                  },
+                  {
+                    cornerId: 'D',
+                    title: 'Стик у куті D (лямбда)',
+                    direction: detail.jointLambdaDirection,
+                    value: detail.jointLambdaRadiusSide ?? 'second',
+                    apply: (side: 'first' | 'second') => updateDetail({ jointLambdaRadiusSide: side }),
+                  },
+                ].filter((row) => {
+                  const corner = detail.corners?.[row.cornerId];
+                  return (
+                    reflexIds.includes(row.cornerId) &&
+                    corner?.type === 'radius' &&
+                    (corner.radius ?? 0) > 0 &&
+                    !!row.direction
+                  );
+                });
+
+                if (!rows.length) return null;
+
+                return (
+                  <div className="p-2 bg-amber-50/60 border border-amber-200 rounded-sm flex flex-col gap-2">
+                    <span className="font-bold text-[#1f2d3a] text-sm">Кому дістається радіус</span>
+                    <p className="text-xs text-slate-500">
+                      Вести стик по дузі не можна — деталь звузилась би там у нуль. Дуга
+                      лишається цілою на одній деталі; оберіть, на якій.
+                    </p>
+                    {rows.map((row) => {
+                      const isVertical = row.direction === 'vertical';
+                      return (
+                        <div key={row.cornerId} className="flex flex-col gap-1">
+                          <span className="text-xs text-slate-600">{row.title}</span>
+                          <div className="flex gap-1">
+                            {(['first', 'second'] as const).map((side) => (
+                              <button
+                                key={side}
+                                onClick={() => row.apply(side)}
+                                className={`flex-1 px-2 py-1 text-xs rounded-sm border transition-colors ${
+                                  row.value === side
+                                    ? 'bg-[#0084ff] text-white border-[#0084ff] font-bold'
+                                    : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                                }`}
+                              >
+                                {side === 'first'
+                                  ? isVertical ? 'Лишити лівій' : 'Лишити нижній'
+                                  : isVertical ? 'Передати правій' : 'Передати верхній'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {(detail.manualJoints ?? []).map((joint) => {
+                const snapped = snapJointPreview(detail, joint);
+                return (
+                  <div key={joint.id} className="p-2 bg-slate-50 border border-slate-200 rounded-sm flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-[#1f2d3a] text-sm">
+                        {joint.axis === 'vertical' ? 'Вертикальний стик' : 'Горизонтальний стик'}
+                      </span>
+                      <button
+                        onClick={() => handleDeleteManualJoint(joint.id)}
+                        className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
+                        title="Видалити"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={joint.anchorCorner ?? ''}
+                        onChange={(e) => handleUpdateManualJoint(joint.id, { anchorCorner: e.target.value || undefined })}
+                        className="flex-1 px-2 py-1 text-xs border border-slate-300 rounded-sm bg-white"
+                      >
+                        <option value="">Від краю деталі</option>
+                        {jointAnchorOptions.map((id) => (
+                          <option key={id} value={id}>Від кута {id}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        value={joint.offset}
+                        onChange={(e) => handleUpdateManualJoint(joint.id, { offset: Number(e.target.value) || 0 })}
+                        className="w-24 px-2 py-1 text-xs border border-slate-300 rounded-sm"
+                      />
+                      <span className="text-xs text-slate-500">мм</span>
+                    </div>
+
+                    {snapped !== null && (
+                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5">
+                        Стик буде посунуто на <b>{Math.round(snapped)} мм</b>: на заданій відстані він
+                        потрапляє на радіус, деталь звузилась би там у нуль і вістря лопнуло б при різі.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => handleAddManualJoint({ axis: 'vertical' })}
+                  className="flex-1 px-3 py-1.5 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
+                >
+                  + Вертикальний
+                </button>
+                <button
+                  onClick={() => handleAddManualJoint({ axis: 'horizontal' })}
+                  className="flex-1 px-3 py-1.5 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
+                >
+                  + Горизонтальний
+                </button>
+              </div>
+
+              {!(detail.manualJoints ?? []).length && (
+                <div className="text-xs text-slate-500 text-center pt-1">
+                  Стик на довільній відстані — коли деталь більша за сляб або ріжемо із залишку.
+                </div>
+              )}
+            </div>
+          </Accordion>
+      </>
+    ),
+  } : { edges: null, corners: null, cutouts: null, millings: null, joints: null };
 
   return (
     <div className="product-editor absolute inset-0 bg-[#eaf0f4] z-50 flex flex-col shadow-lg overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -1038,6 +1371,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                 onCutoutDoubleClick={(cutoutId) => setModalCutoutId(cutoutId)}
                 onJointClick={(id, x, y) => setJointContextMenu({ id, x, y })}
                 onJointSideClick={(joint, x, y) => setJointSidePopup({ joint, x, y })}
+                jointRulerSide={jointSidePopup?.joint.referenceSideId ?? null}
                 /* Виріз має лягти на ту деталь, по площині якої клікнули,
                    а не на активну — інакше виріз для панелі потрапляє на стільницю. */
                 onPlaneClick={(clickedId) => {
@@ -1047,9 +1381,33 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   }
                   setModalCutoutId('new');
                 }}
-                onLegDoubleClick={(slot) => setLegModalOpen({ edgeId: parseAdditionSlot(slot).sideId, slot })}
-                onWallPanelDoubleClick={(slot) => setWallPanelModalOpen({ edgeId: parseAdditionSlot(slot).sideId, slot })}
-                onDetailDoubleClick={(id) => setSettingsModalOpen(true)}
+                /* №134 (вимога власника 08.09): подвійний клік по БУДЬ-ЯКІЙ деталі
+                   виробу веде в те саме вікно налаштувань, що й основна деталь —
+                   з п'ятьма секціями праворуч. Маленькі діалоги «Ширина/Висота/
+                   Відступ» лишаються запасним шляхом: якщо для цього слота ще
+                   немає готового креслення (деталь не згенерована), відкриваємо
+                   старий діалог, щоб клік не провалювався в порожнечу. */
+                onLegDoubleClick={(slot) => {
+                  if (findGeneratedDraft(slot)) {
+                    setSession({ ...session, activeDetailId: slot });
+                    setSettingsModalOpen(true);
+                  } else {
+                    setLegModalOpen({ edgeId: parseAdditionSlot(slot).sideId, slot });
+                  }
+                }}
+                onWallPanelDoubleClick={(slot) => {
+                  if (findGeneratedDraft(slot)) {
+                    setSession({ ...session, activeDetailId: slot });
+                    setSettingsModalOpen(true);
+                  } else {
+                    setWallPanelModalOpen({ edgeId: parseAdditionSlot(slot).sideId, slot });
+                  }
+                }}
+                onDetailDoubleClick={(id) => {
+                  const slot = toSlot(id);
+                  if (slot !== session.activeDetailId) setSession({ ...session, activeDetailId: slot });
+                  setSettingsModalOpen(true);
+                }}
                 onDetailClick={(id) => setSession({ ...session, activeDetailId: toSlot(id) })}
                 onDetailContextMenu={handleDetailContextMenu}
               />
@@ -1100,6 +1458,11 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                     axis: jointSidePopup.joint.axis,
                     anchorCorner: jointSidePopup.joint.anchorCorner,
                     offset,
+                    /* Пара сторін їде в дані: рушій ріже саме те поле, у якому
+                       стик поставили, а не все, крізь що проходить пряма (№141). */
+                    sideId: jointSidePopup.joint.sideId,
+                    oppositeSideId: jointSidePopup.joint.oppositeSideId,
+                    referenceSideId: jointSidePopup.joint.referenceSideId,
                   });
                   setJointSidePopup(null);
                 }}
@@ -1202,6 +1565,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                 x={edgeContextMenu.x}
                 y={edgeContextMenu.y}
                 edgeId={edgeContextMenu.edgeId}
+                edgeLabel={lcutSideLabels[edgeContextMenu.edgeId]}
                 onClose={() => setEdgeContextMenu(null)}
                 onSelectProfile={(profile) => {
                   setEdgeContextMenu(null);
@@ -1944,8 +2308,12 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                         const arcs = Object.entries(detail.corners ?? {})
                           .filter(([, corner]) => corner?.type === 'radius' && (corner.radius ?? 0) > 0 && !corner.reflex)
                           .map(([cornerId]) => `${cornerId}_radius`);
-                        return [...straight, ...arcs];
+                        // Ребра Г-зарізу (Б-002) — теж сторони: нога чи
+                        // бортик на них вішається так само, як на дугу.
+                        const lcuts = lcutSides.filter((side) => !known || (lens[side] ?? 0) > 0.5);
+                        return weaveLcuts([...straight, ...arcs], lcuts);
                       })()}
+                      sideLabels={lcutSideLabels}
                       ownerSlot={isMainActive ? undefined : session.activeDetailId!}
                       onAdd={(kind, sideId) => {
                         if (kind === 'skirting') setSkirtingModalOpen({ edgeId: sideId });
@@ -2005,261 +2373,26 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                       }}
                     />
                   </Accordion>
-                  <Accordion title="Кромки (Обробка торців)" info="edges">
-                    <EdgeProfilesPanel
-                      edgeProfiles={detail.edgeProfiles}
-                      /* Матеріал виробу (01.09) — від нього порядок груп у випадачці кромок */
-                      material={session.material ?? project.projectMaterial}
-                      sides={sideOptionsFor(detail.kind, detail)}
-                      /* Реальні довжини ребер (радіус і Г-заріз укорочують
-                         сторону) — щоб «Довільна» затискалась по факту, а
-                         «Факт. розмір» показував правду. */
-                      sideLengths={realEdgeLengths(detail)}
-                      /* Сторони, закриті ногою/потовщенням/підворотом — форму не обрати (01.09) */
-                      occupiedSides={occupiedSides}
-                      scope={session.activeDetailId ?? 'main'}
-                      onChange={(edgeProfiles) => updateDetail({ edgeProfiles })}
-                    />
-                  </Accordion>
+                  {detailPanels.edges}
                 </div>
               )}
 
           {/* Кути й вирізи існують на плоскій деталі; у мийки й металопрокату їх нема */}
           {!isSinkDetail && !isMetalDetail && (
           <>
-          <Accordion title="Обробка кутів (Радіуси)">
-            <div className="p-4 flex flex-col gap-2">
-              {detail.corners && Object.keys(detail.corners).length > 0 ? (
-                Object.entries(detail.corners).map(([cornerId, corner]) => (
-                  <div key={cornerId} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
-                    <div className="flex flex-col">
-                      <span className="font-bold text-[#1f2d3a] text-sm">Кут {cornerDisplayName(cornerId, detail.kind)}</span>
-                      <span className="text-xs text-slate-500">
-                        {corner.type === 'radius' && `Радіус: ${corner.radius} мм`}
-                        {corner.type === 'chamfer' && `Фаска: ${corner.sizeB}x${corner.sizeC} мм`}
-                        {corner.type === 'l-cut' && `Г-виріз: ${corner.sizeB}x${corner.sizeC} мм`}
-                      </span>
-                    </div>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => setModalCornerId(cornerId)}
-                        className="text-[#0084ff] hover:bg-[#0084ff]/10 px-2 py-1 rounded-sm text-xs font-medium transition-colors"
-                      >
-                        Редагувати
-                      </button>
-                      <button 
-                        onClick={() => handleDeleteCorner(cornerId)}
-                        className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
-                        title="Видалити"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-slate-500 text-center py-4">
-                  Щоб налаштувати кут, клікніть на плюсик (+) у 2D або правим кліком на кут у 3D моделі.
-                </div>
-              )}
-            </div>
-          </Accordion>
+          {detailPanels.corners}
 
-          <Accordion title="Обробка площин (Вирізи)">
-            <div className="p-4 flex flex-col gap-2">
-              {detail.cutouts && Object.keys(detail.cutouts).length > 0 ? (
-                Object.entries(detail.cutouts).map(([cutoutId, cutout]) => (
-                  <div key={cutoutId} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
-                    <div className="flex flex-col">
-                      <span className="font-bold text-[#1f2d3a] text-sm">Виріз {cutout.type === 'socket' ? '(Розетка)' : cutout.type === 'faucet' ? '(Кран)' : '(Довільний)'}</span>
-                      <span className="text-xs text-slate-500">
-                        {cutout.shape === 'circle' ? `Радіус: ${cutout.radius} мм` : `Розмір: ${cutout.width}x${cutout.height} мм`}
-                      </span>
-                    </div>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => setModalCutoutId(cutoutId)}
-                        className="text-[#0084ff] hover:bg-[#0084ff]/10 px-2 py-1 rounded-sm text-xs font-medium transition-colors"
-                      >
-                        Редагувати
-                      </button>
-                      <button 
-                        onClick={() => handleDeleteCutout(cutoutId)}
-                        className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
-                        title="Видалити"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-slate-500 text-center py-4">
-                  Немає вирізів. Створіть їх через праве меню на поверхні.
-                </div>
-              )}
-            </div>
-          </Accordion>
+          {detailPanels.cutouts}
 
           {/* Фрезерування площини НЕ на всю товщину (28.08): проточки для
               стікання води біля врізної мийки, декоративні канавки фасаду.
               Стоїть поруч із вирізами свідомо: та сама площина деталі,
               різниця лише в тому, що виріз наскрізний, а канавка — ні. */}
-          <Accordion title="Фрезерування площини (Проточки для води)">
-            <SurfaceGroovesPanel
-              groups={detail.surfaceGrooves}
-              partWidthMm={realEdgeLengths(detail).A || detail.width || 1000}
-              partHeightMm={realEdgeLengths(detail).B || detail.height || 600}
-              thicknessMm={detail.thickness || 20}
-              material={useProjectStore.getState().project.slabs?.[0]?.material}
-              onChange={(surfaceGrooves) => updateDetail({ surfaceGrooves })}
-            />
-          </Accordion>
+          {detailPanels.millings}
           </>
           )}
 
-          <Accordion title="Стики (З'єднання деталей)">
-            <div className="p-4 flex flex-col gap-2">
-              {/* Кому дістається дуга, коли стик стоїть у куті з радіусом.
-                  Поля `jointOmegaRadiusSide` / `jointLambdaRadiusSide` давно
-                  працювали в рушії, але кнопок не було — діяв мовчазний `second`.
-                  Показуємо перемикач ЛИШЕ коли питання справді стоїть: форма
-                  П-подібна (тільки для неї рушій ці поля читає), на увігнутому
-                  куті справді радіус, і на цьому куті справді заданий стик. */}
-              {detail.kind === 'u' && (() => {
-                const reflexIds = reflexCornerIds(toDetailShape(detail.kind), Boolean((detail as { mirrorL?: boolean }).mirrorL));
-                const rows = [
-                  {
-                    cornerId: 'E',
-                    title: 'Стик у куті E (омега)',
-                    direction: detail.jointOmegaDirection,
-                    value: detail.jointOmegaRadiusSide ?? 'second',
-                    apply: (side: 'first' | 'second') => updateDetail({ jointOmegaRadiusSide: side }),
-                  },
-                  {
-                    cornerId: 'D',
-                    title: 'Стик у куті D (лямбда)',
-                    direction: detail.jointLambdaDirection,
-                    value: detail.jointLambdaRadiusSide ?? 'second',
-                    apply: (side: 'first' | 'second') => updateDetail({ jointLambdaRadiusSide: side }),
-                  },
-                ].filter((row) => {
-                  const corner = detail.corners?.[row.cornerId];
-                  return (
-                    reflexIds.includes(row.cornerId) &&
-                    corner?.type === 'radius' &&
-                    (corner.radius ?? 0) > 0 &&
-                    !!row.direction
-                  );
-                });
-
-                if (!rows.length) return null;
-
-                return (
-                  <div className="p-2 bg-amber-50/60 border border-amber-200 rounded-sm flex flex-col gap-2">
-                    <span className="font-bold text-[#1f2d3a] text-sm">Кому дістається радіус</span>
-                    <p className="text-xs text-slate-500">
-                      Вести стик по дузі не можна — деталь звузилась би там у нуль. Дуга
-                      лишається цілою на одній деталі; оберіть, на якій.
-                    </p>
-                    {rows.map((row) => {
-                      const isVertical = row.direction === 'vertical';
-                      return (
-                        <div key={row.cornerId} className="flex flex-col gap-1">
-                          <span className="text-xs text-slate-600">{row.title}</span>
-                          <div className="flex gap-1">
-                            {(['first', 'second'] as const).map((side) => (
-                              <button
-                                key={side}
-                                onClick={() => row.apply(side)}
-                                className={`flex-1 px-2 py-1 text-xs rounded-sm border transition-colors ${
-                                  row.value === side
-                                    ? 'bg-[#0084ff] text-white border-[#0084ff] font-bold'
-                                    : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-                                }`}
-                              >
-                                {side === 'first'
-                                  ? isVertical ? 'Лишити лівій' : 'Лишити нижній'
-                                  : isVertical ? 'Передати правій' : 'Передати верхній'}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-
-              {(detail.manualJoints ?? []).map((joint) => {
-                const snapped = snapJointPreview(detail, joint);
-                return (
-                  <div key={joint.id} className="p-2 bg-slate-50 border border-slate-200 rounded-sm flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-[#1f2d3a] text-sm">
-                        {joint.axis === 'vertical' ? 'Вертикальний стик' : 'Горизонтальний стик'}
-                      </span>
-                      <button
-                        onClick={() => handleDeleteManualJoint(joint.id)}
-                        className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
-                        title="Видалити"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={joint.anchorCorner ?? ''}
-                        onChange={(e) => handleUpdateManualJoint(joint.id, { anchorCorner: e.target.value || undefined })}
-                        className="flex-1 px-2 py-1 text-xs border border-slate-300 rounded-sm bg-white"
-                      >
-                        <option value="">Від краю деталі</option>
-                        {jointAnchorOptions.map((id) => (
-                          <option key={id} value={id}>Від кута {id}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        value={joint.offset}
-                        onChange={(e) => handleUpdateManualJoint(joint.id, { offset: Number(e.target.value) || 0 })}
-                        className="w-24 px-2 py-1 text-xs border border-slate-300 rounded-sm"
-                      />
-                      <span className="text-xs text-slate-500">мм</span>
-                    </div>
-
-                    {snapped !== null && (
-                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5">
-                        Стик буде посунуто на <b>{Math.round(snapped)} мм</b>: на заданій відстані він
-                        потрапляє на радіус, деталь звузилась би там у нуль і вістря лопнуло б при різі.
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={() => handleAddManualJoint({ axis: 'vertical' })}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
-                >
-                  + Вертикальний
-                </button>
-                <button
-                  onClick={() => handleAddManualJoint({ axis: 'horizontal' })}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
-                >
-                  + Горизонтальний
-                </button>
-              </div>
-
-              {!(detail.manualJoints ?? []).length && (
-                <div className="text-xs text-slate-500 text-center pt-1">
-                  Стик на довільній відстані — коли деталь більша за сляб або ріжемо із залишку.
-                </div>
-              )}
-            </div>
-          </Accordion>
+          {detailPanels.joints}
 
           {isMainActive && !isSinkDetail && !isMetalDetail && (
           <Accordion title="Встановлення мийки в виріб">
@@ -2513,6 +2646,9 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           project={project}
           material={session.material}
           initialDetail={detail}
+          /* №134: ті самі панелі, що в правій колонці редактора — тепер і в
+             секціях вікна. Один стан, один updateDetail, жодної копії. */
+          panels={detailPanels}
           occupiedSides={occupiedSides}
           onClose={() => setSettingsModalOpen(false)}
           onSave={(draft) => {

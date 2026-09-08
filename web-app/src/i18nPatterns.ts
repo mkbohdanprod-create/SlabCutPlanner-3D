@@ -170,6 +170,10 @@ export const staticUiPatterns: UiTextPattern[] = [
   { pattern: "Виріз під розетку {0} мм", en: "Cutout for socket {0} mm", pl: "Wycięcie pod gniazdko {0} mm", guard: 'code' },
   { pattern: "Крайка — {0}", en: "Edging — {0}", pl: "Obrzeże — {0}" },
   { pattern: "Кут {0}", en: "Corner {0}", pl: "Narożnik {0}", guard: 'code' },
+  // Б-002 (07.09.2026): підписи розмірів у вікні кута — літерами реальних
+  // сторін кута, тож рядок став шаблонним (точні «Розмір по B/C» лишаються
+  // в словнику для старих місць).
+  { pattern: "Розмір по {0}", en: "Size along {0}", pl: "Rozmiar wzdłuż {0}", guard: 'code' },
   { pattern: "Потовщення — сторона {0}", en: "Thickening — side {0}", pl: "Pogrubienie — bok {0}", guard: 'code' },
   { pattern: "Підворот — сторона {0}", en: "Fold — side {0}", pl: "Podwinięcie — bok {0}", guard: 'code' },
   { pattern: "Бортик {0}", en: "Upstand {0}", pl: "Rant {0}" },

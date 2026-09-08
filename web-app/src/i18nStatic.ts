@@ -13,6 +13,8 @@
  *
  * Розбито по файлах-джерелах — так видно, який екран лишився без мови.
  */
+import { measureUiText } from './constructor/measure/i18n.measure';
+
 export const staticUiText: Record<string, { en: string; pl: string }> = {
   // ─── Базовий словник (складався по ходу розробки) ───
   'Перемістити': { en: 'Move', pl: 'Przenieś' },
@@ -2056,4 +2058,6 @@ export const staticUiText: Record<string, { en: string; pl: string }> = {
   "План приміщення": { en: "Room plan", pl: "Plan pomieszczenia" },
   "Поверхні та розкладки": { en: "Surfaces and layouts", pl: "Powierzchnie i układy" },
   "Відкрити 2D Розкрій": { en: "Open 2D Cutting", pl: "Otwórz Rozkrój 2D" },
+  // ─── Конструктор · вкладка «Замір» під 3D (07.09.2026, №126) — окремий файл ───
+  ...measureUiText,
 };

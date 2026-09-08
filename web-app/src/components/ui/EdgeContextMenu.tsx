@@ -11,12 +11,14 @@ interface Props {
   x: number;
   y: number;
   edgeId: string;
+  /** Показуване ім'я ребра (Б-002): для `CD_lcut1` — «D1». Немає — показуємо id. */
+  edgeLabel?: string;
   onClose: () => void;
   onSelect: (action: 'thickening' | 'fold' | 'skirting' | 'wall_panel' | 'leg' | 'u_cutout') => void;
   onSelectProfile?: (profile: string) => void;
 }
 
-export function EdgeContextMenu({ x, y, edgeId, onClose, onSelect, onSelectProfile }: Props) {
+export function EdgeContextMenu({ x, y, edgeId, edgeLabel, onClose, onSelect, onSelectProfile }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<'main' | 'profiles'>('main');
   const project = useProjectStore(s => s.project);
@@ -52,7 +54,7 @@ export function EdgeContextMenu({ x, y, edgeId, onClose, onSelect, onSelectProfi
         <button
           onClick={() => {
             // Каталог живе поза меню (меню закривається кліком поза ним — модалка всередині не вижила б)
-            openEdgeCatalog({ title: `Ребро ${edgeId}`, material: project.projectMaterial, allowNone: true, onSelect: (id) => onSelectProfile?.(id) });
+            openEdgeCatalog({ title: `Ребро ${edgeLabel ?? edgeId}`, material: project.projectMaterial, allowNone: true, onSelect: (id) => onSelectProfile?.(id) });
             onClose();
           }}
           className="text-left px-4 py-2 hover:bg-[#cbe6f6] text-[#0284c7] border-b border-[#a2d8f0]/50 font-medium flex items-center gap-2"

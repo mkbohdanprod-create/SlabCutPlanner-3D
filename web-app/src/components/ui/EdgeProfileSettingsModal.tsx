@@ -95,7 +95,7 @@ export function EdgeProfileSettingsModal({
         <div className="px-6 pt-4 pb-3 bg-white">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="bt-brand">Bottega <span>· Viyar Stone 3D · довідник</span></div>
+              <div className="bt-brand">Bottega <span>· Viyar Stone Studio · довідник</span></div>
               <h2 className="bt-h1 flex items-center gap-2"><Scissors className="w-5 h-5 text-[#0084ff]" /> Довідник обробок торців</h2>
               <div className="bt-sub">Форми кромки з каталогу цеху «Все кромки» (17.09.25): розріз, матеріал, спосіб виконання, припуск на розкрій і послуги. Матеріал і виконання — з коду, тут не редагуються.</div>
             </div>

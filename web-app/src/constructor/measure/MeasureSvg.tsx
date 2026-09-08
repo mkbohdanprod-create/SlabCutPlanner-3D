@@ -6,8 +6,21 @@
  * тягнення — панорама. Приймає додаткові шари (`children`) для зведення:
  * контури виробів, фанера, метал — у тих самих світових координатах.
  */
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { MeasureModel } from './leicaDxf';
+
+/**
+ * ШИРИНА ВИДИМОГО ВІКНА У СВІТОВИХ ОДИНИЦЯХ (мм) — 07.09.2026 (№128).
+ *
+ * Оверлеї (`children`) малюються у тих самих світових координатах, що й
+ * замір, тому розмір підпису чи кружечка треба брати від ТОГО, ЩО ЗАРАЗ
+ * ВИДНО, а не від габариту файла. Інакше при наближенні напис лишається
+ * завбільшки з півкімнати: у кейсі 81-1430086 (габарит 7,2 м) підпис
+ * «дублет 14.2» перекривав усе полотно. Контекст віддає поточну ширину
+ * viewBox; оверлей рахує від неї.
+ */
+const ViewWidthCtx = React.createContext(1000);
+export function useMeasureViewWidth() { return React.useContext(ViewWidthCtx); }
 
 const LAYER_COLORS = ['#0f172a', '#1f93ef', '#22a06b', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#65a30d'];
 
@@ -18,9 +31,15 @@ export function layerColor(layer: string, layers: string[]) {
 
 export interface Viewport { minX: number; minY: number; maxX: number; maxY: number }
 
-export function MeasureSvg({ model, hiddenLayers, children, extraBox, onWorldClick }: {
+export function MeasureSvg({ model, hiddenLayers, markIds, showMarks = true, children, extraBox, onWorldClick }: {
   model: MeasureModel | null;
   hiddenLayers?: Set<string>;
+  /**
+   * Відрізки міток монтажника «М»/«В» (ЗК-16, МТ-1, №130): не геометрія,
+   * тому малюються приглушено і пунктиром, а `showMarks` їх ховає зовсім.
+   */
+  markIds?: Set<string>;
+  showMarks?: boolean;
   children?: React.ReactNode;
   /** Додатковий габарит (вироби), щоб кадр вмістив усе. */
   extraBox?: Viewport | null;
@@ -50,10 +69,24 @@ export function MeasureSvg({ model, hiddenLayers, children, extraBox, onWorldCli
   const stroke = Math.max(0.5, vbW / 600);
   const font = Math.max(6, vbW / 70);
 
-  const onWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    setZoom((z) => Math.min(40, Math.max(0.2, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
-  };
+  /*
+   * КОЛЕСО — РІДНИМ СЛУХАЧЕМ, НЕ ЧЕРЕЗ onWheel (07.09.2026, №128).
+   * React вішає `wheel` на корінь як PASSIVE, тому `preventDefault()`
+   * усередині нічого не робить, зате на кожен щиглик колеса браузер пише
+   * в консоль «Unable to preventDefault inside passive event listener».
+   * У власника за один сеанс набігло 134 такі рядки — консоль стає
+   * непридатною для справжніх помилок. Вішаємо самі, з passive: false.
+   */
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      setZoom((z) => Math.min(40, Math.max(0.2, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+  }, []);
   const toWorld = (e: React.MouseEvent) => {
     const svg = ref.current; if (!svg) return null;
     const r = svg.getBoundingClientRect();
@@ -77,15 +110,20 @@ export function MeasureSvg({ model, hiddenLayers, children, extraBox, onWorldCli
 
   return (
     <svg ref={ref} viewBox={viewBox} className="w-full h-full select-none cursor-grab active:cursor-grabbing" preserveAspectRatio="xMidYMid meet"
-      onWheel={onWheel} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={() => { drag.current = null; }}>
+      onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={() => { drag.current = null; }}>
       <g transform="scale(1,-1)">
         {/* сітка 500 мм */}
         <Grid box={box} step={500} stroke={stroke * 0.4} />
-        {model && model.segments.filter((s) => !hidden.has(s.layer)).map((s) => (
-          s.arc
-            ? <path key={s.id} d={arcPath(s.arc)} fill="none" stroke={layerColor(s.layer, layers)} strokeWidth={stroke} />
-            : <line key={s.id} x1={s.a.x} y1={s.a.y} x2={s.b.x} y2={s.b.y} stroke={layerColor(s.layer, layers)} strokeWidth={stroke} strokeLinecap="round" />
-        ))}
+        {model && model.segments.filter((s) => !hidden.has(s.layer)).map((s) => {
+          const isMark = markIds?.has(s.id) ?? false;
+          if (isMark && !showMarks) return null;
+          const col = isMark ? '#b45309' : layerColor(s.layer, layers);
+          const dash = isMark ? `${stroke * 3} ${stroke * 2}` : undefined;
+          const wide = isMark ? stroke * 0.9 : stroke;
+          return s.arc
+            ? <path key={s.id} d={arcPath(s.arc)} fill="none" stroke={col} strokeWidth={wide} strokeDasharray={dash} />
+            : <line key={s.id} x1={s.a.x} y1={s.a.y} x2={s.b.x} y2={s.b.y} stroke={col} strokeWidth={wide} strokeDasharray={dash} strokeLinecap="round" opacity={isMark ? 0.75 : 1} />;
+        })}
         {/* Карта висот (ЗМ-Т9): точки завжди, числа — лише при наближенні, інакше каша */}
         {model && model.heights.map((h, i) => (
           <g key={`h${i}`}>
@@ -96,7 +134,7 @@ export function MeasureSvg({ model, hiddenLayers, children, extraBox, onWorldCli
         {model && model.marks.map((m, i) => (
           <text key={`m${i}`} x={m.x} y={m.y} fontSize={font} fill="#b91c1c" fontWeight="bold" transform={`scale(1,-1) translate(0 ${-2 * m.y})`}>{m.text}</text>
         ))}
-        {children}
+        <ViewWidthCtx.Provider value={vbW}>{children}</ViewWidthCtx.Provider>
       </g>
     </svg>
   );

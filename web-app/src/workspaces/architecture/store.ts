@@ -6,7 +6,7 @@
  */
 import { create } from 'zustand';
 
-export type PlanTool = 'select' | 'calibrate' | 'floor' | 'opening' | 'wall' | 'pan';
+export type PlanTool = 'select' | 'calibrate' | 'floor' | 'arc' | 'opening' | 'wall' | 'pan';
 
 interface ArchUIState {
   tool: PlanTool;

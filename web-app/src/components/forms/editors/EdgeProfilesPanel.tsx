@@ -33,6 +33,7 @@ import '../../../styles/bottega.css';
 export function EdgeProfilesPanel({
   edgeProfiles,
   sides,
+  sideLabels,
   sideLengths,
   blockedEdgeSides = [],
   occupiedSides,
@@ -48,6 +49,12 @@ export function EdgeProfilesPanel({
    */
   material?: string | null;
   sides: string[];
+  /**
+   * Показувані імена «технічних» сторін (Б-002): ребро Г-зарізу живе в
+   * даних як `CD_lcut1`, а людині показується «D1»
+   * (`domain/sideNaming.lcutEdgeLabels`). Немає в мапі — показуємо id.
+   */
+  sideLabels?: Record<string, string>;
   /** Довжина кожної сторони, мм — для «Факт. розмір» і затиску довільної ділянки. */
   sideLengths?: Record<string, number>;
   /** Сторони, зайняті прив'язаним елементом DXF — кромку туди не поставити. */
@@ -120,7 +127,7 @@ export function EdgeProfilesPanel({
         <span className="bt-k">Кромки</span>
         {sourceSide && (
           <span className="bt-tag bt-tag-green bt-tag-lc flex items-center gap-1" style={{ marginLeft: 'auto' }} title="Клік по іншій літері копіює обробку взірця на ту сторону. Esc — вийти">
-            взірець {sourceSide} · клік по літері копіює
+            взірець {sideLabels?.[sourceSide] ?? sourceSide} · клік по літері копіює
             <button type="button" onClick={clearSource} title="Вийти з режиму взірця (Esc)" style={{ display: 'inline-flex', background: 'none', border: 'none', padding: 0, margin: 0, color: 'inherit', cursor: 'pointer' }}>
               <X className="w-3 h-3" />
             </button>
@@ -135,6 +142,9 @@ export function EdgeProfilesPanel({
       <div className="flex flex-col gap-1.5">
         {sides.map((side) => {
           const t = treatmentOf(side);
+          // Показуване ім'я: для ребра Г-зарізу — «D1», для звичайної
+          // сторони збігається з ключем даних.
+          const sideLabel = sideLabels?.[side] ?? side;
           const blocked = blockedEdgeSet.has(side);
           const sideLength = sideLengths?.[side] ?? 0;
           const allowance = availableProfiles.find((p) => p.id === t.top?.profileId)?.allowance ?? 0;
@@ -155,7 +165,7 @@ export function EdgeProfilesPanel({
           const locked = blocked || Boolean(occupiedBy);
           const chipTitle = locked
             ? (occupiedBy ? `Торець закриває ${occupiedBy}` : 'На стороні вже є прив\'язаний елемент DXF')
-            : isSource ? 'Взірець — клік знімає' : sourceSide ? `Скопіювати обробку зі сторони ${sourceSide}` : 'Зробити взірцем: далі клік по інших літерах копіює обробку';
+            : isSource ? 'Взірець — клік знімає' : sourceSide ? `Скопіювати обробку зі сторони ${sideLabels?.[sourceSide] ?? sourceSide}` : 'Зробити взірцем: далі клік по інших літерах копіює обробку';
 
           return (
             <div key={side} className={`edge-side ${hasAny ? 'has-profile' : ''}`}>
@@ -169,7 +179,7 @@ export function EdgeProfilesPanel({
                   aria-pressed={isSource}
                   onClick={() => onChipClick(side)}
                 >
-                  {side}
+                  {sideLabel}
                 </button>
                 <span className={isSource ? 'edge-thumb-src' : ''} style={{ display: 'inline-flex' }}>
                   <EdgeProfileThumb profileId={t.top?.profileId} height={26} title={t.top?.profileId ?? 'без кромки'} />
@@ -184,7 +194,7 @@ export function EdgeProfilesPanel({
                     if (e.target.value === CATALOG_OPTION_VALUE) {
                       // Пункт «Каталог з розрізами…» — відкриваємо каталог, значення не міняємо
                       openEdgeCatalog({
-                        title: `Сторона ${side} · лицьове ребро`,
+                        title: `Сторона ${sideLabel} · лицьове ребро`,
                         material: groupMaterial,
                         value: t.top?.profileId,
                         allowNone: true,
@@ -265,7 +275,7 @@ export function EdgeProfilesPanel({
                       onChange={(e) => {
                         if (e.target.value === CATALOG_OPTION_VALUE) {
                           openEdgeCatalog({
-                            title: `Сторона ${side} · тильне ребро`,
+                            title: `Сторона ${sideLabel} · тильне ребро`,
                             material: groupMaterial,
                             value: t.bottom?.profileId,
                             allowNone: true,

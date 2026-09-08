@@ -235,7 +235,7 @@ function TechCardView({ card, route }: { card: ReturnType<typeof buildTechCard>;
   const mainParts = route.parts.filter((p) => p.role === 'main' || p.role === 'leg').length;
   return (
     <div className="p-6 text-[13px]">
-      <div className="text-[11px] text-slate-400 mb-1">Viyar Stone 3D · конструктор · тех карта</div>
+      <div className="text-[11px] text-slate-400 mb-1">Viyar Stone CAD · тех карта</div>
       <h2 className="m-0 text-[20px] font-bold">Технологічна карта — {card.header.orderNumber}</h2>
       <div className="text-slate-600 mb-3">{card.header.customer} · {card.header.material} {card.header.thickness ? `${card.header.thickness} мм` : ''} · {fmt(card.header.areaM2, 3)} м² · {card.header.date}</div>
 

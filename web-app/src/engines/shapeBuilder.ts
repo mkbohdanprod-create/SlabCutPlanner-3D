@@ -715,8 +715,12 @@ export function contourForCutters(
 } {
   const points: Array<{ x: number; y: number }> = [];
   const sideSegments: Record<string, { start: { x: number; y: number }; end: { x: number; y: number } }> = {};
+  // Ребра Г-зарізу (`*_lcut1/2`) з 07.09.2026 (Б-002) — повноцінні
+  // сторони: вони отримують власний сегмент, щоб різак торця знаходив
+  // свою ділянку. Дуги і фаски лишаються «кутовими переходами», які
+  // діляться між сусідніми сторонами.
   const isSideId = (id: string | undefined): id is string =>
-    Boolean(id) && !/_(radius|chamfer|lcut1|lcut2)$/.test(id!);
+    Boolean(id) && !/_(radius|chamfer)$/.test(id!);
 
   let last: THREE.Vector2 | undefined;
   shape.curves.forEach((curve, index) => {

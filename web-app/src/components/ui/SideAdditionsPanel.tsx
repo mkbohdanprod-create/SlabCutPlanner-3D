@@ -128,6 +128,7 @@ export function SideAdditionsPanel({
   ownerDetail,
   subDetails,
   sides,
+  sideLabels,
   ownerSlot,
   onAdd,
   onEdit,
@@ -136,6 +137,12 @@ export function SideAdditionsPanel({
   ownerDetail: DetailDraft;
   subDetails: Record<string, DetailDraft>;
   sides: string[];
+  /**
+   * Показувані імена «технічних» сторін (Б-002): ребро Г-зарізу живе в
+   * даних як `CD_lcut1`, людині показується «D1»
+   * (`domain/sideNaming.lcutEdgeLabels`). Немає в мапі — показуємо id.
+   */
+  sideLabels?: Record<string, string>;
   /** Слот власника, якщо він сам є доповненням. Порожньо — головна деталь. */
   ownerSlot?: string;
   onAdd: (kind: SideAdditionKind, sideId: string) => void;
@@ -155,7 +162,7 @@ export function SideAdditionsPanel({
       <div className="flex flex-col gap-1.5">
         {sides.map((side) => (
           <div key={side} className="flex items-start gap-2 py-1 border-b border-slate-100 last:border-b-0">
-            <span className="ep-chip mt-0.5 shrink-0">{side}</span>
+            <span className="ep-chip mt-0.5 shrink-0">{sideLabels?.[side] ?? side}</span>
             <div className="flex flex-wrap gap-1.5 flex-1 min-h-[26px] items-center">
               {bySide[side].length === 0 && (
                 <span className="text-xs text-slate-400">—</span>

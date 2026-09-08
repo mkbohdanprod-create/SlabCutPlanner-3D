@@ -2,6 +2,7 @@ import React from 'react';
 import { DraggableDialog } from './DraggableDialog';
 import { Check } from 'lucide-react';
 import type { CornerProcessing, CornerProcessingType } from '../../domain/types';
+import { cornerSides } from '../../domain/sideNaming';
 import { translateStaticUiText } from '../../i18n';
 import type { UiLanguage } from '../../store/useDictionaryStore';
 
@@ -23,6 +24,16 @@ export function CornerProcessingModal({ cornerId, initialData, onSave, onClose, 
   const [complexRadius, setComplexRadius] = React.useState<boolean>(!!initialData?.complexRadius);
   const [edgeProcessing, setEdgeProcessing] = React.useState<string>(initialData?.edgeProcessing || 'Без фрезерування');
   const [isEdgeProcessingEnabled, setIsEdgeProcessingEnabled] = React.useState<boolean>(!!initialData?.edgeProcessing);
+
+  /*
+   * ПІДПИСИ РОЗМІРІВ — ІМЕНАМИ РЕАЛЬНИХ СТОРІН КУТА (Б-002, 07.09.2026).
+   * `sizeB` завжди міряється вздовж ПЕРШОЇ сторони кута, `sizeC` — вздовж
+   * ДРУГОЇ (так їх читають обидва будівники контуру). Раніше підписи були
+   * зашиті літерами B і C — правдою вони були лише для кута BC.
+   */
+  const sides = cornerSides(cornerId);
+  const sizeBLabel = sides ? `Розмір по ${sides[0]}` : 'Розмір по B';
+  const sizeCLabel = sides ? `Розмір по ${sides[1]}` : 'Розмір по C';
 
   const handleSave = () => {
     onSave({
@@ -101,7 +112,7 @@ export function CornerProcessingModal({ cornerId, initialData, onSave, onClose, 
           {type !== 'radius' && (
             <div className="flex gap-4">
               <div className="flex flex-col gap-1 flex-1">
-                <label className="text-slate-600 font-medium">Розмір по C</label>
+                <label className="text-slate-600 font-medium">{sizeCLabel}</label>
                 <div className="relative">
                   <input 
                     type="number"
@@ -113,7 +124,7 @@ export function CornerProcessingModal({ cornerId, initialData, onSave, onClose, 
                 </div>
               </div>
               <div className="flex flex-col gap-1 flex-1">
-                <label className="text-slate-600 font-medium">Розмір по B</label>
+                <label className="text-slate-600 font-medium">{sizeBLabel}</label>
                 <div className="relative">
                   <input 
                     type="number"

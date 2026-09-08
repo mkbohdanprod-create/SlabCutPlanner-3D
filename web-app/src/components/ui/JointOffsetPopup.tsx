@@ -70,7 +70,14 @@ export function JointOffsetPopup({
           лише підпис, математика в manualJointPosition незмінна. */}
       <label className="block text-xs text-slate-500 mb-1">
         {joint.referenceSideId
-          ? <>Відступ від сторони <b>{joint.referenceSideId}</b></>
+          ? <>
+              {/* №145: жовтий чип — той самий колір, яким ця сторона зараз
+                  підсвічена на моделі. Око зв'язує напис і лінію без слів. */}
+              Відступ від сторони{' '}
+              <b className="inline-block px-1 rounded-sm bg-amber-400 text-amber-950">
+                {joint.referenceSideId}
+              </b>
+            </>
           : joint.anchorCorner
             ? <>Відступ від кута <b>{joint.anchorCorner}</b></>
             : 'Відступ від краю деталі'}

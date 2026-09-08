@@ -72,8 +72,8 @@ const ALL_ADMIN: readonly Capability[] = [
 export const WORKSPACES: Record<WorkspaceId, WorkspaceDefinition> = {
   vs3d: {
     id: 'vs3d',
-    badge: '3D',
-    title: 'Viyar Stone 3D',
+    badge: 'Studio',
+    title: 'Viyar Stone Studio',
     question: 'Скільки це коштує',
     // Менеджер: зібрати виріб, показати клієнту, порахувати гроші, віддати далі.
     // «Приміщення», паспорт деталі та OCR-імпорт лишено до відповіді власника
@@ -83,8 +83,8 @@ export const WORKSPACES: Record<WorkspaceId, WorkspaceDefinition> = {
   },
   constructor: {
     id: 'constructor',
-    badge: 'Конструктор',
-    title: 'Viyar Stone Конструктор',
+    badge: 'CAD',
+    title: 'Viyar Stone CAD',
     question: 'Як це зробити',
     // Технолог: усе з §2.2 карти — без ПІНа. Ціни (priceSettings) тут не
     // потрібні за візією («гроші лишаються в продажу»).
@@ -96,8 +96,8 @@ export const WORKSPACES: Record<WorkspaceId, WorkspaceDefinition> = {
   },
   architecture: {
     id: 'architecture',
-    badge: 'Архітектура',
-    title: 'Viyar Stone Архітектура',
+    badge: 'BUILDING',
+    title: 'Viyar Stone BUILDING',
     question: 'Скільки коштує облицювати об’єкт',
     // Заведено як каркас під паралельну роботу: сьогодні — той самий
     // застосунок із «Приміщенням»; свої сутності (поверхні, розкладки, BOQ)

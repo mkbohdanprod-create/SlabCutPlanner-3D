@@ -166,7 +166,7 @@ export function EdgeProfileCatalog({ request, onClose }: { request: EdgeCatalogR
         <div className="px-6 pt-4 pb-3 bg-white">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="bt-brand">Bottega <span>· Viyar Stone 3D · каталог цеху «Все кромки» 17.09.25</span></div>
+              <div className="bt-brand">Bottega <span>· Viyar Stone Studio · каталог цеху «Все кромки» 17.09.25</span></div>
               <h2 className="bt-h1 flex items-center gap-2"><Scissors className="w-5 h-5 text-[#0084ff]" /> Каталог кромок</h2>
               <div className="bt-sub">
                 {request.title ? `${request.title} · ` : ''}

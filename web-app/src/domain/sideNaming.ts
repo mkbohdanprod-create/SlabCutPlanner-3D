@@ -167,3 +167,45 @@ export function sideIndexesAgree(shape: string, pointCount: number, side: string
   if (byShape === undefined || byCount === undefined) return true;
   return byShape === byCount;
 }
+
+/**
+ * ІМЕНА РЕБЕР Г-ЗАРІЗУ «ЯК У СТОРІН» (07.09.2026, Б-002, рішення власника).
+ *
+ * Г-заріз на куті дає два нові прямі ребра. У даних вони живуть під
+ * технічними ключами `<кут>_lcut1` / `<кут>_lcut2` (так їх називає і
+ * 3D-контур, і слоти доповнень — `leg_BC_lcut1`), і ці ключі НЕ
+ * перейменовуються: на них збережені проєкти. Людині ж показується
+ * коротке ім'я в стилі сторін: літера паралельної сторони + номер.
+ *
+ * Геометрія однакова в обох будівників контуру (rect і полігонному):
+ * `lcut1` — ребро, паралельне НАСТУПНІЙ стороні кута (для кута CD — D),
+ * `lcut2` — паралельне ПОПЕРЕДНІЙ (C). Нумерація — наскрізна по деталі
+ * в канонічному порядку кутів: якщо сторона C дістала ребра від двох
+ * зарізів, вони стануть C1 і C2.
+ *
+ * Це та сама родина, що `cornerIdForSides` (інв. 2.42): показане ім'я і
+ * ключ даних зв'язує функція, а не збіг рядків.
+ */
+export function lcutEdgeLabels(
+  corners: Record<string, { type?: string } | null | undefined> | undefined,
+  shape?: DetailShape | string,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!corners) return out;
+  const canonical = contourVertexOrder(shape);
+  const order = canonical
+    ? canonical.filter((id) => corners[id])
+    : Object.keys(corners);
+  const counters: Record<string, number> = {};
+  for (const cornerId of order) {
+    if (corners[cornerId]?.type !== 'l-cut') continue;
+    const sides = cornerSides(cornerId, shape);
+    if (!sides) continue;
+    const [prevSide, nextSide] = sides;
+    counters[nextSide] = (counters[nextSide] ?? 0) + 1;
+    out[`${cornerId}_lcut1`] = `${nextSide}${counters[nextSide]}`;
+    counters[prevSide] = (counters[prevSide] ?? 0) + 1;
+    out[`${cornerId}_lcut2`] = `${prevSide}${counters[prevSide]}`;
+  }
+  return out;
+}

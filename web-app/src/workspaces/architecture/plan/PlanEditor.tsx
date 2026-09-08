@@ -17,9 +17,10 @@
  * замовленням, як і поверхні.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Upload, Ruler, PenLine, Square, BrickWall, MousePointer2, Hand, Trash2, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { Upload, Ruler, PenLine, Spline, Square, BrickWall, MousePointer2, Hand, Trash2, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { useArchitecture } from '../useArchitecture';
 import { useArchUIStore, type PlanTool } from '../store';
+import { arcThrough } from './arc';
 import { archId, edgeLength, wallFromEdge, type PlanPoint, type PlanUnderlay, type Surface } from '../../../domain/architecture';
 import { pointInPolygon } from '../../../domain/room';
 import { BTN_IDLE, BTN_BLUE, fmt } from '../../../constructor/ui';
@@ -119,6 +120,7 @@ const TOOLS: Array<{ id: PlanTool; label: string; title: string; icon: React.Com
   { id: 'pan', label: 'Рука', title: 'Тягнути план (або колесо/середня кнопка)', icon: Hand },
   { id: 'calibrate', label: 'Масштаб', title: 'Два кліки по відомому розміру на плані + число в мм', icon: Ruler },
   { id: 'floor', label: 'Підлога', title: 'Обвести контур підлоги по точках; замкнути на першій точці або Enter', icon: PenLine },
+  { id: 'arc', label: 'Дуга', title: 'Продовжити контур дугою: клік по середині дуги, потім по її кінці. Працює, коли вже поставлено хоч одну точку підлоги', icon: Spline },
   { id: 'opening', label: 'Отвір', title: 'Два кути прямокутника всередині підлоги: колона, шахта', icon: Square },
   { id: 'wall', label: 'Стіна', title: 'Клік по ребру підлоги → стіна заданої висоти', icon: BrickWall },
 ];
@@ -141,6 +143,8 @@ export default function PlanEditor() {
   const [cam, setCam] = useState<Cam>({ x: -500, y: -500, zoom: 0.05 });
   const [cursor, setCursor] = useState<PlanPoint | null>(null);
   const [draft, setDraft] = useState<PlanPoint[]>([]);
+  /** Середина дуги, поставлена першим кліком інструмента «Дуга» (№131). */
+  const [arcMid, setArcMid] = useState<PlanPoint | null>(null);
   const [calib, setCalib] = useState<{ a: PlanPoint; b?: PlanPoint; known: string } | null>(null);
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -325,6 +329,22 @@ export default function PlanEditor() {
       setDraft((cur) => [...cur, p]);
       return;
     }
+    if (tool === 'arc') {
+      // Дуга продовжує вже розпочатий контур: старт — остання його точка.
+      if (!draft.length) return;
+      if (!arcMid) { setArcMid(p); return; }
+      const from = draft[draft.length - 1];
+      const pts = arcThrough(from, arcMid, p);
+      setArcMid(null);
+      // замикання: кінець дуги впав на першу точку контуру
+      if (draft.length + pts.length >= 3 && dist(p, draft[0]) <= 10 / cam.zoom) {
+        commitFloor([...draft, ...pts.slice(0, -1)]);
+      } else {
+        setDraft((cur) => [...cur, ...pts]);
+      }
+      setTool('floor');   // далі знову прямі — так зручніше вести контур
+      return;
+    }
     if (tool === 'opening') {
       if (!draft.length) {
         const host = floors.find((f) => pointInPolygon(raw, f.points));
@@ -384,6 +404,7 @@ export default function PlanEditor() {
       if (e.key === 'Escape') { setDraft([]); setCalib(null); setTyped(''); return; }
       if (e.key === 'Backspace' && draft.length) { setDraft((d) => d.slice(0, -1)); e.preventDefault(); return; }
       if ((e.key === 'Delete') && selectedSurfaceId) { removeSurface(selectedSurfaceId); selectSurface(null); return; }
+      if (e.key === 'Escape' && arcMid) { setArcMid(null); return; }
       if (/^[0-9.,]$/.test(e.key) && tool === 'floor' && draft.length) { setTyped((s) => s + e.key); return; }
       if (e.key === 'Enter') {
         if (tool === 'floor' && draft.length && typed && cursor) {
@@ -399,18 +420,27 @@ export default function PlanEditor() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [draft, typed, cursor, tool, selectedSurfaceId, removeSurface, selectSurface, commitFloor]);
+  }, [draft, typed, cursor, tool, arcMid, selectedSurfaceId, removeSurface, selectSurface, commitFloor]);
 
   /* ── рендер ─────────────────────────────────────────────────── */
   const vb = `${cam.x} ${cam.y} ${size.w / cam.zoom} ${size.h / cam.zoom}`;
   const px = (n: number) => n / cam.zoom; // товщина/шрифт у мм, щоб на екрані було n px
   const selected = model.surfaces.find((s) => s.id === selectedSurfaceId) ?? null;
-  const draftPath = draft.length ? draft.map((p, i) => `${i ? 'L' : 'M'}${p.x} ${p.y}`).join(' ') + (cursor && tool === 'floor' ? ` L${cursor.x} ${cursor.y}` : '') : '';
+  // Прев'ю дуги: поки тягнеш до кінцевої точки, контур уже показує криву.
+  const arcPreview = tool === 'arc' && arcMid && cursor && draft.length
+    ? arcThrough(draft[draft.length - 1], arcMid, cursor)
+    : null;
+  const draftPath = draft.length
+    ? draft.map((p, i) => `${i ? 'L' : 'M'}${p.x} ${p.y}`).join(' ')
+      + (arcPreview ? arcPreview.map((p) => ` L${p.x} ${p.y}`).join('') : '')
+      + (cursor && tool === 'floor' ? ` L${cursor.x} ${cursor.y}` : '')
+    : '';
   const draftSegLen = draft.length && cursor && tool === 'floor' ? dist(draft[draft.length - 1], cursor) : 0;
 
   const hint = !underlay ? 'Підвантаж PDF плану (або картинку) — кнопка «План» зліва вгорі. Можна й без плану: обводь підлогу по сітці.'
     : tool === 'calibrate' ? (!calib ? 'Масштаб: клікни початок відомого розміру на плані' : !calib.b ? 'Тепер — кінець розміру' : 'Впиши, скільки це в мм, і натисни «Задати»')
-      : tool === 'floor' ? (draft.length ? 'Наступна точка; число + Enter — довжина; клік по першій точці або Enter — замкнути; Esc — скасувати' : 'Клікни перший кут підлоги')
+      : tool === 'floor' ? (draft.length ? 'Наступна точка; число + Enter — довжина; клік по першій точці або Enter — замкнути; Esc — скасувати; арка — кнопка «Дуга»' : 'Клікни перший кут підлоги')
+        : tool === 'arc' ? (!draft.length ? 'Спершу постав хоч одну точку підлоги — дуга продовжує контур' : !arcMid ? 'Клікни точку НА дузі (найвищу точку арки)' : 'Тепер клікни кінець дуги — і контур піде далі прямими')
         : tool === 'opening' ? (draft.length ? 'Другий кут отвору' : 'Перший кут отвору всередині підлоги')
           : tool === 'wall' ? 'Наведи на ребро підлоги і клікни — виросте стіна'
             : tool === 'select' ? 'Клік — вибрати підлогу або стіну; Delete — прибрати' : 'Тягни план';
@@ -432,7 +462,7 @@ export default function PlanEditor() {
         {TOOLS.map((t) => {
           const Icon = t.icon;
           return (
-            <button key={t.id} type="button" className={tool === t.id ? BTN_ACTIVE : BTN_IDLE} title={t.title} onClick={() => { setTool(t.id); setDraft([]); setCalib(null); }}>
+            <button key={t.id} type="button" className={tool === t.id ? BTN_ACTIVE : BTN_IDLE} title={t.title} onClick={() => { setTool(t.id); if (t.id !== 'arc') setDraft([]); setArcMid(null); setCalib(null); }}>
               <Icon className="w-4 h-4" /> <span className="hidden md:inline">{t.label}</span>
             </button>
           );
@@ -529,6 +559,7 @@ export default function PlanEditor() {
           })()}
           {draftPath && <path d={draftPath} fill="none" stroke="#1f93ef" strokeWidth={px(2)} strokeDasharray={`${px(6)} ${px(4)}`} />}
           {draft.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={px(4)} fill={i === 0 ? '#22a06b' : '#1f93ef'} />)}
+          {arcMid && <circle cx={arcMid.x} cy={arcMid.y} r={px(5)} fill="none" stroke="#d97706" strokeWidth={px(2)} />}
           {tool === 'opening' && draft.length === 1 && cursor && (
             <rect x={Math.min(draft[0].x, cursor.x)} y={Math.min(draft[0].y, cursor.y)} width={Math.abs(cursor.x - draft[0].x)} height={Math.abs(cursor.y - draft[0].y)} fill="url(#arch-hatch)" stroke="#475569" strokeWidth={px(1)} strokeDasharray={`${px(5)} ${px(3)}`} />
           )}

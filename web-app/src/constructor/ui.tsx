@@ -4,6 +4,7 @@
  * тому кольорові кнопки — з `!`-префіксом (як у Студії).
  */
 import React from 'react';
+import { useUIStore } from '../store/useStore';
 
 export const BTN = 'inline-flex items-center justify-center gap-1.5 min-h-8 !py-1 !px-3 rounded-md text-[13px] leading-tight font-medium border shadow-sm transition-colors whitespace-nowrap';
 export const BTN_IDLE = `${BTN} !bg-white !text-slate-700 !border-slate-300 hover:!bg-slate-50`;
@@ -67,3 +68,24 @@ export function Empty({ children }: { children: React.ReactNode }) {
 }
 
 export const fmt = (v: number | undefined, d = 1) => (v === undefined || !Number.isFinite(v) ? '—' : v.toFixed(d));
+
+/**
+ * КНОПКА «i» — довідка по інструменту (07.09.2026, №128, прохання власника
+ * «добав тут значок і — з поясненнями, як воно працює»). Та сама, що в
+ * панелях редактора виробу (`Accordion info=`): відкриває бібліотеку
+ * інструкцій одразу на потрібному розділі.
+ */
+export function HelpDot({ section, title = 'Як користуватись цим інструментом' }: { section: string; title?: string }) {
+  const openHelp = useUIStore((s) => s.openHelp);
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      className="w-5 h-5 shrink-0 rounded-full border border-[#b9d5f5] !bg-[#dbeafe] !text-[#0058ab] text-[11px] font-bold flex items-center justify-center hover:!bg-[#0084ff] hover:!text-white transition-colors !p-0 !min-h-0"
+      onClick={(e) => { e.stopPropagation(); openHelp(section); }}
+    >
+      i
+    </button>
+  );
+}

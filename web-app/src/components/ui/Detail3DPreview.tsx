@@ -36,11 +36,11 @@ import { attachContextLossRecovery } from '../../utils/webglContextRecovery';
 import {
   jointAnchorPoints,
   jointAxisForSide,
+  jointFieldPairs,
   manualJointPosition,
   nearestAnchorId,
-  oppositeSideId,
   referenceSideForJoint,
-  reflexCornerIds,
+  referenceSideInField,
   reflexJointShift,
   type JointShapeFields,
   type JointSideSegment,
@@ -60,6 +60,7 @@ import type { RoomModel } from '../../domain/room';
 import { placeOnRoomFace, roomFaceLabel, type RoomFaceHit, type ScenePlacementMm } from '../../domain/roomPlacement';
 import { edgeMarkerLabel } from '../../utils/edgeMarkerLabel';
 import { radiusElementSpecs, cornerAdjacentSides } from '../../domain/radiusElement';
+import { lcutEdgeLabels } from '../../domain/sideNaming';
 
 function ProfileMesh({ length, height, depth }: { length: number; height: number; depth: number; }) {
   const geom = useMemo(() => {
@@ -392,6 +393,7 @@ function DimensionLines({
   lineSegments,
   theme = "light",
   uShapeProps,
+  valuesOnly,
 }: {
   shape: THREE.Shape;
   bounds: any;
@@ -399,6 +401,12 @@ function DimensionLines({
   lineSegments?: Array<{ curve: THREE.LineCurve; id: string }>;
   theme?: "light" | "dark";
   uShapeProps?: { topBarHeight: number; cutOff: number; cutW: number } | null;
+  /**
+   * №143: тільки ЧИСЛА — без «A = » і без синіх квадратиків сторін.
+   * Потрібне режиму «Стики»: літери там уже стоять на бейджах пар, і другий
+   * комплект підписів перетворював модель на кашу.
+   */
+  valuesOnly?: boolean;
 }) {
   const w = bounds.maxX - bounds.minX || 1;
   const h = bounds.maxY - bounds.minY || 1;
@@ -538,9 +546,9 @@ function DimensionLines({
               renderOrder={1}
               depthTest={false}
             >
-              {id ? `${id} = ${length} mm` : `${length} mm`}
+              {valuesOnly ? `${length}` : id ? `${id} = ${length} mm` : `${length} mm`}
             </Text>
-            {id && (
+            {id && !valuesOnly && (
               <group position={[midX - normalX * 0.05, yPos + 0.01, midY - normalY * 0.05]} rotation={[-Math.PI / 2, 0, 0]}>
                 <mesh>
                   <planeGeometry args={[0.08, 0.08]} />
@@ -671,8 +679,10 @@ export function Detail3DNode({
   onEdgeSelect,
   occupiedSides,
   onPlaneClick,
-  onJointClick,
-  onJointSideClick,
+  /* onJointClick більше не деструктуризуємо: стик омега/лямбда через кути
+     прибрано з режиму «Стики» (№143). Проп лишається в типі — його ще передає
+     дерево компонентів, і ламати ланцюг заради цього не варто. */
+  onJointSideClick, jointRulerSide,
   onDoubleClick,
   onDetailDoubleClick,
   onDetailClick,
@@ -703,6 +713,8 @@ export function Detail3DNode({
   onJointClick?: (jointTargetId: string, x: number, y: number) => void;
   /** Клік по маркеру СТОРОНИ в режимі «Стики» — з уже зібраним описом різу. */
   onJointSideClick?: (joint: JointSideSelection, x: number, y: number) => void;
+  /** №145: сторона-лінійка відкритого віконця відступу — підсвічується жовтим. */
+  jointRulerSide?: string | null;
   onDoubleClick?: (e: any) => void;
   onDetailDoubleClick?: (type: 'main' | 'sub', id?: string) => void;
   onDetailClick?: (id: string) => void;
@@ -868,11 +880,21 @@ export function Detail3DNode({
     [detail],
   );
 
-  const [hoveredJointSide, setHoveredJointSide] = useState<string | null>(null);
-  const hoveredOppositeSide = useMemo(
-    () => (hoveredJointSide ? oppositeSideId(sidesMm, hoveredJointSide) : undefined),
-    [hoveredJointSide, sidesMm],
+  /**
+   * ПОЛЯ СТИКІВ У 3D (№142, власник 08.09: «в 2д стики вже працюють ок,
+   * перенеси це все сюди в 3д»).
+   *
+   * Пари сторін і їхні поля рахує та сама доменна `jointFieldPairs`, що й
+   * креслення. Одна математика на обидва види — інакше стик, поставлений на
+   * кресленні, стояв би в моделі в іншому місці. У складної форми в однієї
+   * сторони пар кілька, тому бейдж стоїть НА КОЖНУ ПАРУ, а не на сторону:
+   * один бейдж на сторону не давав зробити другий стик (№139).
+   */
+  const jointFields = useMemo(
+    () => jointFieldPairs(sidesMm, sidesMm.map((side) => side.v1)),
+    [sidesMm],
   );
+  const [hoveredPair, setHoveredPair] = useState<{ sideId: string; otherId: string } | null>(null);
 
   /**
    * Ділянки лінії різу, що реально лежать на матеріалі.
@@ -913,51 +935,123 @@ export function Detail3DNode({
     return spans;
   };
 
-  /** Лінія стику, обрізана по контуру деталі. */
+  /**
+   * Лінія стику, обрізана по контуру деталі.
+   *
+   * №141: у П-подібної горизонтальна лінія перетинає ОБИДВІ ноги, і без
+   * `field` пунктир малювався в обох — стик, поставлений у лівому виступі,
+   * дублювався на правий. `field` — координата поперек лінії, взята з пари
+   * сторін стику: лишаємо тільки ту ділянку, у якій стик справді стоїть.
+   * Порожньо — стик без пари (омега/лямбда, кутовий Г): він наскрізний, і
+   * малюється як раніше, в усіх ділянках.
+   */
   const drawJointLine = (
     axis: "vertical" | "horizontal",
     position: number,
     key: string,
     color?: string,
+    field?: number,
   ) =>
-    jointSpansOnShape(axis, position).map(([from, to], index) =>
-      axis === "vertical"
-        ? drawSplitLine(position, from, position, to, `${key}-${index}`, color)
-        : drawSplitLine(from, position, to, position, `${key}-${index}`, color),
-    );
+    jointSpansOnShape(axis, position)
+      .filter(([from, to]) => field === undefined || (field >= from - 1 && field <= to + 1))
+      .map(([from, to], index) =>
+        axis === "vertical"
+          ? drawSplitLine(position, from, position, to, `${key}-${index}`, color)
+          : drawSplitLine(from, position, to, position, `${key}-${index}`, color),
+      );
 
-  /** Опис стику зі сторони: напрямок і опорний кут виводяться, не вводяться. */
-  const jointSelectionFor = (sideId: string): JointSideSelection | undefined => {
+  /**
+   * Координата поперек лінії різу для пари сторін стику (№141) — середина між
+   * двома сторонами. Та сама арифметика, що в рушії (`jointFieldPoint`).
+   */
+  const jointFieldAcross = (joint: {
+    axis: "vertical" | "horizontal"; sideId?: string; oppositeSideId?: string;
+  }): number | undefined => {
+    if (!joint.sideId || !joint.oppositeSideId) return undefined;
+    const a = sidesMm.find((item) => item.id === joint.sideId);
+    const b = sidesMm.find((item) => item.id === joint.oppositeSideId);
+    if (!a || !b) return undefined;
+    const across = (s: { v1: { x: number; y: number }; v2: { x: number; y: number } }) =>
+      joint.axis === "vertical" ? (s.v1.y + s.v2.y) / 2 : (s.v1.x + s.v2.x) / 2;
+    return (across(a) + across(b)) / 2;
+  };
+
+  /**
+   * Опис стику для КОНКРЕТНОЇ пари сторін: напрямок і опорний кут виводяться,
+   * не вводяться. Пара приходить із поля, на бейдж якого клікнули (№142) —
+   * раніше протилежну сторону вгадувала `oppositeSideId` (найдальша
+   * паралельна), і на П-подібній це завжди була та сама одна пара.
+   */
+  const jointSelectionForPair = (sideId: string, opposite: string): JointSideSelection | undefined => {
     const side = sidesMm.find((item) => item.id === sideId);
     if (!side) return undefined;
-    const opposite = oppositeSideId(sidesMm, sideId);
-    if (!opposite) return undefined; // немає протилежної — стик між цими сторонами не має сенсу
     const axis = jointAxisForSide(side);
     const anchorCorner = nearestAnchorId(jointAnchors, side.v1);
+    const anchorPoint = anchorCorner ? jointAnchors?.[anchorCorner] : undefined;
+    /* №143/№145: лінійка шукається В МЕЖАХ ПОЛЯ цієї пари — та сама доменна
+       функція, що на кресленні. Інакше 2D і 3D підписували б різні сторони. */
+    const pairField = jointFields.find(
+      (item) => item.sideId === sideId && item.otherId === opposite,
+    );
+    const inField = pairField
+      ? referenceSideInField(sidesMm, axis, anchorPoint, pairField.box)
+      : undefined;
     return {
       sideId,
       oppositeSideId: opposite,
       axis,
       anchorCorner,
       // Рушій рахує від кута, користувач міряє від сторони — див. referenceSideForJoint
-      referenceSideId: referenceSideForJoint(
-        sidesMm,
-        axis,
-        anchorCorner ? jointAnchors?.[anchorCorner] : undefined,
-      ),
+      referenceSideId: inField?.id ?? referenceSideForJoint(sidesMm, axis, anchorPoint),
     };
   };
 
-  /** Прев'ю різу під курсором: через середину наведеної сторони, по контуру. */
-  const jointPreviewLine = (() => {
-    if (!hoveredJointSide || !hoveredOppositeSide) return null;
-    const side = sidesMm.find((item) => item.id === hoveredJointSide);
+  /**
+   * №145: яку сторону підсвітити як лінійку. Поки віконце відступу відкрите —
+   * та, від якої воно міряє (проп зверху); до кліку, при наведенні на бейдж
+   * пари, — лінійка цієї пари. Людина бачить «від чого відступ» ще до вводу.
+   */
+  const rulerSideId = jointRulerSide
+    ?? (hoveredPair ? jointSelectionForPair(hoveredPair.sideId, hoveredPair.otherId)?.referenceSideId : undefined);
+
+  /** Жовта підсвітка сторони-лінійки на самій моделі. */
+  const rulerHighlight = (() => {
+    if (!(mode === "edit" && editMode === "joints") || !rulerSideId) return null;
+    const side = sidesMm.find((item) => item.id === rulerSideId);
     if (!side) return null;
-    const axis = jointAxisForSide(side);
-    const position = axis === "vertical"
-      ? (side.v1.x + side.v2.x) / 2
-      : (side.v1.y + side.v2.y) / 2;
-    return drawJointLine(axis, position, "joint-preview", "#f59e0b");
+    const w = bounds.maxX - bounds.minX || 1;
+    const h = bounds.maxY - bounds.minY || 1;
+    const sc = 0.001;
+    const z = ((detail.thickness || 20) * sc) / 2 + 0.004;
+    const toLocal = (xMm: number, yMm: number): [number, number, number] => [
+      ((xMm - bounds.minX) / w - 0.5) * w * sc,
+      z,
+      ((yMm - bounds.minY) / h - 0.5) * h * sc,
+    ];
+    return (
+      <Line
+        points={[toLocal(side.v1.x, side.v1.y), toLocal(side.v2.x, side.v2.y)]}
+        color="#f59e0b"
+        lineWidth={4}
+        renderOrder={3}
+      />
+    );
+  })();
+
+  /** Прев'ю різу під курсором: посеред ПОЛЯ наведеної пари, від сторони до сторони. */
+  const jointPreviewLine = (() => {
+    if (!hoveredPair) return null;
+    const pair = jointFields.find(
+      (item) => item.sideId === hoveredPair.sideId && item.otherId === hoveredPair.otherId,
+    );
+    if (!pair) return null;
+    const position = pair.axis === "vertical" ? pair.at.x : pair.at.y;
+    /* Нормаль дивиться назовні, протилежна сторона — в бік `-normal`: середина
+       поля лежить на півглибині. Так прев'ю не вилазить у сусідній виступ. */
+    const across = pair.axis === "vertical"
+      ? pair.at.y - pair.normal.y * (pair.depth / 2)
+      : pair.at.x - pair.normal.x * (pair.depth / 2);
+    return drawJointLine(pair.axis, position, "joint-preview", "#f59e0b", across);
   })();
 
   // Металопрокат — не плоска кам'яна деталь: свій вузол із перерізом
@@ -1011,8 +1105,12 @@ export function Detail3DNode({
         depthBias={0}
       />
 
-      {mode === "dimensions" && isActive && (
+      {/* №143: у режимі «Стики» розміри сторін лишаються на екрані — власник
+          ставить відступ і мусить бачити, від чого його відкладає. Це та сама
+          розмірна графіка, що й на кнопці «Розміри», а не окрема копія. */}
+      {(mode === "dimensions" || (mode === "edit" && editMode === "joints")) && isActive && (
         <DimensionLines
+          valuesOnly={mode === "edit"}
           shape={shape}
           bounds={bounds}
           thickness={detail.thickness || 20}
@@ -1067,7 +1165,9 @@ export function Detail3DNode({
           користувач ввів число. */}
       {(detail.manualJoints ?? []).map((joint) => {
         const { snapped } = manualJointPosition(jointAnchors, detail.corners, joint);
-        return drawJointLine(joint.axis, snapped, `manual-joint-${joint.id}`);
+        return drawJointLine(
+          joint.axis, snapped, `manual-joint-${joint.id}`, undefined, jointFieldAcross(joint),
+        );
       })}
 
       {/* Стики П-форми (омега в куті E, лямбда в куті D).
@@ -1103,7 +1203,11 @@ export function Detail3DNode({
 
       {mode === "edit" &&
         isActive &&
-        (editMode === "corners" || editMode === "planes" || editMode === "joints") &&
+        /* №143: у режимі «Стики» кутових позначок більше немає — власник:
+           «прибери позначки кутів з цього режиму». Стик задається парою
+           СТОРІН, а «кут E / кут D» лишились від старої омега/лямбда-механіки
+           і тільки заважали читати креслення. */
+        (editMode === "corners" || editMode === "planes") &&
         points.map((p, i) => {
           if (!p.id || p.id.startsWith("inner"))
             return null;
@@ -1113,11 +1217,6 @@ export function Detail3DNode({
           // кнопка). На прямокутнику таких кутів немає, а вісім однакових
           // жовтих кульок (чотири кути + чотири середини сторін) читались як
           // однорідна розмітка і збивали з пантелику: стик задається СТОРОНОЮ.
-          const isReflexCorner = reflexCornerIds(toDetailShape(detail.kind), Boolean((detail as { mirrorL?: boolean }).mirrorL)).includes(
-            p.id === 'start' ? (p.closeId || 'H') : p.id,
-          );
-          if (editMode === "joints" && !isReflexCorner) return null;
-
           const w = bounds.maxX - bounds.minX || 1;
           const h = bounds.maxY - bounds.minY || 1;
           const s = 0.001;
@@ -1128,20 +1227,19 @@ export function Detail3DNode({
 
           const z = thickness / 2 + 0.01;
 
-          const cornerActive = editMode === "corners" || editMode === "joints";
+          const cornerActive = editMode === "corners";
           const cornerText = p.id === 'start' ? (p.closeId || 'H') : p.id;
           return (
             <group key={`corner-${i}`} position={[nx, z, ny]}>
-              {/* Квадратик Bottega (01.09): у режимах кутів/стиків — помаранчевий і
+              {/* Квадратик Bottega (01.09): у режимі кутів — помаранчевий і
                   клікабельний правою кнопкою; в інших — блідий орієнтир */}
               <SideChip3D
-                text={editMode === "joints" ? `кут ${cornerText}` : cornerText}
+                text={cornerText}
                 tone={cornerActive ? 'orange' : undefined}
                 small
-                title={editMode === "joints" ? `Кут ${cornerText}: права кнопка — стик омега/лямбда` : editMode === "corners" ? `Кут ${cornerText}: права кнопка — радіус, фаска, Г-виріз` : `Кут ${cornerText}`}
+                title={editMode === "corners" ? `Кут ${cornerText}: права кнопка — радіус, фаска, Г-виріз` : `Кут ${cornerText}`}
                 onContextMenu={(x, y) => {
-                  if (editMode === "joints" && onJointClick) onJointClick(p.id, x, y);
-                  else if (editMode === "corners" && onCornerClick) onCornerClick(p.id, x, y);
+                  if (editMode === "corners" && onCornerClick) onCornerClick(p.id, x, y);
                 }}
               />
             </group>
@@ -1208,6 +1306,11 @@ export function Detail3DNode({
           if (item.id.startsWith("inner"))
             return null;
 
+          // Ребра Г-зарізу — повноцінні сторони з власними іменами
+          // (Б-002): «C1»/«D1» замість дрібної літери кута, що дублювала
+          // сусідню сторону. Ключ у даних лишається `CD_lcut1`.
+          const lcutLabels = lcutEdgeLabels(detail.corners, detail.kind);
+
           const w = bounds.maxX - bounds.minX || 1;
           const h = bounds.maxY - bounds.minY || 1;
           const s = 0.001;
@@ -1229,7 +1332,7 @@ export function Detail3DNode({
              тобто всередині неї. Той самий недогляд уже виправляли для стиків
              нижче. Піднімаємо підпис над кулькою і даємо білу обводку, щоб
              читався на будь-якому камені. */
-          const label = edgeMarkerLabel(item.id);
+          const label = edgeMarkerLabel(item.id, lcutLabels);
           // Квадратик Bottega (01.09): синій — є обробка, зелений — взірець,
           // блідий пунктир — торець закриває доповнення. Лівий клік — взірець /
           // копіювання (як літера в панелі), права кнопка — меню обробки торця.
@@ -1304,34 +1407,41 @@ export function Detail3DNode({
       {mode === "edit" &&
         isActive &&
         editMode === "joints" &&
-        sidesMm.map((side, i) => {
+        jointFields.map((pair, i) => {
           const w = bounds.maxX - bounds.minX || 1;
           const h = bounds.maxY - bounds.minY || 1;
           const s = 0.001;
 
-          const midXmm = (side.v1.x + side.v2.x) / 2;
-          const midYmm = (side.v1.y + side.v2.y) / 2;
+          /* Бейдж стоїть посеред СВОГО поля і винесений за контур — так само,
+             як на кресленні (№138–139). На стороні їх стільки, скільки в неї
+             пар: у П-подібної на A — три, на H і B — по дві. */
+          const outMm = 70;
+          const midXmm = pair.at.x + pair.normal.x * outMm;
+          const midYmm = pair.at.y + pair.normal.y * outMm;
           const nx = ((midXmm - bounds.minX) / w - 0.5) * w * s;
           const ny = ((midYmm - bounds.minY) / h - 0.5) * h * s;
 
           const thickness = (detail.thickness || 20) * s;
           const z = thickness / 2 + 0.01;
 
-          const isHighlighted = side.id === hoveredJointSide || side.id === hoveredOppositeSide;
+          const isHighlighted = hoveredPair
+            ? (pair.sideId === hoveredPair.sideId && pair.otherId === hoveredPair.otherId)
+              || (pair.sideId === hoveredPair.otherId && pair.otherId === hoveredPair.sideId)
+            : false;
 
           return (
-            <group key={`joint-side-${i}`} position={[nx, z, ny]}>
-              {/* Бурштиновий квадратик: наведення підсвічує цю й протилежну сторону
-                  (лінія майбутнього різу), клік — віконце відступу стику */}
+            <group key={`joint-pair-${pair.sideId}-${pair.otherId}-${i}`} position={[nx, z, ny]}>
+              {/* Бурштиновий квадратик: наведення підсвічує цю пару і показує
+                  лінію майбутнього різу в її полі, клік — віконце відступу */}
               <SideChip3D
-                text={side.id}
+                text={pair.sideId}
                 tone="amber"
                 hot={isHighlighted}
-                title={`Сторона ${side.id}: клік — стик (відступ різу)`}
-                onPointerOver={() => setHoveredJointSide(side.id)}
-                onPointerOut={() => setHoveredJointSide(null)}
+                title={`Стик між ${pair.sideId} і ${pair.otherId}: клік — відступ різу`}
+                onPointerOver={() => setHoveredPair({ sideId: pair.sideId, otherId: pair.otherId })}
+                onPointerOut={() => setHoveredPair(null)}
                 onClick={(x, y) => {
-                  const selection = jointSelectionFor(side.id);
+                  const selection = jointSelectionForPair(pair.sideId, pair.otherId);
                   if (selection && onJointSideClick) onJointSideClick(selection, x, y);
                   /* Знімаємо підсвітку одразу на кліку (03.09.2026).
                      Далі відкривається віконце відступу з автофокусом на полі:
@@ -1341,7 +1451,7 @@ export function Detail3DNode({
                      поруч зі щойно доданим стиком — ще одна «зайва друга
                      лінія» у скарзі фокус-групи. Зникала вона від першого руху
                      мишею, тому в розробника не відтворювалась. */
-                  setHoveredJointSide(null);
+                  setHoveredPair(null);
                 }}
               />
             </group>
@@ -1349,6 +1459,7 @@ export function Detail3DNode({
         })}
 
       {mode === "edit" && isActive && editMode === "joints" && jointPreviewLine}
+      {isActive && rulerHighlight}
 
       {/* LOCAL ATTACHMENTS (Skirtings, Thickenings, Folds) */}
       {lineSegments.map((item) => {
@@ -1583,7 +1694,7 @@ function NestedAttachments({
   occupiedSides,
   onPlaneClick,
   onJointClick,
-  onJointSideClick,
+  onJointSideClick, jointRulerSide,
   onDetailClick,
   onDetailContextMenu,
   theme,
@@ -1606,6 +1717,8 @@ function NestedAttachments({
   onPlaneClick?: (detailId?: string) => void;
   onJointClick?: (jointTargetId: string, x: number, y: number) => void;
   onJointSideClick?: (joint: JointSideSelection, x: number, y: number) => void;
+  /** №145: сторона-лінійка відкритого віконця відступу — підсвічується жовтим. */
+  jointRulerSide?: string | null;
   onDetailClick?: (id: string) => void;
   onDetailContextMenu?: (id: string, x: number, y: number) => void;
   theme?: "light" | "dark";
@@ -1669,6 +1782,7 @@ function NestedAttachments({
                 onPlaneClick={onPlaneClick}
                 onJointClick={onJointClick}
                 onJointSideClick={onJointSideClick}
+                    jointRulerSide={jointRulerSide}
                 onDetailClick={onDetailClick}
                 onDetailContextMenu={onDetailContextMenu}
                 theme={theme}
@@ -1690,6 +1804,7 @@ function NestedAttachments({
                 onPlaneClick={onPlaneClick}
                 onJointClick={onJointClick}
                 onJointSideClick={onJointSideClick}
+                    jointRulerSide={jointRulerSide}
                 onDetailClick={onDetailClick}
                 onDetailContextMenu={onDetailContextMenu}
                 theme={theme}
@@ -1707,7 +1822,7 @@ function NestedAttachments({
 /* miterJointFor / miterCutters — перенесені в engines/miterAssembly (02.09):
    той самий план 45° тепер ріже і редактор, і 3D Підбір. */
 
-function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick, onCutoutDoubleClick, onPlaneClick, onEdgeClick, onEdgeSelect, occupiedSides, onJointClick, onJointSideClick, onLegDoubleClick, onWallPanelDoubleClick, onDetailDoubleClick, onDetailClick, onDetailContextMenu, mode, editMode, theme, textureMode, customTextureMapFactory, position, rotation, material }: { detail: DetailDraft; subDetails?: Record<string, DetailDraft>;
+function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick, onCutoutDoubleClick, onPlaneClick, onEdgeClick, onEdgeSelect, occupiedSides, onJointClick, onJointSideClick, jointRulerSide, onLegDoubleClick, onWallPanelDoubleClick, onDetailDoubleClick, onDetailClick, onDetailContextMenu, mode, editMode, theme, textureMode, customTextureMapFactory, position, rotation, material }: { detail: DetailDraft; subDetails?: Record<string, DetailDraft>;
   /** Матеріал виробу — керамограніт мітрує стики 45° автоматично (01.09). */
   material?: string | null;
   activeDetailId?: string | null;
@@ -1722,6 +1837,8 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
   occupiedSides?: Record<string, string>;
   onJointClick?: (id: string, x: number, y: number) => void;
   onJointSideClick?: (joint: JointSideSelection, x: number, y: number) => void;
+  /** №145: сторона-лінійка відкритого віконця відступу — підсвічується жовтим. */
+  jointRulerSide?: string | null;
   onLegDoubleClick?: (slot: string) => void;
   onWallPanelDoubleClick?: (slot: string) => void;
   onDetailDoubleClick?: (id: string) => void;
@@ -1897,6 +2014,7 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
       onPlaneClick={onPlaneClick}
       onJointClick={onJointClick}
       onJointSideClick={onJointSideClick}
+                    jointRulerSide={jointRulerSide}
       onDetailDoubleClick={onDetailDoubleClick}
       onDetailClick={onDetailClick}
       onDetailContextMenu={onDetailContextMenu}
@@ -2022,6 +2140,7 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
                     onPlaneClick={onPlaneClick}
                     onJointClick={onJointClick}
                     onJointSideClick={onJointSideClick}
+                    jointRulerSide={jointRulerSide}
                     onDetailClick={onDetailClick}
                     onDoubleClick={() => {
                       // Крок 4.3: віддаємо СЛОТ, а не сторону. На одному
@@ -2051,6 +2170,7 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
                     onPlaneClick={onPlaneClick}
                     onJointClick={onJointClick}
                     onJointSideClick={onJointSideClick}
+                    jointRulerSide={jointRulerSide}
                     onDetailClick={onDetailClick}
                     onDetailContextMenu={onDetailContextMenu}
                     theme={theme}
@@ -2397,7 +2517,7 @@ export function Detail3DPreview({
   onEdgeSelect,
   occupiedSides,
   onJointClick,
-  onJointSideClick,
+  onJointSideClick, jointRulerSide,
   onLegDoubleClick,
   onWallPanelDoubleClick,
   onDetailDoubleClick,
@@ -2439,6 +2559,8 @@ export function Detail3DPreview({
   occupiedSides?: Record<string, string>;
   onJointClick?: (id: string, x: number, y: number) => void;
   onJointSideClick?: (joint: JointSideSelection, x: number, y: number) => void;
+  /** №145: сторона-лінійка відкритого віконця відступу — підсвічується жовтим. */
+  jointRulerSide?: string | null;
   onLegDoubleClick?: (slot: string) => void;
   onWallPanelDoubleClick?: (slot: string) => void;
   onDetailDoubleClick?: (id: string) => void;
@@ -2828,6 +2950,7 @@ export function Detail3DPreview({
               occupiedSides={occupiedSides}
               onJointClick={onJointClick}
               onJointSideClick={onJointSideClick}
+                    jointRulerSide={jointRulerSide}
               onLegDoubleClick={onLegDoubleClick}
               onWallPanelDoubleClick={onWallPanelDoubleClick}
               onDetailDoubleClick={onDetailDoubleClick}

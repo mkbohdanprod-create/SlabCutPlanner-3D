@@ -44,6 +44,10 @@ import { blackbox } from './utils/blackbox';
 function App() {
   const setMainView = useUIStore((s) => s.setMainView);
   const mainView = useUIStore((s) => s.mainView);
+  // №132: шильдик у логотипі показує, у якому продукті лінійки ти зараз —
+  // Studio (продаж) · CAD (конструкторка) · BUILDING (об'єкти).
+  const constructorModeHdr = useUIStore((s) => s.constructorMode);
+  const architectureModeHdr = useUIStore((s) => s.architectureMode);
   const isAddProductMode = useUIStore((s) => s.isAddProductMode);
   // АРХІТЕКТОР (06.09): окреме меню «Створити розкладку» — на основі меню виробу
   const isAddLayoutMode = useArchUIStore((s) => s.isAddLayoutMode);
@@ -318,7 +322,14 @@ function App() {
                   className="font-normal text-2xl tracking-tight leading-none ml-1.5 pt-1 select-none"
                   onClick={() => setStudioGateOpen(true)}
                 >stone</span>
-                <span className="font-bold text-sm tracking-widest leading-none ml-1.5">3D</span>
+                <span
+                  className="font-bold text-sm tracking-widest leading-none ml-1.5"
+                  title={
+                    constructorModeHdr ? 'Viyar Stone CAD — конструкторка: замір, підгонка, пакет для цеху'
+                    : architectureModeHdr ? 'Viyar Stone BUILDING — облицювання об\'єктів'
+                    : 'Viyar Stone Studio — продаж: прорахунок, КП, 3D і AR'
+                  }
+                >{constructorModeHdr ? 'CAD' : architectureModeHdr ? 'BUILDING' : 'STUDIO'}</span>
               </h1>
           </div>
           <div className="h-6 w-px bg-white/10 mx-4"></div>
@@ -495,7 +506,7 @@ function App() {
                         ],
                       ).catch((err) => {
                         console.error('Не вдалося відкрити проєкт:', err);
-                        window.alert('Не вдалося відкрити проєкт: файл пошкоджений або це не проєкт Viyar Stone 3D.');
+                        window.alert('Не вдалося відкрити проєкт: файл пошкоджений або це не проєкт Viyar Stone Studio.');
                       });
                       e.target.value = '';
                     }} />

@@ -35,16 +35,22 @@ export interface LegacyEdgeFeature { enabled?: boolean; sides?: string[] }
  * `ownerSlot` — чиї сторони перевіряємо: головна деталь — без нього,
  * доповнення — його слот (нога під панеллю живе як `wall_panel_B_leg_C`).
  * Легасі-галочки `detail.fold/thickening.sides` — теж зайнятість (3D
- * малює їх блоком LOCAL ATTACHMENTS). Сторона-дуга (`B_radius`) і Г-заріз
- * (`BC_lcut1`) — не прямі торці панелі кромок, їх не чіпаємо.
+ * малює їх блоком LOCAL ATTACHMENTS). Сторона-дуга (`B_radius`) — не
+ * прямий торець панелі кромок, її не чіпаємо. Ребра Г-зарізу
+ * (`BC_lcut1`) з 07.09 (Б-002) — повноцінні сторони панелі кромок,
+ * тому нога на такому ребрі закриває його так само, як на звичайному.
+ * `sideLabels` — показувані імена таких ребер (`CD_lcut1` → «D1»,
+ * `domain/sideNaming.lcutEdgeLabels`), лише для підпису.
  */
 export function occupiedEdgeSides(args: {
   subDetails?: Record<string, unknown> | null;
   ownerSlot?: string;
   legacy?: { fold?: LegacyEdgeFeature | null; thickening?: LegacyEdgeFeature | null } | null;
+  sideLabels?: Record<string, string>;
 }): Record<string, string> {
   const out: Record<string, string> = {};
-  const plain = (sideId: string) => !/_radius$|_lcut\d*$/.test(sideId);
+  const plain = (sideId: string) => !/_radius$/.test(sideId);
+  const shown = (sideId: string) => args.sideLabels?.[sideId] ?? sideId;
   for (const slot of Object.keys(args.subDetails ?? {})) {
     const parsed = parseAdditionSlot(slot);
     if (!parsed.kind || !EDGE_OCCUPYING_KINDS.includes(parsed.kind)) continue;
@@ -53,7 +59,7 @@ export function occupiedEdgeSides(args: {
     // Слоти власника мають префікс `${kind}_` тільки на верхньому рівні; для
     // вкладених ownerSlot уже відсіяв чужі.
     if (!out[parsed.sideId]) {
-      out[parsed.sideId] = `${additionKindLabel(parsed.kind)} (${parsed.sideId}${parsed.index > 1 ? ` #${parsed.index}` : ''})`;
+      out[parsed.sideId] = `${additionKindLabel(parsed.kind)} (${shown(parsed.sideId)}${parsed.index > 1 ? ` #${parsed.index}` : ''})`;
     }
   }
   if (!args.ownerSlot && args.legacy) {
@@ -61,7 +67,7 @@ export function occupiedEdgeSides(args: {
       const feature = args.legacy[kind];
       if (!feature?.enabled) continue;
       for (const side of feature.sides ?? []) {
-        if (!out[side] && plain(side)) out[side] = `${additionKindLabel(kind)} (${side})`;
+        if (!out[side] && plain(side)) out[side] = `${additionKindLabel(kind)} (${shown(side)})`;
       }
     }
   }
