@@ -81,10 +81,15 @@ describe('мийка в стільниці: елемент чаші', () => {
     expect(detail.geometry.sinkKind).toBe('slot');
   });
 
-  it('дефолтна мийка стає по центру деталі', () => {
+  /*
+   * №156: до 08.09 нова мийка ставала по ЦЕНТРУ деталі. Власник змінив
+   * правило — «тут по дефолту 100»: мийка народжується з відступом 100 мм від
+   * сторін, як і новий виріз, бо центр однаково перебивали руками.
+   */
+  it('дефолтна мийка стає з відступом 100 мм від сторін', () => {
     const created = createProductSink('2', countertopDef());
-    expect(created.x).toBe(1000);
-    expect(created.y).toBe(300);
+    expect(created.x).toBe(100);
+    expect(created.y).toBe(100);
     expect(created.kind).toBe('rect');
   });
 });

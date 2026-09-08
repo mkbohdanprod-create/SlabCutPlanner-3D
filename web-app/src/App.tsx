@@ -12,7 +12,6 @@ import { Scissors, FolderOpen, Loader2, UserCircle, Save, Image, Download, FileT
 import { downloadTextFile } from './utils/file';
 import { exportProjectPng } from './utils/export';
 import { PdfExportDialog } from './components/ui/PdfExportDialog';
-import { StudioGate } from './components/studio/StudioGate';
 import { StudioHome } from './components/studio/StudioHome';
 import { StudioReveal, prefersReducedMotion } from './components/studio/StudioReveal';
 import { LanguageDomTranslator } from './components/ui/LanguageDomTranslator';
@@ -96,7 +95,6 @@ function App() {
      відкриває віконце з фразою, правильна фраза веде на стартову лінійки
      продуктів. Стан тримаємо локально: перезавантаження сторінки має
      повертати застосунок, а не студію. */
-  const [studioGateOpen, setStudioGateOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
   /* Кам'яна плита, що відсувається, — окремий шар поверх студії. */
   const [studioReveal, setStudioReveal] = useState(false);
@@ -320,7 +318,19 @@ function App() {
                 <span className="font-medium text-2xl tracking-tighter leading-none pt-1">viyar</span>
                 <span
                   className="font-normal text-2xl tracking-tight leading-none ml-1.5 pt-1 select-none"
-                  onClick={() => setStudioGateOpen(true)}
+                  /*
+                   * №165 (власник 08.09: «прибери цей пароль, зроби подвійний
+                   * клік там і все»). Вхід у Студію — ПОДВІЙНИЙ клік по слову
+                   * «stone». Пароль прибраний разом із віконцем: він лежав у
+                   * коді відкритим рядком, а код їде в публічний репозиторій —
+                   * тобто захищав рівно нікого, зате світився назавжди в
+                   * історії git. Подвійний клік лишається тим самим
+                   * запобіжником від випадкового пальця, що й було задумано.
+                   */
+                  onDoubleClick={() => {
+                    setStudioOpen(true);
+                    if (!prefersReducedMotion()) setStudioReveal(true);
+                  }}
                 >stone</span>
                 <span
                   className="font-bold text-sm tracking-widest leading-none ml-1.5"
@@ -822,18 +832,9 @@ function App() {
       <EdgeProfileSettingsModal isOpen={isEdgeProfileSettingsOpen} onClose={() => setIsEdgeProfileSettingsOpen(false)} />
       <EdgeProfileCatalogHost />
 
-      {/* Пасхалка → Viyar Stone Studio. Студія — шар ПОВЕРХ застосунку:
+      {/* №165: віконце з паролем прибране. Студія — шар ПОВЕРХ застосунку:
           він лишається змонтованим, тож вихід повертає туди ж, де були,
-          без перезбирання 3D-сцени. */}
-      <StudioGate
-        open={studioGateOpen}
-        onClose={() => setStudioGateOpen(false)}
-        onUnlock={() => {
-          setStudioGateOpen(false);
-          setStudioOpen(true);
-          if (!prefersReducedMotion()) setStudioReveal(true);
-        }}
-      />
+          без перезбирання 3D-сцени. Відкриває подвійний клік по «stone». */}
       {studioOpen && <StudioHome onClose={() => { setStudioOpen(false); setStudioReveal(false); }} />}
       {studioReveal && <StudioReveal onDone={() => setStudioReveal(false)} />}
     </div>

@@ -3,7 +3,7 @@ import type { DetailDraft } from '../forms/utils/draftHelpers';
 import { curvedContour, isCurvedKind } from '../../domain/baseContour';
 import { DIAMETER_SIDE, ELLIPSE_H_SIDE, ELLIPSE_W_SIDE, sideIsLockable, WIDTH_SIDE } from '../../domain/sideLocks';
 import {
-  jointAnchorPoints, jointAxisForSide, jointFieldPairs, manualJointPosition,
+  jointAnchorPoints, jointAxisForSide, jointFieldPairs, manualJointPosition, outlineFromSides,
   nearestAnchorId, referenceSideForJoint, referenceSideInField, type JointSideSegment,
 } from '../../domain/joints';
 import { toDetailShape } from '../../domain/elementToDetail';
@@ -456,7 +456,9 @@ export function Detail2DBlueprint({ detail, lockedSides, onToggleSideLock, onCom
    * сторону не давав зробити другий стик — звідси «стик до стика не робиться».
    */
   const jointPairs = useMemo(
-    () => (jointMode ? jointFieldPairs(jointSides, points) : []),
+    /* Б-159: той самий контур із обох кінців сторін, що й у 3D — інакше на
+       кресленні і в моделі різні набори пар. */
+    () => (jointMode ? jointFieldPairs(jointSides, outlineFromSides(jointSides)) : []),
     [jointMode, jointSides, points],
   );
 

@@ -1,8 +1,8 @@
 import  { useEffect, useState } from 'react';
 import { useUIStore } from '../../store/useStore';
-import { X, Book, LayoutDashboard, Scissors, Box, Layers, Settings,  Trash2, FolderOpen, Save, FileText, Image, Search, Ruler, Monitor, MousePointerSquareDashed, Eraser, Copy, Lock, Crosshair, Waves, RotateCw, Upload } from 'lucide-react';
+import { X, Book, LayoutDashboard, Scissors, Box, Layers, Settings,  Trash2, FolderOpen, Save, FileText, Image, Search, Ruler, Monitor, MousePointerSquareDashed, Eraser, Copy, Lock, Crosshair, Waves, RotateCw, Upload, Split } from 'lucide-react';
 
-type HelpSection = 'main' | 'quick' | '2d' | 'product_editor' | 'sizes' | 'edges' | 'measure' | '3d_editor' | '3d_preview' | 'slab' | 'parts' | 'texture';
+type HelpSection = 'main' | 'quick' | '2d' | 'product_editor' | 'sizes' | 'edges' | 'joints' | 'measure' | '3d_editor' | '3d_preview' | 'slab' | 'parts' | 'texture';
 
 /** Скріншот у довідці: файл із public/help (копіюється в збірку як є). */
 function HelpShot({ src, caption }: { src: string; caption: string }) {
@@ -112,6 +112,12 @@ export function HelpDialog() {
               className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${activeSection === 'edges' ? 'bg-[#0084ff] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
             >
               <Scissors className="w-4 h-4" /> Кромки і торці
+            </button>
+            <button
+              onClick={() => setActiveSection('joints')}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${activeSection === 'joints' ? 'bg-[#0084ff] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
+            >
+              <Split className="w-4 h-4" /> Стики між деталями
             </button>
             <button
               onClick={() => setActiveSection('measure')}
@@ -618,6 +624,66 @@ export function HelpDialog() {
                     2D креслення (таблиця розмірів), дизайнер обробки, властивості розміщення на карті
                     крою і контекстне меню ребра в 3D — усюди ті самі групи, каталог і мініатюри, щоб
                     кромка виглядала однаково незалежно від того, звідки її задали.
+                  </HelpBlock>
+                </div>
+              </div>
+            )}
+
+            {activeSection === 'joints' && (
+              <div className="animate-in slide-in-from-right-4 fade-in duration-300">
+                <h1 className="text-2xl font-bold mb-2 text-slate-800 border-b pb-4">Стики між деталями</h1>
+                <p className="text-slate-600 mb-6">
+                  Стик — це місце, де виріб ріжеться на дві деталі і потім склеюється в цеху.
+                  Ставлять його, коли деталь більша за сляб, коли ріжемо із залишку або коли шов
+                  вигідніше вивести в конкретне місце (під мийку, за плиту, у кут). Стик — це різ,
+                  а не декор: він додає два торці, які потрапляють у розкрій, кошторис і креслення.
+                </p>
+
+                <div className="space-y-6">
+                  <HelpBlock icon={<Split className="w-5 h-5" />} accent title="Стик ставиться в 3D, у режимі «Стики»">
+                    Відкрийте деталь (подвійний клік по ній) і ввімкніть <b>«Стики»</b> в тулбарі над
+                    моделлю — або просто розгорніть секцію «Стики (З'єднання деталей)» справа: вона
+                    вмикає режим сама. Це <b>єдине</b> місце створення стику. Старих кнопок
+                    «+ Вертикальний / + Горизонтальний» більше немає: вони ставили різ наосліп, лише
+                    за координатою, і на Г- та П-подібній деталі такий різ ішов наскрізь через усі
+                    виступи.
+                  </HelpBlock>
+
+                  <HelpBlock icon={<MousePointerSquareDashed className="w-5 h-5" />} title="Бейдж пари сторін">
+                    У режимі «Стики» на кожній парі протилежних сторін стоїть бурштиновий бейдж із
+                    буквою. Пара — це і є адреса стику: різ піде <b>від однієї сторони до другої</b> і
+                    тільки в межах їхнього спільного поля. Тому на П-подібній стільниці у верхньої
+                    сторони пар декілька — по одній на кожну ногу, і різ у лівій нозі не чіпає праву.
+                  </HelpBlock>
+
+                  <HelpBlock icon={<Crosshair className="w-5 h-5" />} title="Наведення: поле, лінійка, лінія різу">
+                    Наведіть на бейдж — підсвітиться поле цієї пари, з'явиться лінія майбутнього різу,
+                    а <b>жовтим</b> засвітиться сторона, від якої рахується відступ (сторона-лінійка).
+                    Вона ж стоїть жовтим чипом у віконці відступу — щоб не було сумнівів, від чого
+                    міряємо.
+                  </HelpBlock>
+
+                  <HelpBlock icon={<Ruler className="w-5 h-5" />} title="Клік: відступ і Enter">
+                    Клацніть бейдж — відкриється віконце з полем відступу (фокус уже в ньому).
+                    Введіть міліметри від підсвіченої сторони і натисніть <b>Enter</b>. Стик
+                    з'явиться в списку секції «Стики»: там його можна переміряти <b>від кута</b>
+                    (випадачка «Від краю деталі / Від кута …»), змінити відстань або видалити
+                    кошиком.
+                  </HelpBlock>
+
+                  <HelpBlock icon={<Waves className="w-5 h-5" />} title="Коли стик посунеться сам">
+                    Якщо на заданій відстані різ потрапляє на дугу скруглення, деталь звузилась би
+                    там у нуль і вістря лопнуло б при різі. Тоді в картці стику з'являється
+                    бурштинова записка «стик буде посунуто на … мм» — програма відводить різ від дуги
+                    і чесно каже, куди саме. На увігнутому куті Г- і П-форми з радіусом окремо
+                    питається, <b>кому дістається дуга</b> — вести стик по ній не можна.
+                  </HelpBlock>
+
+                  <HelpBlock icon={<Layers className="w-5 h-5" />} title="Що стик тягне за собою">
+                    Після стику деталь у розкрої стає двома деталями, у кожної з'являється торець по
+                    шву. Ці торці видно в кресленнях і в специфікації; кромку на шов зазвичай не
+                    ставлять — його склеюють. Перевірити результат найпростіше на 2D кресленні
+                    деталі: там та сама пара сторін і та сама лінія різу, що й у 3D.
                   </HelpBlock>
                 </div>
               </div>

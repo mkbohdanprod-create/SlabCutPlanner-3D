@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ProductElement3DNode } from '../3d/ProductElement3DNode';
 import {  ChevronDown, ChevronRight, ChevronLeft, Save, Trash2, Folder, LayoutTemplate } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
@@ -45,7 +45,7 @@ import { WallPanelModal } from './WallPanelModal';
 import { LegModal } from './LegModal';
 import { CornerContextMenu } from './CornerContextMenu';
 import { CornerProcessingModal } from './CornerProcessingModal';
-import { CutoutProcessingModal } from './CutoutProcessingModal';
+import { CutoutProcessingForm } from './CutoutProcessingModal';
 import { Box, GripHorizontal, FileText, CornerDownRight, Plus } from 'lucide-react';
 import { CreateProductModal } from './CreateProductModal';
 import { ProductTemplateModal } from './ProductTemplateModal';
@@ -103,12 +103,43 @@ import type { CustomService } from '../../domain/types';
  * відкривав би «Кромки» заново після кожного перемикання. Тому стан живе
  * поза компонентом, за назвою розділу — на час сесії редактора.
  */
-const accordionOpenState = new Map<string, boolean>();
+/**
+ * №149: яка секція властивостей відповідає якому режиму 3D. Один словник —
+ * і тулбар, і панелі, і 3D говорять про одне й те саме.
+ */
+const PANEL_BY_MODE: Record<string, string> = {
+  corners: 'Обробка кутів (Радіуси)',
+  planes: 'Вирізи (Обробка площин)',
+  edges: 'Кромки (Обробка торців)',
+  sides: 'Сторони (Бортики, Потовщення, Підвороти)',
+  joints: "Стики (З'єднання деталей)",
+};
 
-function Accordion({ title, children, defaultOpen = false, info }: {
+/**
+ * СЕКЦІЯ ВЛАСТИВОСТЕЙ (№147–149).
+ *
+ * Відкрита рівно ОДНА секція, і вона **повністю керована згори**: ніякого
+ * власного стану, ніяких ефектів «розкрийся сам». Перша спроба (№147) тримала
+ * відкриту назву в модульному об'єкті і відкривала секцію ефектом на зміну
+ * режиму — ефекти різних секцій виконувались у своєму порядку і перезаписували
+ * один одного: підсвічувалась одна панель, а розкривалась інша (власник:
+ * «пішло по пизді автоматичне відкривання треїв»). Тепер відкрита назва —
+ * звичайний стан майстерні, і змінюється вона рівно в одному місці.
+ */
+function Accordion({ title, children, info, mode, activeMode, isOpen, onHeaderClick }: {
   title: string;
   children: React.ReactNode;
-  defaultOpen?: boolean;
+  /**
+   * №146 (власник 08.09): «неважливо, де ми натиснули — кнопка і шапка меню
+   * одразу підсвічуються, меню обробок розкривається, а деталь у 3D
+   * переключається у відповідний режим». Секція, що має свою кнопку в
+   * тулбарі 3D, називає тут свій режим; решта секцій лишаються звичайними
+   * акордеонами без підсвітки.
+   */
+  mode?: 'corners' | 'planes' | 'edges' | 'sides' | 'joints';
+  activeMode?: string | null;
+  isOpen: boolean;
+  onHeaderClick: () => void;
   /**
    * Розділ довідки (01.09, власник: «добавляй значок-кнопку “і” — інформація,
    * і там описано, як правильно користуватись даним інтерфейсом, зі скрінами»).
@@ -116,17 +147,17 @@ function Accordion({ title, children, defaultOpen = false, info }: {
    */
   info?: string;
 }) {
-  const [isOpen, setIsOpenState] = useState(() => accordionOpenState.get(title) ?? defaultOpen);
   const openHelp = useUIStore((s) => s.openHelp);
-  const setIsOpen = (next: boolean) => {
-    accordionOpenState.set(title, next);
-    setIsOpenState(next);
-  };
+  const isActiveMode = Boolean(mode && activeMode === mode);
   return (
     <div className="border-b border-slate-200">
       <button 
-        className="w-full py-3 px-4 flex items-center justify-between text-sm font-bold text-[#1f2d3a] hover:bg-slate-50 transition-colors"
-        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full py-3 px-4 flex items-center justify-between text-sm font-bold transition-colors ${isActiveMode ? '' : 'text-[#1f2d3a] hover:bg-slate-50'}`}
+        /* Фон inline, а не утилітою: глобальне `button{background:…}` у
+           global.css лежить ПОЗА шарами Tailwind і тому перебиває будь-яку
+           утиліту фону на кнопці (див. журнал №148). */
+        style={isActiveMode ? { background: '#0084ff', color: '#fff', borderColor: '#0084ff' } : undefined}
+        onClick={onHeaderClick}
       >
         {title}
         <span className="flex items-center gap-2">
@@ -134,13 +165,15 @@ function Accordion({ title, children, defaultOpen = false, info }: {
             <span
               role="button"
               title="Як користуватись цим розділом — інструкція зі скрінами"
-              className="w-5 h-5 rounded-full border border-[#b9d5f5] bg-[#dbeafe] text-[#0058ab] text-[11px] font-bold flex items-center justify-center hover:bg-[#0084ff] hover:text-white transition-colors"
+              className={`w-5 h-5 rounded-full border text-[11px] font-bold flex items-center justify-center transition-colors ${isActiveMode ? 'border-white/60 bg-white/20 text-white hover:bg-white hover:text-[#0084ff]' : 'border-[#b9d5f5] bg-[#dbeafe] text-[#0058ab] hover:bg-[#0084ff] hover:text-white'}`}
               onClick={(e) => { e.stopPropagation(); openHelp(info); }}
             >
               i
             </span>
           )}
-          {isOpen ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+          {isOpen
+            ? <ChevronDown className={`w-4 h-4 ${isActiveMode ? 'text-white' : 'text-slate-400'}`} />
+            : <ChevronRight className={`w-4 h-4 ${isActiveMode ? 'text-white' : 'text-slate-400'}`} />}
         </span>
       </button>
       {isOpen && <div className="px-4 pb-4">{children}</div>}
@@ -599,13 +632,30 @@ export function ProductEditorWorkspace() {
   const [jointContextMenu, setJointContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   /** Клік по стороні в режимі «Стики»: що саме різатимемо і де відкрити віконечко. */
   const [jointSidePopup, setJointSidePopup] = useState<{ joint: JointSideSelection; x: number; y: number } | null>(null);
+  /**
+   * №146: режим обробок живе тут, а не всередині 3D — щоб кнопка в тулбарі і
+   * шапка панелі праворуч були одним станом: натиснув будь-де, підсвітились
+   * обидва, панель розкрилась, деталь у 3D перейшла в цей режим.
+   */
+  const [editMode, setEditModeState] = useState<'corners' | 'planes' | 'edges' | 'sides' | 'joints'>('corners');
+  /* Відкрита секція властивостей — рівно одна, або жодної. */
+  const [openPanel, setOpenPanel] = useState<string | null>(PANEL_BY_MODE.corners);
+  /** Перемикання режиму: тулбар 3D, шапка секції — одні двері. */
+  const setEditMode = (next: 'corners' | 'planes' | 'edges' | 'sides' | 'joints') => {
+    setEditModeState(next);
+    setOpenPanel(PANEL_BY_MODE[next] ?? null);
+  };
+  /** Клік по шапці: своя секція згортається/розгортається, чужа — вмикає свій режим. */
+  const panelHeaderClick = (title: string, mode?: 'corners' | 'planes' | 'edges' | 'sides' | 'joints') => {
+    if (mode && mode !== editMode) { setEditMode(mode); return; }
+    setOpenPanel(openPanel === title ? null : title);
+  };
   const [modalCornerId, setModalCornerId] = useState<string | null>(null);
   const [modalCutoutId, setModalCutoutId] = useState<string | null>(null);
-  /** Форма нового вирізу за замовчуванням. Раніше її задавали кнопки з 2D
-   *  (FG-21) — тепер форму обирають у самому вікні вирізу. */
-  const newCutoutShape: 'rect' | 'circle' = 'rect';
+  /* №155: сталої «форми нового вирізу» більше немає — тип обирають випадачкою
+     в панелі «Вирізи», і вибір одразу створює виріз із базовими розмірами. */
 
-  const [edgeContextMenu, setEdgeContextMenu] = useState<{ visible: boolean; x: number; y: number; edgeId: string } | null>(null);
+  const [edgeContextMenu, setEdgeContextMenu] = useState<{ visible: boolean; x: number; y: number; edgeId: string; variant: 'sides' | 'profiles' } | null>(null);
   /*
    * ХВИЛЯ 4, крок 4.3 (FG-15) — кілька панелей на одну сторону.
    *
@@ -764,7 +814,10 @@ export function ProductEditorWorkspace() {
 
   const updateDetail = (patch: Partial<DetailDraft>) => {
     if (!detail) return;
-    const parentId = session.activeDetailId === 'main' ? 'main' : session.activeDetailId;
+    /* Порожній activeDetailId означає головну деталь — так само, як у
+       `isMainActive` вище. Без `?? 'main'` сюди приходив null і йшов
+       ключем у subDetails. */
+    const parentId = session.activeDetailId === 'main' ? 'main' : (session.activeDetailId ?? 'main');
     let nextSubDetails = { ...session.subDetails };
     let didUpdateSubDetails = false;
 
@@ -872,17 +925,47 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
   };
 
   const handleCutoutSave = (cutout: any) => {
-    const newCutouts = { ...detail.cutouts };
-    
-    if (modalCutoutId === 'new') {
-      const id = `cutout_${Date.now()}`;
-      newCutouts[id] = { ...cutout, id };
-    } else if (modalCutoutId) {
-      newCutouts[modalCutoutId] = { ...cutout, id: modalCutoutId };
-    }
+    if (!modalCutoutId) return;
+    updateDetail({ cutouts: { ...detail.cutouts, [modalCutoutId]: { ...cutout, id: modalCutoutId } } });
+  };
 
-    updateDetail({ cutouts: newCutouts });
-    setModalCutoutId(null);
+  /*
+   * №155 (власник 08.09): «панель існує справа, і коли вибираєш тип вирізу —
+   * він з'являється 100 на 100 з відступом 100 на 100, типу базово, і
+   * показується в 3D». Тобто виріз народжується ОДРАЗУ, з робочими
+   * значеннями за замовчуванням, а далі його правлять числами в панелі —
+   * жодного вікна і жодного «Застосувати».
+   */
+  const handleCreateCutout = (kind: 'rect' | 'circle' | 'socket' | 'faucet', targetSlot?: string) => {
+    /*
+     * №157: раніше клік по площині робив ДВА записи в сесію підряд —
+     * `setSession({...session, activeDetailId})` і слідом `updateDetail`,
+     * обидва зібрані з одного й того самого (застарілого) об'єкта сесії.
+     * Другий затирав перший, і виріз або не з'являвся, або лягав не на ту
+     * деталь. Тепер це ОДИН запис: і адреса деталі, і новий виріз разом.
+     */
+    const slot = targetSlot ?? (session.activeDetailId || 'main');
+    const isMain = slot === 'main';
+    const target = isMain
+      ? session.mainDetail
+      : (session.subDetails?.[slot] ?? findGeneratedDraft(slot));
+    if (!target) return;
+
+    const id = `cutout_${Date.now()}`;
+    const anchor = getCornersForKind(target.kind)[0] ?? 'AB';
+    const base = { id, bindCorner: anchor, x: 100, y: 100 };
+    const cutout =
+      kind === 'rect' ? { ...base, shape: 'rect', type: 'custom', width: 100, height: 100, cornerRadius: 5 }
+        : kind === 'circle' ? { ...base, shape: 'circle', type: 'custom', radius: 50 }
+          : kind === 'socket' ? { ...base, shape: 'circle', type: 'socket', radius: 32.5 }
+            : { ...base, shape: 'circle', type: 'faucet', radius: 17.5 };
+    const cutouts = { ...(target.cutouts ?? {}), [id]: cutout as never };
+
+    setSession(isMain
+      ? { ...session, activeDetailId: 'main', mainDetail: { ...session.mainDetail, cutouts } }
+      : { ...session, activeDetailId: slot, subDetails: { ...session.subDetails, [slot]: { ...target, cutouts } } });
+    setEditMode('planes');
+    setModalCutoutId(id);
   };
 
   const handleDeleteCorner = (cornerId: string) => {
@@ -996,8 +1079,12 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     });
   };
 
+  /* №150: меню сторони належить режиму «Сторони». У режимі «Кромки» його
+     викликає тільки ДУГА скруглення — і тоді це одразу список профілів,
+     бо рядка дуги в панелі «Кромки» немає. */
   const handleEdgeClick = (edgeId: string, x: number, y: number) => {
-    setEdgeContextMenu({ visible: true, x, y, edgeId });
+    const variant = editMode === 'edges' ? 'profiles' : 'sides';
+    setEdgeContextMenu({ visible: true, x, y, edgeId, variant });
   };
 
   /** Лівий клік по літері сторони в 3D — взірець / копіювання обробки, як у панелі кромок. */
@@ -1022,7 +1109,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
   const detailPanels = detail ? {
     edges: (
       <>
-                  <Accordion title="Кромки (Обробка торців)" info="edges">
+                  <Accordion title="Кромки (Обробка торців)" info="edges" mode="edges" activeMode={editMode} isOpen={openPanel === "Кромки (Обробка торців)"} onHeaderClick={() => panelHeaderClick("Кромки (Обробка торців)", "edges")}>
                     <EdgeProfilesPanel
                       edgeProfiles={detail.edgeProfiles}
                       /* Матеріал виробу (01.09) — від нього порядок груп у випадачці кромок */
@@ -1051,7 +1138,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     ),
     corners: (
       <>
-          <Accordion title="Обробка кутів (Радіуси)">
+          <Accordion title="Обробка кутів (Радіуси)" mode="corners" activeMode={editMode} isOpen={openPanel === "Обробка кутів (Радіуси)"} onHeaderClick={() => panelHeaderClick("Обробка кутів (Радіуси)", "corners")}>
             <div className="p-4 flex flex-col gap-2">
               {detail.corners && Object.keys(detail.corners).length > 0 ? (
                 Object.entries(detail.corners).map(([cornerId, corner]) => (
@@ -1092,37 +1179,85 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     ),
     cutouts: (
       <>
-          <Accordion title="Обробка площин (Вирізи)">
+          <Accordion title="Вирізи (Обробка площин)" mode="planes" activeMode={editMode} isOpen={openPanel === "Вирізи (Обробка площин)"} onHeaderClick={() => panelHeaderClick("Вирізи (Обробка площин)", "planes")}>
             <div className="p-4 flex flex-col gap-2">
+              {/* №155: вибір типу і є створенням. Виріз стає 100×100 з відступом
+                  100/100 від першого кута — видно в 3D одразу, далі правиться
+                  числами нижче. */}
+              <div className="flex flex-col gap-1">
+                <label className="text-slate-600 font-medium text-xs">Тип вирізу</label>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const kind = e.target.value as 'rect' | 'circle' | 'socket' | 'faucet' | '';
+                    if (kind) handleCreateCutout(kind);
+                  }}
+                  className="border border-slate-300 rounded-sm h-8 px-2 text-xs outline-none focus:border-[#1f93ef] bg-white font-medium"
+                >
+                  <option value="">+ Додати виріз…</option>
+                  <option value="rect">Довільний, прямокутний</option>
+                  <option value="circle">Довільний, круглий</option>
+                  <option value="socket">Під розетки</option>
+                  <option value="faucet">Під крани</option>
+                </select>
+              </div>
+
               {detail.cutouts && Object.keys(detail.cutouts).length > 0 ? (
                 Object.entries(detail.cutouts).map(([cutoutId, cutout]) => (
-                  <div key={cutoutId} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
-                    <div className="flex flex-col">
-                      <span className="font-bold text-[#1f2d3a] text-sm">Виріз {cutout.type === 'socket' ? '(Розетка)' : cutout.type === 'faucet' ? '(Кран)' : '(Довільний)'}</span>
-                      <span className="text-xs text-slate-500">
-                        {cutout.shape === 'circle' ? `Радіус: ${cutout.radius} мм` : `Розмір: ${cutout.width}x${cutout.height} мм`}
-                      </span>
+                  /* №154: форма редагування розкривається ПРЯМО ПІД своїм
+                     рядком — так видно, який саме виріз правиться. Плаваюче
+                     вікно лишилось тільки для створення з поверхні. */
+                  <div key={cutoutId} className="flex flex-col">
+                    <div className={`flex items-center justify-between p-2 border rounded-sm ${modalCutoutId === cutoutId ? 'bg-[#0084ff]/5 border-[#0084ff]' : 'bg-slate-50 border-slate-200'}`}>
+                      <div className="flex flex-col">
+                        <span className="font-bold text-[#1f2d3a] text-sm">Виріз {cutout.type === 'socket' ? '(Розетка)' : cutout.type === 'faucet' ? '(Кран)' : '(Довільний)'}</span>
+                        <span className="text-xs text-slate-500">
+                          {cutout.shape === 'circle' ? `Радіус: ${cutout.radius} мм` : `Розмір: ${cutout.width}x${cutout.height} мм`}
+                        </span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setModalCutoutId(modalCutoutId === cutoutId ? null : cutoutId)}
+                          className="text-[#0084ff] hover:bg-[#0084ff]/10 px-2 py-1 rounded-sm text-xs font-medium transition-colors"
+                        >
+                          {modalCutoutId === cutoutId ? 'Згорнути' : 'Редагувати'}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCutout(cutoutId)}
+                          className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
+                          title="Видалити"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => setModalCutoutId(cutoutId)}
-                        className="text-[#0084ff] hover:bg-[#0084ff]/10 px-2 py-1 rounded-sm text-xs font-medium transition-colors"
-                      >
-                        Редагувати
-                      </button>
-                      <button 
-                        onClick={() => handleDeleteCutout(cutoutId)}
-                        className="text-red-500 hover:bg-red-50 p-1 rounded-sm transition-colors"
-                        title="Видалити"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+                    {modalCutoutId === cutoutId && (
+                      <div className="border border-t-0 border-[#0084ff] rounded-b-sm bg-[#dcf2fb]/40">
+                        <CutoutProcessingForm
+                          compact
+                          instant
+                          initialData={cutout}
+                          corners={getCornersForKind(detail.kind)}
+                          language={language}
+                          detailWidth={detail.width}
+                          detailHeight={detail.height}
+                          shapeCtx={{
+                            shape: detail ? toDetailShape(detail.kind) : undefined,
+                            geometry: detail as never,
+                            width: detail?.width ?? 0,
+                            height: detail?.height ?? 0,
+                          }}
+                          onClose={() => setModalCutoutId(null)}
+                          onSave={handleCutoutSave}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))
               ) : (
                 <div className="text-sm text-slate-500 text-center py-4">
-                  Немає вирізів. Створіть їх через праве меню на поверхні.
+                  Вирізів немає. Оберіть тип вище — виріз з'явиться в 3D одразу,
+                  далі правиться числами.
                 </div>
               )}
             </div>
@@ -1131,7 +1266,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     ),
     millings: (
       <>
-          <Accordion title="Фрезерування площини (Проточки для води)">
+          <Accordion title="Фрезерування площини (Проточки для води)" isOpen={openPanel === "Фрезерування площини (Проточки для води)"} onHeaderClick={() => panelHeaderClick("Фрезерування площини (Проточки для води)")}>
             <SurfaceGroovesPanel
               groups={detail.surfaceGrooves}
               partWidthMm={realEdgeLengths(detail).A || detail.width || 1000}
@@ -1145,7 +1280,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     ),
     joints: (
       <>
-          <Accordion title="Стики (З'єднання деталей)">
+          <Accordion title="Стики (З'єднання деталей)" info="joints" mode="joints" activeMode={editMode} isOpen={openPanel === "Стики (З'єднання деталей)"} onHeaderClick={() => panelHeaderClick("Стики (З'єднання деталей)", "joints")}>
             <div className="p-4 flex flex-col gap-2">
               {/* Кому дістається дуга, коли стик стоїть у куті з радіусом.
                   Поля `jointOmegaRadiusSide` / `jointLambdaRadiusSide` давно
@@ -1265,26 +1400,31 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                 );
               })}
 
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={() => handleAddManualJoint({ axis: 'vertical' })}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
-                >
-                  + Вертикальний
-                </button>
-                <button
-                  onClick={() => handleAddManualJoint({ axis: 'horizontal' })}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium text-[#0084ff] border border-[#0084ff] hover:bg-[#0084ff]/5 rounded-sm transition-colors"
-                >
-                  + Горизонтальний
-                </button>
+              {/* №152 (власник 08.09): кнопки «+ Вертикальний / + Горизонтальний»
+                  прибрані. Вони ставили стик наосліп — без пари сторін, лише за
+                  координатою лінії, і саме такий стик різав деталь наскрізь через
+                  усі виступи (журнал №141). Єдине місце створення стику — режим
+                  «Стики» в 3D, де стик одразу отримує адресу: пару сторін і поле. */}
+              <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-sm px-3 py-2 leading-relaxed flex flex-col gap-1.5">
+                <span className="font-bold text-[#1f2d3a] text-sm">Як поставити стик</span>
+                <span>
+                  1. Увімкніть режим <b>«Стики»</b> в тулбарі над моделлю (ця секція
+                  вмикає його сама).
+                </span>
+                <span>
+                  2. На кожній парі протилежних сторін стоїть бурштиновий бейдж.
+                  Наведіть — підсвітиться поле пари, сторона-лінійка (жовтим) і лінія
+                  майбутнього різу.
+                </span>
+                <span>
+                  3. Клацніть бейдж, введіть відступ <b>від підсвіченої сторони</b> і
+                  натисніть Enter. Стик з'явиться в списку вище — там його можна
+                  переміряти від кута або видалити.
+                </span>
+                <span className="text-slate-500">
+                  Стик потрібен, коли деталь більша за сляб або ріжемо із залишку.
+                </span>
               </div>
-
-              {!(detail.manualJoints ?? []).length && (
-                <div className="text-xs text-slate-500 text-center pt-1">
-                  Стик на довільній відстані — коли деталь більша за сляб або ріжемо із залишку.
-                </div>
-              )}
             </div>
           </Accordion>
       </>
@@ -1348,6 +1488,8 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           <div className="flex-1 relative bg-[#eaf0f4] overflow-hidden flex flex-col">
             {session.mainDetail ? (
               <Detail3DPreview
+                editMode={editMode}
+                onEditModeChange={setEditMode}
                 detail={session.mainDetail}
                 subDetails={session.subDetails}
                 /* Місце виробу в приміщенні (01.09): із сесії (туди ж пише «Поставити на площину»); новий без місця стане в центр підлоги */
@@ -1372,15 +1514,9 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                 onJointClick={(id, x, y) => setJointContextMenu({ id, x, y })}
                 onJointSideClick={(joint, x, y) => setJointSidePopup({ joint, x, y })}
                 jointRulerSide={jointSidePopup?.joint.referenceSideId ?? null}
-                /* Виріз має лягти на ту деталь, по площині якої клікнули,
-                   а не на активну — інакше виріз для панелі потрапляє на стільницю. */
-                onPlaneClick={(clickedId) => {
-                  const slot = clickedId ? toSlot(clickedId) : (session.activeDetailId ?? 'main');
-                  if (slot !== session.activeDetailId) {
-                    setSession({ ...session, activeDetailId: slot });
-                  }
-                  setModalCutoutId('new');
-                }}
+                /* №162: створення вирізу кліком по площині прибране на вимогу
+                   власника — випадкові кліки плодили вирізи. Єдиний вхід —
+                   випадачка «Тип вирізу» в панелі «Вирізи». */
                 /* №134 (вимога власника 08.09): подвійний клік по БУДЬ-ЯКІЙ деталі
                    виробу веде в те саме вікно налаштувань, що й основна деталь —
                    з п'ятьма секціями праворуч. Маленькі діалоги «Ширина/Висота/
@@ -1540,25 +1676,10 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
               />
             )}
 
-            {modalCutoutId && (
-              <CutoutProcessingModal
-                initialData={modalCutoutId === 'new' ? { shape: newCutoutShape } : detail.cutouts?.[modalCutoutId]}
-                corners={getCornersForKind(detail.kind)}
-                language={language}
-                detailWidth={detail?.width}
-                detailHeight={detail?.height}
-                /* FG-18: вікно має бачити РЕАЛЬНУ форму, а не лише габарит —
-                   інакше виріз у виїмці Г-подібної виглядає допустимим. */
-                shapeCtx={{
-                  shape: detail ? toDetailShape(detail.kind) : undefined,
-                  geometry: detail as never,
-                  width: detail?.width ?? 0,
-                  height: detail?.height ?? 0,
-                }}
-                onClose={() => setModalCutoutId(null)}
-                onSave={handleCutoutSave}
-              />
-            )}
+            {/* №155: плаваючого вікна вирізу більше немає — усе живе в панелі
+                «Вирізи» справа (власник: «все буде в панелі справа»). Компонент
+                `CutoutProcessingModal` лишився у файлі форми на випадок, якщо
+                вікно колись знадобиться десь іще. */}
 
             {edgeContextMenu && (
               <EdgeContextMenu
@@ -1566,6 +1687,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                 y={edgeContextMenu.y}
                 edgeId={edgeContextMenu.edgeId}
                 edgeLabel={lcutSideLabels[edgeContextMenu.edgeId]}
+                variant={edgeContextMenu.variant}
                 onClose={() => setEdgeContextMenu(null)}
                 onSelectProfile={(profile) => {
                   setEdgeContextMenu(null);
@@ -2118,7 +2240,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   накладаються. Тому для неї показуємо конструктор мийки
                   замість таблиці сторін. */}
               {isMetalDetail ? (
-                <Accordion title="Профіль металопрокату">
+                <Accordion title="Профіль металопрокату" isOpen={openPanel === "Профіль металопрокату"} onHeaderClick={() => panelHeaderClick("Профіль металопрокату")}>
                   <div className="p-4 flex flex-col gap-3 bg-white">
                     <div className="flex flex-col gap-1">
                       <label className="text-xs font-medium text-slate-600">Типорозмір</label>
@@ -2256,14 +2378,14 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                 </Accordion>
               ) : isSinkDetail ? (
                 <>
-                  <Accordion title="Розміри мийки">
+                  <Accordion title="Розміри мийки" isOpen={openPanel === "Розміри мийки"} onHeaderClick={() => panelHeaderClick("Розміри мийки")}>
                     <div className="p-3 bg-white">
                       <SinkDesigner detail={detail} updateDetail={(patch) => updateDetail(patch)} />
                     </div>
                   </Accordion>
                   {/* Решітка зливу (28.08) — водоструменевий різ у дні.
                       Живе тільки в мийки: на стільниці такої операції немає. */}
-                  <Accordion title="Решітка зливу (різ водою)">
+                  <Accordion title="Решітка зливу (різ водою)" isOpen={openPanel === "Решітка зливу (різ водою)"} onHeaderClick={() => panelHeaderClick("Решітка зливу (різ водою)")}>
                     <DrainGratePanel
                       grate={detail.drainGrate}
                       /* Решітка живе в КРУГЛІЙ деталі дна Ø114 (деталь №14
@@ -2279,7 +2401,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   {/* Доповнення і кромки — ДВА окремі треї (10.08): кромка і
                       підворот на одній стороні сумісні, стара спільна таблиця
                       їх взаємовиключала. */}
-                  <Accordion title="Сторони (Бортики, Потовщення, Підвороти)">
+                  <Accordion title="Сторони (Бортики, Потовщення, Підвороти)" mode="sides" activeMode={editMode} isOpen={openPanel === "Сторони (Бортики, Потовщення, Підвороти)"} onHeaderClick={() => panelHeaderClick("Сторони (Бортики, Потовщення, Підвороти)", "sides")}>
                     {/* Крок 4.1: трей однаковий і для стільниці, і для
                         доповнення — з розмірами на обох рівнях. Префікс
                         слота каже панелі, чиї саме доповнення показувати. */}
@@ -2395,7 +2517,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           {detailPanels.joints}
 
           {isMainActive && !isSinkDetail && !isMetalDetail && (
-          <Accordion title="Встановлення мийки в виріб">
+          <Accordion title="Встановлення мийки в виріб" isOpen={openPanel === "Встановлення мийки в виріб"} onHeaderClick={() => panelHeaderClick("Встановлення мийки в виріб")}>
             <div className="flex flex-col gap-3">
               {Object.values(detail.sinks ?? {}).map((sink) => {
                 const patchSink = (patch: Partial<ProductSinkDef>) => {
@@ -2432,7 +2554,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                     {/* Прив'язка чаші — та сама механіка, що у вирізів: менеджер
                         обирає кут деталі й міряє від нього до кута чаші. */}
                     <label className="flex flex-col gap-0.5 text-[11px] text-slate-500 font-medium">
-                      Прив'язка до кута
+                      Прив'язка до сторін
                       <select
                         value={sink.bindCorner ?? ''}
                         onChange={(e) => patchSink({ bindCorner: e.target.value })}
@@ -2440,7 +2562,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                       >
                         <option value="">Лівий верхній</option>
                         {getCornersForKind(detail.kind).map((corner) => (
-                          <option key={corner} value={corner}>{corner}</option>
+                          <option key={corner} value={corner}>{corner.length === 2 ? `${corner[0]} і ${corner[1]}` : corner}</option>
                         ))}
                       </select>
                     </label>
@@ -2448,9 +2570,12 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                     <div className="grid grid-cols-2 gap-2">
                       {/* Чаша міряється так само, як виріз: від прив'язаного
                           кута деталі до кута чаші, а не до її центру. */}
+                      {/* №156: міряємо від СТОРІН, а не від кута (власник:
+                          «не від кута, а від сторони»). Відступ уздовж сторони
+                          A — це відстань від сторони B, тому літери саме такі. */}
                       {([
-                        ['Від кута по X, мм', 'x'],
-                        ['Від кута по Y, мм', 'y'],
+                        [`Від сторони ${sink.bindCorner?.charAt(1) || 'Y'}, мм`, 'x'],
+                        [`Від сторони ${sink.bindCorner?.charAt(0) || 'X'}, мм`, 'y'],
                         ['Довжина чаші, мм', 'width'],
                         ['Ширина чаші, мм', 'height'],
                         ['Глибина чаші, мм', 'depth'],
@@ -2465,6 +2590,19 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                           />
                         </label>
                       ))}
+                      {/* №156: поворот чаші — градуси, від'ємні теж (тому не
+                          через спільний map з Math.max(0, …)). Отвір у
+                          стільниці повертається разом із чашею. */}
+                      <label className="flex flex-col gap-0.5 text-[11px] text-slate-500 font-medium">
+                        Поворот, °
+                        <input
+                          type="number"
+                          step="1"
+                          value={sink.rotation ?? 0}
+                          onChange={(e) => patchSink({ rotation: Number(e.target.value) || 0 })}
+                          className="px-2 py-1 text-sm border border-slate-300 rounded-sm font-bold text-slate-800"
+                        />
+                      </label>
                     </div>
 
                     <div className="text-[11px] text-slate-500 leading-snug">
@@ -2554,7 +2692,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                     </button>
                   </div>
                   {sinkDef && (
-                    <Accordion title="Решітка зливу (різ водою)">
+                    <Accordion title="Решітка зливу (різ водою)" isOpen={openPanel === "Решітка зливу (різ водою)"} onHeaderClick={() => panelHeaderClick("Решітка зливу (різ водою)")}>
                       <DrainGratePanel
                         grate={sinkDef.drainGrate}
                         bottomWidthMm={DRAIN_DISC_DIAMETER}

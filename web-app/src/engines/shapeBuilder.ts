@@ -445,8 +445,54 @@ export function buildDetailShape(detail: DetailDraft, points: any[], bounds: any
         const cx = (absX - bounds.minX) / (w || 1);
         const cy = (absY - bounds.minY) / (h || 1);
 
+        /*
+         * №156 (власник 08.09): «вводимо кут у градусах» — виріз і чаша мийки
+         * можуть стояти під кутом. Повертати вже НОРМОВАНИЙ шлях не можна:
+         * x нормується шириною, y — висотою, і прямокутник перекосило б.
+         * Тому повернутий виріз малюємо полігоном у міліметрах навколо його
+         * центру і нормуємо кожну точку окремо. Порядок обходу той самий, що
+         * й у неповернутого — від нього залежить, чи THREE вважає шлях діркою.
+         */
+        const rotDeg = (cutout as { rotation?: number }).rotation ?? 0;
+        const rot = (rotDeg * Math.PI) / 180;
+
         const hole = new THREE.Path();
-        if (cutout.shape === "circle") {
+        if (cutout.shape === "rect" && Math.abs(rotDeg) > 0.01) {
+          const cwMm = cutout.width || 0;
+          const chMm = cutout.height || 0;
+          const rMm = Math.max(0, Math.min(cutout.cornerRadius || 0, cwMm / 2, chMm / 2));
+          const cos = Math.cos(rot);
+          const sin = Math.sin(rot);
+          const put = (mmX: number, mmY: number, first: boolean) => {
+            const rx = mmX * cos - mmY * sin;
+            const ry = mmX * sin + mmY * cos;
+            const nx = (absX + rx - bounds.minX) / (w || 1);
+            const ny = (absY + ry - bounds.minY) / (h || 1);
+            if (first) hole.moveTo(nx, ny); else hole.lineTo(nx, ny);
+          };
+          const hw = cwMm / 2;
+          const hh = chMm / 2;
+          const SEG = 6;
+          // Кути за годинниковою стрілкою у координатах деталі: (-,-) → (-,+) →
+          // (+,+) → (+,-). Дуга кута — SEG відрізків; при r = 0 виходить
+          // звичайний прямокутник без зайвих гілок у коді.
+          const corners: Array<{ cx: number; cy: number; from: number }> = [
+            { cx: -hw + rMm, cy: -hh + rMm, from: Math.PI * 1.5 },
+            { cx: -hw + rMm, cy: hh - rMm, from: Math.PI },
+            { cx: hw - rMm, cy: hh - rMm, from: Math.PI / 2 },
+            { cx: hw - rMm, cy: -hh + rMm, from: 0 },
+          ];
+          let first = true;
+          corners.forEach(({ cx: ccx, cy: ccy, from }) => {
+            for (let i = 0; i <= SEG; i += 1) {
+              // Обхід за годинниковою — кут спадає.
+              const a = from - (Math.PI / 2) * (i / SEG);
+              put(ccx + Math.cos(a) * rMm, ccy + Math.sin(a) * rMm, first);
+              first = false;
+            }
+          });
+          hole.closePath();
+        } else if (cutout.shape === "circle") {
           const cr = (cutout.radius || 0) / w;
           // true means clockwise
           hole.absarc(cx, cy, cr, 0, Math.PI * 2, true);

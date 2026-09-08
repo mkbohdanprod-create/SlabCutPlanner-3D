@@ -23,7 +23,7 @@ import { buildGrooveCutters } from '../../engines/surfaceGrooves';
 import { explodeDetails } from '../../engines/geometry';
 import { getSinkPartTransform } from '../../engines/sinkAssembly';
 import { sampleContourPoints } from '../../engines/shapeBuilder';
-import { attachmentPlacement } from '../../engines/transform3d';
+import { attachmentPlacement, attachmentUpZ } from '../../engines/transform3d';
 import { buildAssemblyMiterPlan } from '../../engines/miterAssembly';
 import { parseAdditionSlot } from '../../domain/ids';
 import { hasEdgeTreatment } from '../../domain/edgeTreatment';
@@ -32,6 +32,7 @@ import '../../styles/bottega.css';
 import { cutoutCenter } from '../../domain/cutoutAnchor';
 import type { Detail } from '../../domain/types';
 import { ProductElement3DNode } from '../3d/ProductElement3DNode';
+import { GlProbe } from '../3d/GlProbe';
 import { attachContextLossRecovery } from '../../utils/webglContextRecovery';
 import {
   jointAnchorPoints,
@@ -45,6 +46,7 @@ import {
   type JointShapeFields,
   type JointSideSegment,
   type JointSideSelection,
+  outlineFromSides,
 } from '../../domain/joints';
 import { anchorContextFor, toDetailShape } from '../../domain/elementToDetail';
 import { edgeNamedContour } from '../../domain/baseContour';
@@ -628,6 +630,9 @@ function DimensionLines({
  * (каталог кромок, довідник) і спливаючою карткою розрізу (z 200).
  * Лівий клік і права кнопка — ті самі дії, що були на кулях.
  */
+/** Б-153: скільки пар стиків намалював останній рендер — лише для зонда. */
+let jointPairsSeen = 0;
+
 function SideChip3D({ text, tone, on, src, hot, locked, small, title, onClick, onContextMenu, onPointerOver, onPointerOut }: {
   text: string;
   tone?: 'amber' | 'orange' | 'teal';
@@ -678,7 +683,6 @@ export function Detail3DNode({
   onEdgeClick,
   onEdgeSelect,
   occupiedSides,
-  onPlaneClick,
   /* onJointClick більше не деструктуризуємо: стик омега/лямбда через кути
      прибрано з режиму «Стики» (№143). Проп лишається в типі — його ще передає
      дерево компонентів, і ламати ланцюг заради цього не варто. */
@@ -696,7 +700,7 @@ export function Detail3DNode({
   detail: DetailDraft;
   isActive: boolean;
   mode: "view" | "edit" | "dimensions";
-  editMode: "corners" | "planes" | "edges" | "joints" | "cutouts";
+  editMode: "corners" | "planes" | "edges" | "sides" | "joints" | "cutouts";
   /* Усі три віддають ще й координати курсора: віконечка й контекстні меню
      позиціонуються по clientX/clientY. Раніше були оголошені з одним аргументом,
      а викликались із трьома — 14 помилок гейта саме звідси. */
@@ -709,7 +713,6 @@ export function Detail3DNode({
   /** Сторони активної деталі, закриті доповненням (domain/edgeOccupancy) — літера бліда, клік не діє. */
   occupiedSides?: Record<string, string>;
   /** Передає id деталі, по площині якої клікнули — щоб виріз ліг саме на неї. */
-  onPlaneClick?: (detailId?: string) => void;
   onJointClick?: (jointTargetId: string, x: number, y: number) => void;
   /** Клік по маркеру СТОРОНИ в режимі «Стики» — з уже зібраним описом різу. */
   onJointSideClick?: (joint: JointSideSelection, x: number, y: number) => void;
@@ -891,10 +894,30 @@ export function Detail3DNode({
    * один бейдж на сторону не давав зробити другий стик (№139).
    */
   const jointFields = useMemo(
-    () => jointFieldPairs(sidesMm, sidesMm.map((side) => side.v1)),
+    () => {
+      /* Б-159: контур для полів стиків будується з ОБОХ кінців сторін
+         (`outlineFromSides`). З самих `v1` радіус на куті перетворював
+         «сторона + дуга» на одну діагональ, нормаль сторони переверталась,
+         і пара C↔A зникала — стик між ними неможливо було поставити. */
+      const pairs = jointFieldPairs(sidesMm, outlineFromSides(sidesMm));
+      // Б-153: зонд WebGL показує це число в консолі поруч із пам'яттю GPU.
+      jointPairsSeen = pairs.length;
+      return pairs;
+    },
     [sidesMm],
   );
-  const [hoveredPair, setHoveredPair] = useState<{ sideId: string; otherId: string } | null>(null);
+  /*
+   * №147: пара під курсором тримається РЯДКОМ «A|G», а не об'єктом. Об'єкт
+   * щоразу новий, тому наведення на той самий бейдж усе одно рахувалось як
+   * зміна стану — зайві перемальовки 3D на кожен рух миші (див. падіння
+   * WebGL нижче).
+   */
+  const [hoveredPairKey, setHoveredPairKey] = useState<string | null>(null);
+  const hoveredPair = useMemo(() => {
+    if (!hoveredPairKey) return null;
+    const [sideId, otherId] = hoveredPairKey.split('|');
+    return { sideId, otherId };
+  }, [hoveredPairKey]);
 
   /**
    * Ділянки лінії різу, що реально лежать на матеріалі.
@@ -1014,8 +1037,18 @@ export function Detail3DNode({
   const rulerSideId = jointRulerSide
     ?? (hoveredPair ? jointSelectionForPair(hoveredPair.sideId, hoveredPair.otherId)?.referenceSideId : undefined);
 
-  /** Жовта підсвітка сторони-лінійки на самій моделі. */
-  const rulerHighlight = (() => {
+  /**
+   * Жовта підсвітка сторони-лінійки на самій моделі.
+   *
+   * №147: обов'язково через `useMemo`. `<Line>` з drei тримає власну
+   * геометрію і матеріал у пам'яті GPU; коли елемент перебудовується на
+   * КОЖЕН рендер (а рендер стріляв на кожен рух миші над бейджами), старі
+   * буфери не встигають звільнятись — контекст переповнюється, і браузер
+   * забирає його: «THREE.WebGLRenderer: Context Lost», 3D гасне разом із
+   * оверлеєм. Тепер лінія перебудовується лише коли реально змінилась
+   * сторона-лінійка або габарит деталі.
+   */
+  const rulerHighlight = useMemo(() => {
     if (!(mode === "edit" && editMode === "joints") || !rulerSideId) return null;
     const side = sidesMm.find((item) => item.id === rulerSideId);
     if (!side) return null;
@@ -1036,10 +1069,13 @@ export function Detail3DNode({
         renderOrder={3}
       />
     );
-  })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, editMode, rulerSideId, sidesMm, bounds, detail.thickness]);
 
-  /** Прев'ю різу під курсором: посеред ПОЛЯ наведеної пари, від сторони до сторони. */
-  const jointPreviewLine = (() => {
+  /** Прев'ю різу під курсором: посеред ПОЛЯ наведеної пари, від сторони до сторони.
+      №147: та сама причина, що й у підсвітки — лінія drei не має
+      перебудовуватись на кожен рендер. */
+  const jointPreviewLine = useMemo(() => {
     if (!hoveredPair) return null;
     const pair = jointFields.find(
       (item) => item.sideId === hoveredPair.sideId && item.otherId === hoveredPair.otherId,
@@ -1052,7 +1088,8 @@ export function Detail3DNode({
       ? pair.at.y - pair.normal.y * (pair.depth / 2)
       : pair.at.x - pair.normal.x * (pair.depth / 2);
     return drawJointLine(pair.axis, position, "joint-preview", "#f59e0b", across);
-  })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hoveredPairKey, jointFields, bounds, detail.thickness]);
 
   // Металопрокат — не плоска кам'яна деталь: свій вузол із перерізом
   // профілю. Гілка стоїть ПІСЛЯ всіх хуків, щоб не ламати їх порядок.
@@ -1077,13 +1114,14 @@ export function Detail3DNode({
         edgeMap={edgeMap}
         bounds={bounds}
         extraCutters={extraCutters}
-        onClick={() => {
-          if (isActive && mode === "edit" && editMode === "planes") {
-            onPlaneClick?.(id);
-          } else {
-            onDetailClick?.(id);
-          }
-        }}
+        /*
+         * №162 (власник 08.09: «клік по деталі далі добавляє виріз»): клік по
+         * ПЛОЩИНІ більше нічого не створює. Виріз народжується тільки з панелі
+         * «Вирізи» — вибором типу. Раніше кожен випадковий клік по каменю в
+         * режимі вирізів клав ще один виріз 100×100, і їх набиралось по
+         * чотири на деталь, поки людина просто крутила модель.
+         */
+        onClick={() => { onDetailClick?.(id); }}
         onDoubleClick={(e) => {
           if (isActive) {
             onDetailDoubleClick?.('main');
@@ -1108,7 +1146,10 @@ export function Detail3DNode({
       {/* №143: у режимі «Стики» розміри сторін лишаються на екрані — власник
           ставить відступ і мусить бачити, від чого його відкладає. Це та сама
           розмірна графіка, що й на кнопці «Розміри», а не окрема копія. */}
-      {(mode === "dimensions" || (mode === "edit" && editMode === "joints")) && isActive && (
+      {/* №153: те саме в режимі «Вирізи» — власник: «перегляд зроби як для
+          стиків». Виріз теж прив'язується до сторін, тож без розмірів на
+          екрані його нема від чого відкладати. */}
+      {(mode === "dimensions" || (mode === "edit" && (editMode === "joints" || editMode === "planes"))) && isActive && (
         <DimensionLines
           valuesOnly={mode === "edit"}
           shape={shape}
@@ -1206,8 +1247,10 @@ export function Detail3DNode({
         /* №143: у режимі «Стики» кутових позначок більше немає — власник:
            «прибери позначки кутів з цього режиму». Стик задається парою
            СТОРІН, а «кут E / кут D» лишились від старої омега/лямбда-механіки
-           і тільки заважали читати креслення. */
-        (editMode === "corners" || editMode === "planes") &&
+           і тільки заважали читати креслення.
+           №153: з тієї ж причини їх немає і в «Вирізах» — там тепер перегляд
+           як у стиках: літери сторін і розміри. */
+        editMode === "corners" &&
         points.map((p, i) => {
           if (!p.id || p.id.startsWith("inner"))
             return null;
@@ -1301,7 +1344,10 @@ export function Detail3DNode({
 
       {mode === "edit" &&
         isActive &&
-        editMode === "edges" &&
+        /* №153: у «Вирізах» ті самі літери сторін, що й у стиках, — бурштинові
+           й поки без дій: перегляд, від чого міряти виріз. Механіку власник
+           розкаже окремо. */
+        (editMode === "edges" || editMode === "sides" || editMode === "planes") &&
         lineSegments.map((item, i) => {
           if (item.id.startsWith("inner"))
             return null;
@@ -1339,23 +1385,36 @@ export function Detail3DNode({
           const on = hasEdgeTreatment(detail.edgeProfiles?.[item.id]);
           const occupiedBy = occupiedSides?.[item.id];
           const isSrc = sourceSide === item.id;
-          const chipTitle = occupiedBy
-            ? `Торець закриває ${occupiedBy}`
-            : isSrc ? 'Взірець — клік знімає (Esc)'
-              : sourceSide ? `Скопіювати обробку зі сторони ${sourceSide}`
-                : `Сторона ${label.text}: клік — взірець для копіювання обробки, права кнопка — обробка торця`;
+          /* №150: два режими — два різні кліки по одному й тому самому чипу.
+             «Кромки» — взірець і копіювання обробки (меню не відкривається).
+             «Сторони» — меню доповнень сторони. */
+          const chipTitle = editMode === "planes"
+            ? `Сторона ${label.text}`
+            : editMode === "sides"
+            ? `Сторона ${label.text}: клік — бортик, панель, нога, потовщення, підворот, ніша`
+            : occupiedBy
+              ? `Торець закриває ${occupiedBy}`
+              : isSrc ? 'Взірець — клік знімає (Esc)'
+                : sourceSide ? `Скопіювати обробку зі сторони ${sourceSide}`
+                  : `Сторона ${label.text}: клік — взірець для копіювання обробки`;
 
           return (
             <group key={`edge-${i}`} position={[midX, z, midY]}>
               <SideChip3D
                 text={label.text}
-                on={on}
-                src={isSrc}
-                locked={Boolean(occupiedBy)}
+                /* №153: у «Вирізах» чип — бурштиновий орієнтир, як бейдж пари
+                   в стиках: без синього «є обробка» і без взірця. */
+                tone={editMode === "planes" ? 'amber' : undefined}
+                on={editMode === "planes" ? false : on}
+                src={editMode === "planes" ? false : isSrc}
+                locked={editMode === "planes" ? false : Boolean(occupiedBy)}
                 small={label.isCornerSegment}
                 title={chipTitle}
-                onClick={() => { if (!occupiedBy) onEdgeSelect?.(item.id); }}
-                onContextMenu={(x, y) => { if (onEdgeClick) onEdgeClick(`${item.id}`, x, y); }}
+                onClick={(x, y) => {
+                  if (editMode === "sides") { onEdgeClick?.(`${item.id}`, x, y); return; }
+                  if (!occupiedBy && editMode === "edges") onEdgeSelect?.(item.id);
+                }}
+                onContextMenu={(x, y) => { if (editMode === "sides") onEdgeClick?.(`${item.id}`, x, y); }}
               />
             </group>
           );
@@ -1367,7 +1426,7 @@ export function Detail3DNode({
           в розкрої виросте гнутий елемент. */}
       {mode === "edit" &&
         isActive &&
-        editMode === "edges" &&
+        (editMode === "edges" || editMode === "sides") &&
         arcSegments.map((arc, i) => {
           const w = bounds.maxX - bounds.minX || 1;
           const h = bounds.maxY - bounds.minY || 1;
@@ -1391,8 +1450,13 @@ export function Detail3DNode({
                 tone="teal"
                 small
                 on={hasEdgeTreatment(detail.edgeProfiles?.[arc.id])}
-                title="Дуга скруглення: права кнопка — обробка торця"
-                onContextMenu={(x, y) => { if (onEdgeClick) onEdgeClick(`${arc.id}`, x, y); }}
+                /* №150: у дуги рядка в панелі «Кромки» немає, тому клік по ній
+                   у режимі «Кромки» лишається єдиним входом до профілю. */
+                title={editMode === "sides"
+                  ? "Дуга скруглення: клік — бортик, панель, нога"
+                  : "Дуга скруглення: клік — обробка торця"}
+                onClick={(x, y) => { onEdgeClick?.(`${arc.id}`, x, y); }}
+                onContextMenu={(x, y) => { onEdgeClick?.(`${arc.id}`, x, y); }}
               />
             </group>
           );
@@ -1438,8 +1502,8 @@ export function Detail3DNode({
                 tone="amber"
                 hot={isHighlighted}
                 title={`Стик між ${pair.sideId} і ${pair.otherId}: клік — відступ різу`}
-                onPointerOver={() => setHoveredPair({ sideId: pair.sideId, otherId: pair.otherId })}
-                onPointerOut={() => setHoveredPair(null)}
+                onPointerOver={() => setHoveredPairKey(`${pair.sideId}|${pair.otherId}`)}
+                onPointerOut={() => setHoveredPairKey(null)}
                 onClick={(x, y) => {
                   const selection = jointSelectionForPair(pair.sideId, pair.otherId);
                   if (selection && onJointSideClick) onJointSideClick(selection, x, y);
@@ -1451,7 +1515,7 @@ export function Detail3DNode({
                      поруч зі щойно доданим стиком — ще одна «зайва друга
                      лінія» у скарзі фокус-групи. Зникала вона від першого руху
                      мишею, тому в розробника не відтворювалась. */
-                  setHoveredPair(null);
+                  setHoveredPairKey(null);
                 }}
               />
             </group>
@@ -1692,7 +1756,6 @@ function NestedAttachments({
   onEdgeClick,
   onEdgeSelect,
   occupiedSides,
-  onPlaneClick,
   onJointClick,
   onJointSideClick, jointRulerSide,
   onDetailClick,
@@ -1706,7 +1769,7 @@ function NestedAttachments({
   subDetails?: Record<string, DetailDraft>;
   activeDetailId?: string | null;
   mode: "view" | "edit" | "dimensions";
-  editMode: "corners" | "planes" | "edges" | "joints" | "cutouts";
+  editMode: "corners" | "planes" | "edges" | "sides" | "joints" | "cutouts";
   onCornerClick?: (cornerId: string, x: number, y: number) => void;
   onCutoutDoubleClick?: (cutoutId: string) => void;
   onEdgeClick?: (edgeId: string, x: number, y: number) => void;
@@ -1714,7 +1777,6 @@ function NestedAttachments({
   onEdgeSelect?: (edgeId: string) => void;
   /** Сторони активної деталі, закриті доповненням (domain/edgeOccupancy) — літера бліда, клік не діє. */
   occupiedSides?: Record<string, string>;
-  onPlaneClick?: (detailId?: string) => void;
   onJointClick?: (jointTargetId: string, x: number, y: number) => void;
   onJointSideClick?: (joint: JointSideSelection, x: number, y: number) => void;
   /** №145: сторона-лінійка відкритого віконця відступу — підсвічується жовтим. */
@@ -1752,7 +1814,7 @@ function NestedAttachments({
 
         // Та сама математика розміщення, що й у Підборі та в головному
         // циклі — не третя копія формул.
-        const { midX, midY, angle, posX, insetZ } = attachmentPlacement(
+        const { midX, midY, angle, posX, insetZ, inward } = attachmentPlacement(
           (curve as THREE.LineCurve).v1, (curve as THREE.LineCurve).v2, bounds,
           draft.width, draft.attachOffset ?? 0, draft.attachInset ?? 0,
         );
@@ -1765,7 +1827,8 @@ function NestedAttachments({
             <group
               position={goesDown
                 ? [posX, -(height / 2 + gapY), thickness / 2 + insetZ]
-                : [posX, height / 2 + gapY, -thickness / 2 + insetZ]}
+                /* №151: панель/бортик стоять тильною гранню на ребрі. */
+                : [posX, height / 2 + gapY, attachmentUpZ(inward, draft.thickness || ownerDraft.thickness || 20, insetZ)]}
               rotation={goesDown ? [-Math.PI / 2, 0, 0] : [Math.PI / 2, 0, 0]}
             >
               <Detail3DNode
@@ -1779,7 +1842,6 @@ function NestedAttachments({
                 onEdgeClick={onEdgeClick}
                 onEdgeSelect={onEdgeSelect}
                 occupiedSides={occupiedSides}
-                onPlaneClick={onPlaneClick}
                 onJointClick={onJointClick}
                 onJointSideClick={onJointSideClick}
                     jointRulerSide={jointRulerSide}
@@ -1801,7 +1863,6 @@ function NestedAttachments({
                 onEdgeClick={onEdgeClick}
                 onEdgeSelect={onEdgeSelect}
                 occupiedSides={occupiedSides}
-                onPlaneClick={onPlaneClick}
                 onJointClick={onJointClick}
                 onJointSideClick={onJointSideClick}
                     jointRulerSide={jointRulerSide}
@@ -1822,14 +1883,13 @@ function NestedAttachments({
 /* miterJointFor / miterCutters — перенесені в engines/miterAssembly (02.09):
    той самий план 45° тепер ріже і редактор, і 3D Підбір. */
 
-function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick, onCutoutDoubleClick, onPlaneClick, onEdgeClick, onEdgeSelect, occupiedSides, onJointClick, onJointSideClick, jointRulerSide, onLegDoubleClick, onWallPanelDoubleClick, onDetailDoubleClick, onDetailClick, onDetailContextMenu, mode, editMode, theme, textureMode, customTextureMapFactory, position, rotation, material }: { detail: DetailDraft; subDetails?: Record<string, DetailDraft>;
+function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick, onCutoutDoubleClick, onEdgeClick, onEdgeSelect, occupiedSides, onJointClick, onJointSideClick, jointRulerSide, onLegDoubleClick, onWallPanelDoubleClick, onDetailDoubleClick, onDetailClick, onDetailContextMenu, mode, editMode, theme, textureMode, customTextureMapFactory, position, rotation, material }: { detail: DetailDraft; subDetails?: Record<string, DetailDraft>;
   /** Матеріал виробу — керамограніт мітрує стики 45° автоматично (01.09). */
   material?: string | null;
   activeDetailId?: string | null;
   onCornerClick?: (id: string, x: number, y: number) => void;
   onCutoutDoubleClick?: (cutoutId: string) => void;
   /** Передає id деталі, по площині якої клікнули — щоб виріз ліг саме на неї. */
-  onPlaneClick?: (detailId?: string) => void;
   onEdgeClick?: (edgeId: string, x: number, y: number) => void;
   /** Лівий клік по літері сторони в 3D (01.09): взірець / копіювання обробки — як у панелі кромок. */
   onEdgeSelect?: (edgeId: string) => void;
@@ -1845,7 +1905,7 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
   onDetailClick?: (id: string) => void;
   onDetailContextMenu?: (id: string, x: number, y: number) => void;
   mode?: "view" | "edit" | "dimensions";
-  editMode?: "corners" | "planes" | "edges" | "joints";
+  editMode?: "corners" | "planes" | "edges" | "sides" | "joints";
   theme?: "light" | "dark";
   textureMode?: boolean;
   customTextureMapFactory?: (detailId: string) => THREE.Texture | null;
@@ -2011,7 +2071,6 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
       onEdgeClick={onEdgeClick}
       onEdgeSelect={onEdgeSelect}
       occupiedSides={occupiedSides}
-      onPlaneClick={onPlaneClick}
       onJointClick={onJointClick}
       onJointSideClick={onJointSideClick}
                     jointRulerSide={jointRulerSide}
@@ -2054,7 +2113,13 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
           // отвору): sink.x/y тепер відступ від кута до кута чаші, не центр.
           const { cx, cy } = sinkCenter(detail as never, sink);
           return (
-            <group key={sink.id} position={[(cx - w / 2) * s, -thick / 2, (cy - h / 2) * s]}>
+            /* №156: поворот чаші. У 2D додатні градуси — проти годинникової;
+               у сцені вісь Y дає дзеркальний знак, тому −rad. */
+            <group
+              key={sink.id}
+              position={[(cx - w / 2) * s, -thick / 2, (cy - h / 2) * s]}
+              rotation={[0, -((sink.rotation ?? 0) * Math.PI) / 180, 0]}
+            >
               <SinkAssemblyPreview detail={bowlDraft} textureMode={textureMode} />
             </group>
           );
@@ -2109,7 +2174,7 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
               const gapY = (draft.attachGap ?? 0) * s;
               // Позиція вздовж ребра і вглиб плити — спільна математика
               // з Підбором (attachmentPlacement), не друга копія формул.
-              const { posX, insetZ } = attachmentPlacement(
+              const { posX, insetZ, inward } = attachmentPlacement(
                 item.curve.v1, item.curve.v2, mainBounds,
                 draft.width, draft.attachOffset ?? 0, draft.attachInset ?? 0,
               );
@@ -2117,7 +2182,9 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
                 ? miter.childPos
                 : goesDown
                   ? [posX, -(height / 2 + gapY), thickness / 2 + insetZ]
-                  : [posX, height / 2 + gapY, -thickness / 2 + insetZ];
+                  /* №151: панель і бортик прилягають до ребра тильною гранню,
+                     тіло йде вглиб деталі на власну товщину. */
+                  : [posX, height / 2 + gapY, attachmentUpZ(inward, draft.thickness || detail.thickness || 20, insetZ)];
               const childRot: [number, number, number] = miter ? miter.childRot : goesDown ? [-Math.PI / 2, 0, 0] : [Math.PI / 2, 0, 0];
               return (
                 <group
@@ -2137,7 +2204,6 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
                     onEdgeClick={onEdgeClick}
                     onEdgeSelect={onEdgeSelect}
                     occupiedSides={occupiedSides}
-                    onPlaneClick={onPlaneClick}
                     onJointClick={onJointClick}
                     onJointSideClick={onJointSideClick}
                     jointRulerSide={jointRulerSide}
@@ -2167,7 +2233,6 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
                     onEdgeClick={onEdgeClick}
                     onEdgeSelect={onEdgeSelect}
                     occupiedSides={occupiedSides}
-                    onPlaneClick={onPlaneClick}
                     onJointClick={onJointClick}
                     onJointSideClick={onJointSideClick}
                     jointRulerSide={jointRulerSide}
@@ -2512,7 +2577,6 @@ export function Detail3DPreview({
   activeDetailId = "main",
   onCornerClick,
   onCutoutDoubleClick,
-  onPlaneClick,
   onEdgeClick,
   onEdgeSelect,
   occupiedSides,
@@ -2525,6 +2589,8 @@ export function Detail3DPreview({
   onDetailContextMenu,
   onSelectionClear,
   forceMode,
+  editMode: editModeProp,
+  onEditModeChange,
   scenePlacement,
   onPlaceInRoom,
   material,
@@ -2551,7 +2617,6 @@ export function Detail3DPreview({
   onCornerClick?: (id: string, x: number, y: number) => void;
   onCutoutDoubleClick?: (cutoutId: string) => void;
   /** Передає id деталі, по площині якої клікнули — щоб виріз ліг саме на неї. */
-  onPlaneClick?: (detailId?: string) => void;
   onEdgeClick?: (edgeId: string, x: number, y: number) => void;
   /** Лівий клік по літері сторони в 3D (01.09): взірець / копіювання обробки — як у панелі кромок. */
   onEdgeSelect?: (edgeId: string) => void;
@@ -2569,6 +2634,9 @@ export function Detail3DPreview({
   /** Клік у пусте поле сцени — скинути вибір (01.09). */
   onSelectionClear?: () => void;
   forceMode?: "view" | "edit" | "dimensions";
+  /** №146: режим редагування ззовні — щоб тулбар і панелі властивостей були одним станом. */
+  editMode?: "corners" | "planes" | "edges" | "sides" | "joints";
+  onEditModeChange?: (mode: "corners" | "planes" | "edges" | "sides" | "joints") => void;
 }) {
   const [mode, setMode] = useState<"view" | "edit" | "dimensions">(forceMode || "view");
   /*
@@ -2621,9 +2689,22 @@ export function Detail3DPreview({
   /* Скидання вибору: лише «чистий» клік (без протягування камери) і лише лівою. */
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
   const openHelp = useUIStore((state) => state.openHelp);
-  const [editMode, setEditMode] = useState<"corners" | "planes" | "edges" | "joints">(
+  /*
+   * РЕЖИМ РЕДАГУВАННЯ — ОДИН НА ТУЛБАР І НА ПАНЕЛІ (№146, власник 08.09:
+   * «неважливо, де ми натиснули — кнопка і шапка меню одразу підсвічуються,
+   * меню обробок розкривається, а деталь у 3D переключається в відповідний
+   * режим»). Тому стан може жити зовні: коли `editMode`/`onEditModeChange`
+   * передані — компонент керований, інакше працює на власному стані, як
+   * раніше (3D Підбір, паспорт деталі).
+   */
+  const [editModeInner, setEditModeInner] = useState<"corners" | "planes" | "edges" | "sides" | "joints">(
     "corners",
   );
+  const editMode = editModeProp ?? editModeInner;
+  const setEditMode = (next: "corners" | "planes" | "edges" | "sides" | "joints") => {
+    setEditModeInner(next);
+    onEditModeChange?.(next);
+  };
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [textureMode, setTextureMode] = useState(false);
 
@@ -2735,7 +2816,8 @@ export function Detail3DPreview({
         >
           <button
             onClick={() => setMode("view")}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-sm text-sm font-medium transition-colors ${mode === "view" ? "bg-[#0084ff] text-white" : theme === "dark" ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-sm text-sm font-medium transition-colors ${mode === "view" ? "" : theme === "dark" ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
+            style={mode === "view" ? { background: "#0084ff", color: "#fff", borderColor: "#0084ff" } : undefined}
             title="Перегляд"
           >
             <Eye className="w-4 h-4" /> Перегляд
@@ -2745,14 +2827,16 @@ export function Detail3DPreview({
               setMode("edit");
               setEditMode("corners");
             }}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-sm text-sm font-medium transition-colors ${mode === "edit" ? "bg-[#0084ff] text-white" : theme === "dark" ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-sm text-sm font-medium transition-colors ${mode === "edit" ? "" : theme === "dark" ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
+            style={mode === "edit" ? { background: "#0084ff", color: "#fff", borderColor: "#0084ff" } : undefined}
             title="Редагування"
           >
             <Edit2 className="w-4 h-4" /> Редагування
           </button>
           <button
             onClick={() => setMode("dimensions")}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-sm text-sm font-medium transition-colors ${mode === "dimensions" ? "bg-[#0084ff] text-white" : theme === "dark" ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-sm text-sm font-medium transition-colors ${mode === "dimensions" ? "" : theme === "dark" ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
+            style={mode === "dimensions" ? { background: "#0084ff", color: "#fff", borderColor: "#0084ff" } : undefined}
             title="Розміри"
           >
             <Ruler className="w-4 h-4" /> Розміри
@@ -2819,25 +2903,39 @@ export function Detail3DPreview({
           >
             <button
               onClick={() => setEditMode("corners")}
-              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "corners" ? "bg-[#0084ff] text-white" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "corners" ? "" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              style={editMode === "corners" ? { background: "#0084ff", color: "#fff", borderColor: "#0084ff" } : undefined}
             >
               Кути
             </button>
             <button
               onClick={() => setEditMode("planes")}
-              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "planes" ? "bg-[#0084ff] text-white" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "planes" ? "" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              style={editMode === "planes" ? { background: "#0084ff", color: "#fff", borderColor: "#0084ff" } : undefined}
             >
-              Площини
+              Вирізи
             </button>
             <button
               onClick={() => setEditMode("edges")}
-              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "edges" ? "bg-[#0084ff] text-white" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "edges" ? "" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              style={editMode === "edges" ? { background: "#0084ff", color: "#fff", borderColor: "#0084ff" } : undefined}
+            >
+              Кромки
+            </button>
+            {/* №146: «Сторони» — це доповнення (бортик, потовщення, підворот),
+                а не обробка торця. Тому в тулбарі вони окремо від «Кромок»,
+                і кожна кнопка веде у свою панель праворуч. */}
+            <button
+              onClick={() => setEditMode("sides")}
+              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "sides" ? "" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              style={editMode === "sides" ? { background: "#0084ff", color: "#fff", borderColor: "#0084ff" } : undefined}
             >
               Сторони
             </button>
             <button
               onClick={() => setEditMode("joints")}
-              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "joints" ? "bg-[#0084ff] text-white" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${editMode === "joints" ? "" : theme === "dark" ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-50"}`}
+              style={editMode === "joints" ? { background: "#0084ff", color: "#fff", borderColor: "#0084ff" } : undefined}
             >
               Стики
             </button>
@@ -2882,6 +2980,13 @@ export function Detail3DPreview({
           }}
         >
           <SelectionView.Provider value={selectionView}>
+          {/* Б-153: зонд працює тільки в режимі «Стики» і тільки пише в
+              консоль — ані геометрії, ані матеріалів не створює. */}
+          <GlProbe
+            active={mode === "edit" && editMode === "joints"}
+            label="Стики"
+            counts={{ 'пар стиків': jointPairsSeen }}
+          />
           <color
             attach="background"
             args={[mode === "dimensions" ? "#ffffff" : theme === "dark" ? "#0f172a" : "#f0f4f8"]}
@@ -2944,7 +3049,6 @@ export function Detail3DPreview({
               textureMode={textureMode}
               onCornerClick={onCornerClick}
               onCutoutDoubleClick={onCutoutDoubleClick}
-              onPlaneClick={onPlaneClick}
               onEdgeClick={onEdgeClick}
               onEdgeSelect={onEdgeSelect}
               occupiedSides={occupiedSides}

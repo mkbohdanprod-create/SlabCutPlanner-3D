@@ -59,6 +59,26 @@ export function attachmentPlacement(
 }
 
 /**
+ * №151 — ДЕ СТОЇТЬ ДОПОВНЕННЯ, ЩО РОСТЕ ВГОРУ (стінова панель, бортик).
+ *
+ * Було: `-parentThickness/2`, тобто тіло панелі виносилось НАЗОВНІ від ребра
+ * (у 3D вона висіла в повітрі за краєм стільниці), і збіг «внутрішня грань
+ * на ребрі» виходив лише тоді, коли панель однакової товщини з плитою.
+ *
+ * Стало: панель прилягає до ребра ТИЛЬНОЮ гранню, а тілом іде ВГЛИБ деталі —
+ * рівно на свою товщину. Знак береться з `inward`, тому правило однакове й на
+ * увігнутому ребрі Г-форми, де обхід контуру вивертається.
+ *
+ * @param inward  ±1 з `attachmentPlacement` — куди «вглиб» по локальній Z
+ * @param attachmentThicknessMm товщина самого доповнення, мм
+ * @param insetZ  зсув углиб, уже зі знаком (з `attachmentPlacement`)
+ */
+export function attachmentUpZ(inward: number, attachmentThicknessMm: number, insetZ: number) {
+  const s = 0.001;
+  return inward * ((attachmentThicknessMm * s) / 2) + insetZ;
+}
+
+/**
  * SC-06 — ЄДИНА УГОДА ПРО ОРІЄНТАЦІЮ ДОПОВНЕННЯ.
  *
  * Доповнення (панель, нога, підворот, потовщення) — це власна деталь зі
@@ -120,9 +140,15 @@ export function getEdgeTransform(
   attachmentInset: number = 0,
   /** Відступ від ребра в напрямку росту, мм (0 = впритул до ребра) */
   attachmentGap: number = 0,
+  /**
+   * Товщина самого доповнення, мм. Не задано — беремо товщину батька, як було
+   * раніше (панель тієї ж плити). Потрібна для №151: панель стоїть тильною
+   * гранню на ребрі, тому зсув углиб дорівнює ЇЇ товщині, а не батьківській.
+   */
+  attachmentThickness?: number,
 ) {
   const s = 0.001;
-  const { midX, midY, angle, edgeLength, posX, insetZ } = attachmentPlacement(
+  const { midX, midY, angle, edgeLength, posX, insetZ, inward } = attachmentPlacement(
     v1, v2, bounds, attachmentWidth, attachmentOffset, attachmentInset,
   );
 
@@ -137,7 +163,8 @@ export function getEdgeTransform(
   const gapY = attachmentGap * s;
   const childPosition: [number, number, number] = goesDown
     ? [posX, -(wpHeight / 2 + gapY), wpDepth / 2 + insetZ]
-    : [posX, wpHeight / 2 + gapY, -wpDepth / 2 + insetZ];
+    // №151: панель і бортик — тильною гранню на ребро, тілом усередину деталі.
+    : [posX, wpHeight / 2 + gapY, attachmentUpZ(inward, attachmentThickness ?? parentThickness, insetZ)];
 
   const childRotation: [number, number, number] = goesDown
     ? [-Math.PI / 2, 0, 0]

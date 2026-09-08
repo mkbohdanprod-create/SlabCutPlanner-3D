@@ -1095,7 +1095,28 @@ function buildHolesFromCutouts(
     if (c.shape === 'rect') {
       const cw = c.width || 0;
       const ch = c.height || 0;
-      holes.push(offsetPoints(rectPoints(cw, ch), cx - cw / 2, cy - ch / 2));
+      /*
+       * №161 (скарга власника 08.09: «в розкрій невірно попадає виріз мийки,
+       * коли його крутиш — мийка покрутилась, а виріз ні»). Поворот вирізу
+       * (і мийки, яка віддає йому своє поле `rotation`) мусить дійти й СЮДИ:
+       * розкрій — це те, що поїде на верстат, і прямий отвір під повернуту
+       * чашу означає зіпсований лист. Обхід точок той самий, що в
+       * `rectPoints`, тільки навколо центру і з поворотом.
+       */
+      const rot = ((c as { rotation?: number }).rotation ?? 0) * (Math.PI / 180);
+      if (Math.abs(rot) > 1e-4) {
+        const cos = Math.cos(rot);
+        const sin = Math.sin(rot);
+        const corners: Array<[number, number]> = [
+          [-cw / 2, -ch / 2], [cw / 2, -ch / 2], [cw / 2, ch / 2], [-cw / 2, ch / 2],
+        ];
+        holes.push(corners.map(([x, y]) => ({
+          x: cx + x * cos - y * sin,
+          y: cy + x * sin + y * cos,
+        })));
+      } else {
+        holes.push(offsetPoints(rectPoints(cw, ch), cx - cw / 2, cy - ch / 2));
+      }
     } else if (c.shape === 'circle') {
       const cr = c.radius || 0;
       holes.push(offsetPoints(circlePoints(cr * 2, 28), cx - cr, cy - cr));

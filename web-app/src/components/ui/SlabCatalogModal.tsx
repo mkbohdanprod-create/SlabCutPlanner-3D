@@ -3,6 +3,7 @@ import { X, Search, ChevronLeft, Loader2 } from 'lucide-react';
 import { SlabCatalogWmsPanel } from './SlabCatalogWmsPanel';
 import type { MaterialType } from '../../domain/types';
 import { MATERIALS_IN_USE } from '../../domain/defaults';
+import { localSlabCards } from '../../domain/localSlabCatalog';
 import { readFileAsDataUrl } from '../../utils/file';
 import { api, ApiError } from '../../lib/api';
 import {
@@ -111,7 +112,13 @@ export interface SlabPick {
  * запис «матеріал замовника»: його в довіднику немає за визначенням, а
  * додати такий сляб треба.
  */
-type CatalogItem = SlabDecor & { customerOwn?: boolean };
+type CatalogItem = SlabDecor & {
+  customerOwn?: boolean;
+  /** №158: друге фото того самого листа — з підсвіткою (власні картки) */
+  photoBacklit?: string;
+  /** №158: власна картка застосунку, не запис довідника */
+  local?: boolean;
+};
 
 // Компакт-плити в переліку немає — вона виведена з програми 26.08.2026
 const MATERIALS = MATERIALS_IN_USE as MaterialType[];
@@ -305,17 +312,29 @@ export function SlabCatalogModal({ open, onClose, onPick, hasContragent, contrag
    */
   const manufacturers = useMemo(() => {
     const found = new Set(decors.map((decor) => decor.manufacturer).filter(Boolean));
+    // №158: виробник власної картки теж має бути у фільтрі — інакше вибір
+    // «Antolini» був би неможливий, поки довідник мовчить.
+    localSlabCards(activeMaterial).forEach((card) => found.add(card.manufacturer));
     if (lockManufacturer) found.add(lockManufacturer);
     return [...found].sort((a, b) => a.localeCompare(b, 'uk'));
-  }, [decors, lockManufacturer]);
+  }, [decors, lockManufacturer, activeMaterial]);
 
   const list = useMemo<CatalogItem[]>(() => {
     const cards: CatalogItem[] = decors.filter(
       (decor) => !activeManufacturer || decor.manufacturer === activeManufacturer,
     );
+    /*
+     * №158: власні картки застосунку (`localSlabCards`) не залежать від
+     * довідника — вони видно і тоді, коли сервіс мовчить. Фільтр за
+     * виробником на них поширюється: Antolini має знаходитись у своєму
+     * виробнику, а не висіти окремо від логіки списку.
+     */
+    const own = localSlabCards(activeMaterial).filter(
+      (card) => !activeManufacturer || card.manufacturer === activeManufacturer,
+    );
     // Матеріал замовника стоїть у кінці й фільтр за виробником його не
     // ховає: це не номенклатура, і шукати його менеджер буде саме тут.
-    return [...cards, customerOwnCard(activeMaterial)];
+    return [...cards, ...own, customerOwnCard(activeMaterial)];
   }, [decors, activeManufacturer, activeMaterial]);
 
   const isNatural = picked?.material === 'Натуральний камінь';
@@ -429,8 +448,11 @@ export function SlabCatalogModal({ open, onClose, onPick, hasContragent, contrag
     setQuantity(1);
     setNatWidth(item.sizes[0].width);
     setNatHeight(item.sizes[0].height);
-    setPhoto('');
-    setPhotoBacklit('');
+    /* №158: у власної картки фото листа вже є — підставляємо обидва кадри,
+       щоб менеджеру не довелось шукати їх на диску. Замінити своїм знімком
+       він однаково може: поля лишаються тими самими. */
+    setPhoto(item.local ? item.photo : '');
+    setPhotoBacklit(item.local ? (item.photoBacklit ?? '') : '');
     setOwnThickness(item.thicknesses[0] ?? 20);
     setOwnDecor('');
     setStep('card');

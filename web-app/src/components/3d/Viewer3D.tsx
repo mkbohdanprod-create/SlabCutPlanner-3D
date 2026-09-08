@@ -21,6 +21,7 @@ import { useUIStore } from '../../store/useStore';
 import { ProductElement3DNode } from './ProductElement3DNode';
 import { EdgesVisibility } from '../ui/Detail3DPreview';
 import { attachContextLossRecovery, waitForLiveContext } from '../../utils/webglContextRecovery';
+import { BacklightRig } from './BacklightRig';
 
 
 /** <Center> за умовою: для одного виробу — як завжди, для кількох — вимкнено. */
@@ -160,6 +161,16 @@ function ProductAssemblyWrapper({
     let clone = texCacheRef.current.get(cacheKey);
     if (!clone) {
       clone = baseTex.clone();
+      /*
+       * №164 (власник 08.09: «ти підкрутив яскравість і втратив глибину
+       * матеріалу»). Нічого я не крутив свідомо — але фото і справді
+       * показувалось не своїм. Фотографія слябу — це sRGB-зображення, а
+       * three.js без явного `colorSpace` вважає її ЛІНІЙНИМИ даними і не
+       * розкодовує: середні тони підскакують, контраст сідає, камінь
+       * виглядає вибіленим і пласким. Ставимо sRGB — і текстура стає рівно
+       * тим файлом, який приніс менеджер.
+       */
+      clone.colorSpace = THREE.SRGBColorSpace;
       clone.wrapS = THREE.RepeatWrapping;
       clone.wrapT = THREE.RepeatWrapping;
       clone.matrixAutoUpdate = false;
@@ -647,6 +658,8 @@ function TexturedPart({
     if (!texture || !photoUrl || !slab) return { clone: null, sideClone: null };
     
     const clone = texture.clone();
+    // №164: те саме sRGB, що й у кеші клонів вище — фото має лишатись собою.
+    clone.colorSpace = THREE.SRGBColorSpace;
     clone.wrapS = THREE.RepeatWrapping;
     clone.wrapT = THREE.RepeatWrapping;
 
@@ -662,6 +675,7 @@ function TexturedPart({
     clone.needsUpdate = true;
     
     const sideClone = texture.clone();
+    sideClone.colorSpace = THREE.SRGBColorSpace;
     sideClone.wrapS = THREE.RepeatWrapping;
     sideClone.wrapT = THREE.RepeatWrapping;
     
@@ -1616,6 +1630,13 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8]
   const setShowEdges = useUIStore(s => s.setShowEdges);
   const is3dAssemblyMode = useUIStore(s => s.is3dAssemblyMode);
   const isBacklightMode = useUIStore(s => s.isBacklightMode);
+  /*
+   * №160: кнопка перемикає НАМІР, а сам режим у сторі (тобто підміну фото)
+   * вмикає риґ у найтемнішій точці переходу — інакше фото стрибало б на
+   * повному світлі. Кнопка підсвічується одразу, від наміру.
+   */
+  const [backlightIntent, setBacklightIntent] = useState(isBacklightMode);
+  useEffect(() => { setBacklightIntent(isBacklightMode); }, [isBacklightMode]);
   const set3dAssemblyMode = useUIStore(s => s.set3dAssemblyMode);
   const set3dGroupingEnabled = useUIStore(s => s.set3dGroupingEnabled);
   const reset3dAssembly = useProjectStore(s => s.reset3dAssembly);
@@ -1776,8 +1797,8 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8]
                 щоб не плутати там, де просвітного каменю немає. */}
             {project.slabs.some((s: any) => !!s.photoBacklit) && (
               <button
-                className={isBacklightMode ? 'active !bg-amber-500 !text-white' : ''}
-                onClick={() => useUIStore.getState().setBacklightMode(!isBacklightMode)}
+                className={backlightIntent ? 'active !bg-amber-500 !text-white' : ''}
+                onClick={() => setBacklightIntent((prev) => !prev)}
                 title="Підсвітка: показати камінь із підсвіткою (просвітний камінь)"
               >
                 {compact
@@ -1869,7 +1890,13 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8]
             (window as unknown as { __vs3dAssembly?: unknown }).__vs3dAssembly = state;
           }}
         >
-          <color attach="background" args={[isBacklightMode ? '#25313c' : '#f0f4f8']} />
+          {/* №160: колір фону веде BacklightRig (плавно). Тут — базовий світлий,
+              від якого риґ і рахує затемнення. */}
+          <color attach="background" args={['#f0f4f8']} />
+          <BacklightRig
+            on={backlightIntent}
+            onSwap={(next) => useUIStore.getState().setBacklightMode(next)}
+          />
 
           <ambientLight intensity={0.6} />
           <directionalLight position={[10, 10, 5]} intensity={1.2} />

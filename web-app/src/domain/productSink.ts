@@ -35,6 +35,9 @@ export function sinkCutout(sink: ProductSinkDef): SurfaceCutout {
     width: sink.width,
     height: sink.height,
     cornerRadius: SINK_CUTOUT_CORNER_RADIUS,
+    // №156: поворот чаші успадковується отвором — інакше чаша стояла б під
+    // кутом у прямому отворі.
+    rotation: sink.rotation,
   };
 }
 
@@ -110,13 +113,14 @@ export function sinkAdditionElements(
 
 /** Дефолтна мийка: по центру деталі, чаша 500×400×200 */
 export function createProductSink(id: string, def: ElementDefinition): ProductSinkDef {
-  const w = def.kind === 'l' ? (def.outerWidth || 1200) : (def.width || 1200);
-  const h = def.kind === 'l' ? (def.outerHeight || 600) : (def.height || 600);
   return {
     id,
     kind: 'rect',
-    x: Math.round(w / 2),
-    y: Math.round(h / 2),
+    /* №156 (власник: «тут по дефолту 100»): нова мийка стає з відступом
+       100 мм від сторін — так само, як новий виріз. Раніше вона падала в
+       середину деталі, і перше, що робив менеджер, — переміряв обидва поля. */
+    x: 100,
+    y: 100,
     width: 500,
     height: 400,
     depth: 200,

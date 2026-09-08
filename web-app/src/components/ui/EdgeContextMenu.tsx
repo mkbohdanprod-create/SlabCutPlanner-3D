@@ -16,11 +16,20 @@ interface Props {
   onClose: () => void;
   onSelect: (action: 'thickening' | 'fold' | 'skirting' | 'wall_panel' | 'leg' | 'u_cutout') => void;
   onSelectProfile?: (profile: string) => void;
+  /**
+   * №150: меню розділене за режимами тулбара 3D.
+   * `sides` (типово) — доповнення сторони: потовщення, підворот, бортик,
+   * панель, нога, ніша. Пункту «Обробка торців» тут більше немає: кромки
+   * живуть у своєму режимі і в панелі «Кромки».
+   * `profiles` — одразу список профілів кромки. Лишився для ДУГ скруглень:
+   * їхніх рядків у панелі «Кромки» немає, і меню — єдиний вхід до профілю.
+   */
+  variant?: 'sides' | 'profiles';
 }
 
-export function EdgeContextMenu({ x, y, edgeId, edgeLabel, onClose, onSelect, onSelectProfile }: Props) {
+export function EdgeContextMenu({ x, y, edgeId, edgeLabel, onClose, onSelect, onSelectProfile, variant = 'sides' }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const [mode, setMode] = useState<'main' | 'profiles'>('main');
+  const [mode, setMode] = useState<'main' | 'profiles'>(variant === 'profiles' ? 'profiles' : 'main');
   const project = useProjectStore(s => s.project);
   const setIsEdgeProfileSettingsOpen = useUIStore(s => s.setIsEdgeProfileSettingsOpen);
   const edgeProfiles = edgeProfilesForMaterial(project.referenceData?.edgeProfiles, project.projectMaterial);
@@ -45,12 +54,14 @@ export function EdgeContextMenu({ x, y, edgeId, edgeLabel, onClose, onSelect, on
         /* fixed: x/y — це clientX/clientY (координати вікна), див. CornerContextMenu. */
         className="fixed z-50 w-56 bg-[#dcf2fb] border border-[#a2d8f0] shadow-lg flex flex-col text-sm overflow-y-auto"
       >
-        <button
-          onClick={() => setMode('main')}
-          className="text-left px-4 py-2 hover:bg-[#cbe6f6] text-[#334155] border-b border-[#a2d8f0]/50 font-bold flex items-center gap-2 sticky top-0 bg-[#dcf2fb]"
-        >
-          ← Назад
-        </button>
+        {variant !== 'profiles' && (
+          <button
+            onClick={() => setMode('main')}
+            className="text-left px-4 py-2 hover:bg-[#cbe6f6] text-[#334155] border-b border-[#a2d8f0]/50 font-bold flex items-center gap-2 sticky top-0 bg-[#dcf2fb]"
+          >
+            ← Назад
+          </button>
+        )}
         <button
           onClick={() => {
             // Каталог живе поза меню (меню закривається кліком поза ним — модалка всередині не вижила б)
@@ -100,12 +111,8 @@ export function EdgeContextMenu({ x, y, edgeId, edgeLabel, onClose, onSelect, on
       style={{ left: x, top: y }}
       className="fixed z-50 w-48 bg-[#dcf2fb] border border-[#a2d8f0] shadow-lg flex flex-col text-sm"
     >
-      <button
-        onClick={() => setMode('profiles')}
-        className="text-left px-4 py-2 hover:bg-[#cbe6f6] text-[#334155] border-b border-[#a2d8f0]/50 flex justify-between items-center"
-      >
-        Обробка торців <span>›</span>
-      </button>
+      {/* №150: «Обробка торців» звідси прибрана — це меню режиму «Сторони».
+          Профіль кромки вибирається в панелі «Кромки» справа. */}
       {/* Порядок пунктів лишаю як був, підписи — з EDGE_KIND_LABEL:
           10.08 назви помінялись місцями, дії (`fold`/`thickening`) — ні. */}
       <button

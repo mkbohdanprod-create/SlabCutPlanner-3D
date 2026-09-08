@@ -553,6 +553,40 @@ export type JointFieldPair = {
   box: { minX: number; maxX: number; minY: number; maxY: number };
 };
 
+/**
+ * КОНТУР ІЗ САМИХ СТОРІН (Б-159, скарга власника 08.09: «коли радіус, то
+ * пропадає сторона C у стиках»).
+ *
+ * Раніше виклики збирали контур як `sides.map(s => s.v1)` — по одній точці на
+ * сторону. Поки всі сторони стикуються кінець-у-кінець, це те саме кільце. Але
+ * щойно кут отримує РАДІУС, між сторонами з'являється дуга: кінець C і початок
+ * D розходяться, і кільце з самих `v1` замінює «сторона C + дуга» однією
+ * довгою діагоналлю. Ця діагональ накриває шматок порожнечі як «матеріал», і
+ * пробна точка біля середини C потрапляє «всередину» — нормаль сторони
+ * перевертається, пара C↔A перестає бути парою (нормалі більше не назустріч),
+ * і бейдж стику зникає рівно там, де стик фізично можливий.
+ *
+ * Тому контур будується з ОБОХ кінців кожної сторони: дуга при цьому
+ * замінюється хордою між своїми ж кінцями — наближення, яке контур не
+ * перекручує. Точки, що збіглися, прибираються, щоб не плодити нулі.
+ */
+export function outlineFromSides(sides: JointSideSegment[]): Point[] {
+  const pts: Point[] = [];
+  const push = (p: Point) => {
+    const last = pts[pts.length - 1];
+    if (last && Math.abs(last.x - p.x) < 0.01 && Math.abs(last.y - p.y) < 0.01) return;
+    pts.push({ x: p.x, y: p.y });
+  };
+  sides.forEach((side) => {
+    push(side.v1);
+    push(side.v2);
+  });
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  if (pts.length > 1 && first && last && Math.abs(first.x - last.x) < 0.01 && Math.abs(first.y - last.y) < 0.01) pts.pop();
+  return pts;
+}
+
 /** Чи лежить точка в контурі (промінь управо, парність перетинів). */
 function pointInOutline(outline: Array<{ x: number; y: number }>) {
   return (p: { x: number; y: number }) => {

@@ -188,7 +188,6 @@ export function ProductElement3DNode({
   element,
   activeDetailId = "main",
   onCornerClick,
-  onPlaneClick,
   onEdgeClick,
   onJointClick,
   onLegDoubleClick,
@@ -211,7 +210,6 @@ export function ProductElement3DNode({
   element: ProductElement;
   activeDetailId?: string;
   onCornerClick?: (id: string, x: number, y: number) => void;
-  onPlaneClick?: () => void;
   onEdgeClick?: (edgeId: string, x: number, y: number) => void;
   onJointClick?: (id: string, x: number, y: number) => void;
   onLegDoubleClick?: (edgeId: string) => void;
@@ -373,7 +371,12 @@ export function ProductElement3DNode({
     // напряму тут не можна (чаша повисне зі зсувом від власного вирізу).
     const { cx, cy } = sinkCenter(detail as never, sinkDef);
     return (
-      <group key={addition.id} position={[(cx - w / 2) * s, -thick / 2, (cy - h / 2) * s]}>
+      /* №156: чаша повертається разом зі своїм отвором (знак — як у 2D). */
+      <group
+        key={addition.id}
+        position={[(cx - w / 2) * s, -thick / 2, (cy - h / 2) * s]}
+        rotation={[0, -((sinkDef.rotation ?? 0) * Math.PI) / 180, 0]}
+      >
         <ProductElement3DNode
           element={addition}
           activeDetailId={activeDetailId}
@@ -635,6 +638,8 @@ export function ProductElement3DNode({
             attachmentKind,
             addition.baseDefinition.attachInset ?? 0,
             addition.baseDefinition.attachGap ?? 0,
+            /* №151: зсув углиб — від товщини САМОЇ панелі, не батька. */
+            addition.baseDefinition.thickness || detail.thickness || 20,
           );
 
           const miter = miterPlan.bySlot.get(additionSlot);
@@ -674,7 +679,6 @@ export function ProductElement3DNode({
         editMode={editMode}
         onCornerClick={onCornerClick}
         onEdgeClick={onEdgeClick}
-        onPlaneClick={onPlaneClick}
         onJointClick={onJointClick}
         onDetailDoubleClick={onDetailDoubleClick}
         onDetailClick={onDetailClick}
@@ -705,7 +709,6 @@ export function ProductElement3DNode({
             element={addition}
             activeDetailId={activeDetailId}
             onCornerClick={onCornerClick}
-            onPlaneClick={onPlaneClick}
             onEdgeClick={onEdgeClick}
             onJointClick={onJointClick}
             onLegDoubleClick={onLegDoubleClick}
@@ -749,6 +752,8 @@ export function ProductElement3DNode({
           attachmentKind,
           attachInset,
           addition.baseDefinition.attachGap ?? 0,
+          /* №151: зсув углиб — від товщини САМОЇ панелі, не батька. */
+          addition.baseDefinition.thickness || detail.thickness || 20,
         );
 
         const miter = miterPlan.bySlot.get(additionSlot);
@@ -759,7 +764,6 @@ export function ProductElement3DNode({
                   element={addition}
                   activeDetailId={activeDetailId}
                   onCornerClick={onCornerClick}
-                  onPlaneClick={onPlaneClick}
                   onEdgeClick={onEdgeClick}
                   onJointClick={onJointClick}
                   onLegDoubleClick={onLegDoubleClick}
