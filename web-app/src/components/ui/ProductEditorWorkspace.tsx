@@ -53,6 +53,7 @@ import { ElementSettingsModal } from './ElementSettingsModal';
 import { MetalTemplateModal } from './MetalTemplateModal';
 import { Detail2DBlueprint } from './Detail2DBlueprint';
 import { getDetailPointsAndBounds, buildDetailShape } from '../../engines/shapeBuilder';
+import { shrunkAttachmentDraft } from '../../engines/attachmentShrink';
 
 /**
  * Фактична довжина кожного ребра контуру (мм), а не номінальний розмір сторони.
@@ -291,6 +292,30 @@ export function buildProductFromSession(
     // і панель поїдуть у розкрій на повну номінальну довжину.
     const ownerEdgeLens = realEdgeLengths(ownerDetail);
     const sideLength = ownerEdgeLens[sideId] || getSideSize(ownerDetail!, sideId) || 1000;
+
+    /*
+     * Б-170 — УСАДКА ВТОПЛЕНОГО ДОПОВНЕННЯ (правило власника 09.09: «якщо
+     * втоплена — зменшується на товщину стільниці і ноги справа і примикає
+     * перпендикулярно торцем»). Рахує система, у полях модалки лишаються
+     * круглі числа технолога — рішення власника «система сама».
+     *
+     * Робимо це САМЕ ТУТ, де драфт сесії стає деталлю виробу: звідси
+     * живляться і 3D, і РОЗКРІЙ, і кошторис. Порахувати лише в рендері —
+     * означає знову розвести 2D і 3D, з чого весь цей баг і почався.
+     *
+     * Сусіди беруться по контуру ВЛАСНИКА ребра: сторона перед нашою ділить
+     * із нею початок, сторона після — кінець (той самий обхід, що в 3D).
+     * Стикуються тільки однонапрямлені доповнення: нога впирається в ногу,
+     * панель — у панель; панель, що стоїть угору, нозі не заважає.
+     */
+    const draftEff = shrunkAttachmentDraft({
+      slot: id,
+      draft,
+      ownerDetail,
+      subDetails: session.subDetails ?? {},
+      parse: parseAdditionSlot,
+      sideLength,
+    });
     
     /**
      * Доповнення на ДУЗІ (сторона виду `B_radius`) — гнутий елемент:
@@ -302,7 +327,7 @@ export function buildProductFromSession(
     const arcCorner = arcCornerId ? session.mainDetail?.corners?.[arcCornerId] : undefined;
     const arcDraft = (arcCornerId && arcCorner?.type === 'radius' && (arcCorner.radius ?? 0) > 0)
       ? {
-          ...draft,
+          ...draftEff,
           radiusElement: {
             radiusMm: arcCorner.radius!,
             arcLengthMm: cornerArcLengthMm(arcCorner.radius!),
@@ -310,13 +335,13 @@ export function buildProductFromSession(
             arcAngleDeg: 90,
             // Виліт смуги — це висота деталі: товщина краю стільниці або
             // висота опори. Саме за нею прайс обирає категорію послуги.
-            bandSizeMm: draft.height,
+            bandSizeMm: draftEff.height,
             method: radiusMethodFor(projectMaterial),
             role: radiusRoleForType(draft.type),
             complex: Boolean(arcCorner.complexRadius),
           },
         }
-      : draft;
+      : draftEff;
 
     const addition: import('../../domain/types').ProductElement = {
       id: elementId,
@@ -339,9 +364,17 @@ export function buildProductFromSession(
       // Потовщення — підклейка знизу: пряма склейка, текстура не тягнеться.
       jType = 'glued'; jDominant = 'a'; jTexture = false;
     } else if (isLeg) {
-      // Нога (опора) — «водоспад»: клеїться під 45°, як підворот.
-      // Звідси різ під 45 на обох деталях стику і склейка під 45 у кошторисі.
-      jType = 'miter45'; jDominant = 'a'; jTexture = false;
+      /*
+       * Нога (опора) НА КРОМЦІ — «водоспад»: клеїться під 45°, як підворот.
+       * Звідси різ під 45 на обох деталях стику і склейка під 45 у кошторисі.
+       *
+       * Б-170: втоплена нога кромки не торкається — вона під плитою і
+       * впирається в неї ТОРЦЕМ. Вуса там немає ні фізично, ні в 3D
+       * (miterAssembly його вже не будує), тож і в кошторисі має бути
+       * пряма склейка, а не miter45. Інакше цех отримав би оплачений різ
+       * під 45, якого ніхто не робить.
+       */
+      jType = draftEff.attachStraight ? 'butt' : 'miter45'; jDominant = 'a'; jTexture = false;
     } else if (isWallPanel) {
       jType = 'butt'; jDominant = 'a'; jTexture = false;
     }
@@ -351,8 +384,8 @@ export function buildProductFromSession(
     // (attachOffset), тож стик 0..sideLength нараховував би цеху склейку
     // на всю сторону — довшу за сам шов. Затискаємо в межі ребра, щоб
     // зіпсовані цифри не дали від'ємну або вилітну ділянку.
-    const attachFrom = Math.max(0, Math.min(draft.attachOffset ?? 0, sideLength));
-    const attachTo = Math.min(sideLength, attachFrom + (draft.width || sideLength));
+    const attachFrom = Math.max(0, Math.min(draftEff.attachOffset ?? 0, sideLength));
+    const attachTo = Math.min(sideLength, attachFrom + (draftEff.width || sideLength));
     const contactLength = Math.max(1, attachTo - attachFrom);
 
     const joint: import('../../domain/types').Joint = {
@@ -470,9 +503,14 @@ export function buildProductFromSession(
         // Відступ уздовж ребра — затискаємо, щоб деталь не звисала за край.
         const attachOffset = Math.max(0, Math.min(savedDraft?.attachOffset ?? 0, sideLength - width));
 
-        const addition: import('../../domain/types').ProductElement = {
-          id: elementId, type: EDGE_KIND_LABEL[key],
-          baseDefinition: {
+        /*
+         * №172 + Б-170: потовщення і підворот живуть нарівні з ногою — та сама
+         * усадка і те саме правило кромки. Раніше ця гілка будувала деталь
+         * повз розрахунок, і смуга з кромкою чи «в глиб» лишалась із вусом.
+         */
+        const bandDraft = shrunkAttachmentDraft({
+          slot: id,
+          draft: {
             ...(savedDraft ?? createDraft()),
             type: EDGE_KIND_LABEL[key],
             thickness: def.thickness,
@@ -480,6 +518,15 @@ export function buildProductFromSession(
             height: bandSize,
             attachOffset,
           },
+          ownerDetail: def,
+          subDetails: session.subDetails ?? {},
+          parse: parseAdditionSlot,
+          sideLength,
+        });
+
+        const addition: import('../../domain/types').ProductElement = {
+          id: elementId, type: EDGE_KIND_LABEL[key],
+          baseDefinition: bandDraft,
           additions: [], joints: []
         };
         element.additions.push(addition);
@@ -487,9 +534,11 @@ export function buildProductFromSession(
         // деталь може бути коротшою за ребро і зсунутою вздовж нього.
         element.joints.push({
           id: `joint_${id}`, origin: 'authored',
-          a: { elementPath: element.id, sideId, from: attachOffset, to: attachOffset + width },
-          b: { elementPath: elementId, sideId: attachmentContactSide(), from: 0, to: width },
-          type: jointType, dominant: 'a', textureContinuity: texture
+          a: { elementPath: element.id, sideId, from: bandDraft.attachOffset ?? attachOffset, to: (bandDraft.attachOffset ?? attachOffset) + (bandDraft.width ?? width) },
+          b: { elementPath: elementId, sideId: attachmentContactSide(), from: 0, to: bandDraft.width ?? width },
+          /* №172: кромка або «в глиб» → пряма склейка замість вуса 45°. */
+          type: bandDraft.attachStraight ? 'glued' : jointType,
+          dominant: 'a', textureContinuity: bandDraft.attachStraight ? false : texture
         });
       });
     });
@@ -1750,7 +1799,12 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   const feature = detail[additionModalOpen.kind];
                   const saved = additionModalOpen.slot ? session.subDetails[additionModalOpen.slot] : undefined;
                   if (saved && !additionModalOpen.legacy) {
-                    return { height: saved.height, width: saved.width, offset: saved.attachOffset ?? 0 };
+                    return {
+                      height: saved.height,
+                      width: saved.width,
+                      offset: saved.attachOffset ?? 0,
+                      inset: saved.attachInset ?? 0,
+                    };
                   }
                   const height = feature?.sideSizes?.[additionModalOpen.edgeId] ?? feature?.size;
                   return height ? { height } : undefined;
@@ -1795,6 +1849,8 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   draft.width = data.width;
                   draft.height = data.height;
                   draft.attachOffset = data.offset;
+                  /* №172: «в глиб» у смуги — той самий attachInset, що в ноги. */
+                  draft.attachInset = Math.max(0, data.inset ?? 0);
 
                   if (ownerSlot) {
                     /*

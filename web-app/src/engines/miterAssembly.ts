@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { attachmentPlacement } from './transform3d';
+import { attachmentPlacement, outlineFromCurves } from './transform3d';
 
 /**
  * СТИКИ 45° У ЗБІРЦІ ВИРОБУ — спільна математика для обох 3D (02.09.2026).
@@ -72,6 +72,8 @@ export interface MiterAttachment {
     attachOffset?: number;
     attachInset?: number;
     attachGap?: number;
+    /** №172: стик прямий (втоплене доповнення або кромка на цій стороні). */
+    attachStraight?: boolean;
   };
 }
 
@@ -83,6 +85,8 @@ export interface PlacedMiter {
   xMin: number; xMax: number; yMin: number; yMax: number;
   /** Рамка ребра → рамка збірки. */
   edgeMatrix: THREE.Matrix4;
+  /** Зсув смуги вглиб деталі від свого ребра, мм. Потрібен кутовому зрізу. */
+  insetMm: number;
 }
 
 /**
@@ -124,6 +128,9 @@ export function buildAssemblyMiterPlan(args: {
   const s = 0.001;
   const thickness = thicknessMm * s;
   const sceneXZ = (p: { x: number; y: number }) => ({ x: (p.x - 0.5) * w * s, z: (p.y - 0.5) * h * s });
+  /* Б-169: контур деталі — щоб «вглиб» рахувалось по каменю, а не по центру
+     габариту (на Г-подібній деталі центр габариту лежить у виїмці). */
+  const outline = outlineFromCurves(curves as never);
   for (const item of segments) {
     const pId = item.id;
     const here = attachmentsOn(pId);
@@ -140,10 +147,16 @@ export function buildAssemblyMiterPlan(args: {
     for (const { slot, draft, kind } of here) {
       const goesDown = kind === 'leg' || kind === 'fold' || kind === 'thickening';
       if (!goesDown) continue;
+      /*
+       * №172: стик прямий, якщо доповнення втоплене АБО на цій стороні стоїть
+       * кромка (прапорець ставить engines/attachmentShrink). Вуса тоді немає
+       * ні з плитою, ні з сусідом на куті.
+       */
+      const straightJoint = (draft.attachInset ?? 0) > 0.5 || draft.attachStraight === true;
       const defaultHeight = kind === 'leg' ? 900 : kind === 'fold' ? 100 : 40;
       const height = (draft.height || defaultHeight) * s;
       const gapY = (draft.attachGap ?? 0) * s;
-      const { posX, insetZ } = attachmentPlacementNorm(item.v1, item.v2, bounds, draft.width, draft.attachOffset ?? 0, draft.attachInset ?? 0);
+      const { posX, insetZ } = attachmentPlacementNorm(item.v1, item.v2, bounds, draft.width, draft.attachOffset ?? 0, draft.attachInset ?? 0, outline);
       const childThickness = (draft.thickness || thicknessMm) * s;
       // Врівень із торцем плити: зовнішня площина доповнення на лінії ребра (+z — усередину)
       const childPos: [number, number, number] = [posX, -(height / 2 + gapY), childThickness / 2 + insetZ];
@@ -152,8 +165,18 @@ export function buildAssemblyMiterPlan(args: {
       const placed: PlacedMiter = {
         childPos, childRot, cutters: [], edgeMatrix,
         xMin: posX - spanLen / 2, xMax: posX + spanLen / 2, yMin: -(height + gapY), yMax: -gapY,
+        insetMm: straightJoint ? Math.max(draft.attachInset ?? 0, 1) : 0,
       };
-      if (miterJointFor(kind, material)) {
+      /*
+       * Б-168, друга половина. Вус 45° зі стільницею має сенс лише тоді, коли
+       * смуга стоїть ВРІВЕНЬ із кромкою плити — тоді дві фаски сходяться в
+       * ребро. Утоплена смуга кромки не торкається взагалі, вона під плитою.
+       * Клин при цьому будувався від кромки і з'їдав з неї смугу заввишки
+       * рівно «в глиб»: виміряно 8.4 л із опори 2000×900×20 при «в глиб» 200,
+       * тобто 210 мм по висоті на всю довжину. Це та сама стрілка «вгору» на
+       * скріні власника.
+       */
+      if (!straightJoint && miterJointFor(kind, material)) {
         const cut = miterCutters({ posX, spanLen, childPos, childRot });
         cut.main.rotateY(-angle);
         cut.main.translate(midX, thickness / 2, midY);
@@ -216,6 +239,26 @@ export function buildAssemblyMiterPlan(args: {
         if (a.xMax < L1 / 2 - 1e-6) continue; // смуга не доходить до кута
         for (const b of on2) {
           if (b.xMin > -L2 / 2 + 1e-6) continue;
+          /*
+           * Б-168 (власник 09.09: «нога не лише зміщається вглиб, а й
+           * зменшується з боків на цю ж величину»).
+           *
+           * Різак кута будується від ВЕРШИНИ КУТА ПЛИТИ по бісектрисі і про
+           * утоплення нічого не знає. Для смуги, зсунутої вглиб на X мм, він
+           * відкушує ще й трикутник глибиною X з кожного кінця. Виміряно на
+           * стільниці 2000×600 з опорами B, C, D: обʼєм опори C падав з 31.5 л
+           * до 23.5 л при «в глиб» = 200, тобто ≈220 мм з кожного боку.
+           * У розкрій при цьому йшло чесних 2000 — звідси розходження 2D і 3D.
+           *
+           * Причина глибша за арифметику: щойно одна смуга втоплена, вони вже
+           * НЕ сходяться в куті — це Т-подібний перетин, і вус там не доречний
+           * узагалі. Тому пару з утопленою смугою пропускаємо.
+           *
+           * Відкрите (варіанти 2 і 3 з розбору 09.09): чи різати паз у смузі,
+           * яку перетинає втоплена, і хто кого перерізає на виробництві.
+           * Поки обидві лишаються цілими і перетинаються на товщину каменю.
+           */
+          if (a.insetMm > 0.5 || b.insetMm > 0.5) continue;
           a.cutters.push(cornerCutter(V, n, 1, b, a));   // a лишає те, що позаду вершини
           b.cutters.push(cornerCutter(V, n, -1, a, b));  // b — те, що попереду
         }
@@ -237,6 +280,7 @@ function attachmentPlacementNorm(
   widthMm: number | undefined,
   offsetMm: number,
   insetMm: number,
+  outline?: ReadonlyArray<{ x: number; y: number }>,
 ) {
-  return attachmentPlacement(v1 as never, v2 as never, bounds, widthMm, offsetMm, insetMm);
+  return attachmentPlacement(v1 as never, v2 as never, bounds, widthMm, offsetMm, insetMm, outline as never);
 }

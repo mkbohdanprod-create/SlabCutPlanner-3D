@@ -45,18 +45,6 @@ function SectionRow({ n, title, active, onClick, hint }: {
   );
 }
 
-/** Секція, меню якої ще переносимо з редактора виробу. */
-function SectionStub({ what }: { what: string }) {
-  return (
-    <div className="shrink-0 mb-2 rounded-sm border border-dashed border-slate-300 bg-white px-3 py-3 text-xs leading-relaxed text-slate-500">
-      <b className="text-slate-700">Меню переноситься сюди.</b> {what}
-      <div className="mt-1 text-slate-400">
-        Поки що керується у властивостях деталі в редакторі виробу.
-      </div>
-    </div>
-  );
-}
-
 function Accordion({ title, children, defaultOpen = false, info, flat }: {
   title: string;
   children: React.ReactNode;
@@ -133,7 +121,7 @@ export function ElementSettingsModal({
   onClose,
   onSave,
   embedded = false,
-  panels,
+  /* №171: `panels` більше не малюється — див. коментар нижче в розмітці. */
   /* `occupiedSides` більше не розбираємо: кромки прибрані з цього вікна
      04.09, а пропс лишається в типі, щоб не переписувати виклики. */
 }: {
@@ -504,79 +492,24 @@ export function ElementSettingsModal({
             </div>
             )}
 
-            <SectionRow n={2} title="Стики" active={section === 'joints'} onClick={() => toggleSection('joints')}
-              hint="З'єднання деталей — креслення показується голим" />
-            {section === 'joints' && (
-              <div className="shrink-0 mb-2 rounded-sm border border-slate-200 bg-white overflow-hidden">
-                <div className="px-3 pt-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Стики цієї деталі
-                </div>
-                {manualJoints.length === 0 ? (
-                  <div className="px-3 pb-3 text-xs text-slate-500">
-                    Клацни літеру сторони на кресленні — протилежна підсвітиться сама,
-                    введи відступ і натисни Enter.
-                  </div>
-                ) : (
-                  <div className="flex flex-col">
-                    {manualJoints.map((j) => (
-                      <div key={j.id} className="flex items-center gap-2 px-3 py-2 border-t border-slate-100 text-sm">
-                        <span className="w-2 h-2 rounded-full bg-[#22c55e] shrink-0" />
-                        <button
-                          type="button"
-                          onClick={() => editJoint(j.id)}
-                          className="flex-1 text-left text-slate-700 hover:text-[#1f93ef]"
-                          title="Клік — поставити цей стик наново"
-                        >
-                          Стик {j.sideId}{j.oppositeSideId ? `–${j.oppositeSideId}` : ''}
-                          {j.referenceSideId ? <span className="text-slate-400"> · від {j.referenceSideId}</span> : null}
-                          <span className="text-slate-400"> · {j.offset} мм</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeJoint(j.id)}
-                          className="text-slate-400 hover:text-red-500 px-1"
-                          title="Видалити стик"
-                        >×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {section === 'joints' && (
-              panels?.joints
-                ? <div className="shrink-0 mb-2 rounded-sm border border-slate-200 bg-white overflow-hidden">{panels.joints}</div>
-                : <SectionStub what="Стики (З'єднання деталей): вибір сторони, тип шва, розкладка стиків." />
-            )}
+            {/*
+              №171 (власник 09.09: «оці менюшки прибери звідси, буде все в 3D
+              режимі»). Тут стояли секції 2–5 — «Стики», «Вирізи», «Мийки і
+              проточки», «Розетки, кнопки, інше». Вони були перевалочним
+              пунктом: меню переносились із правої панелі редактора виробу
+              сюди, і частина з них так і лишалась заглушкою «переноситься».
 
-            <SectionRow n={3} title="Вирізи" active={section === 'cutouts'} onClick={() => toggleSection('cutouts')}
-              hint="Обробка площин — вирізи в тілі деталі" />
-            {section === 'cutouts' && (
-              (panels?.cutouts || panels?.corners || panels?.edges)
-                ? <div className="shrink-0 mb-2 rounded-sm border border-slate-200 bg-white overflow-hidden">
-                    {panels?.cutouts}{panels?.corners}{panels?.edges}
-                  </div>
-                : <SectionStub what="Обробка площин (Вирізи): прямокутні й довільні вирізи, радіуси кутів вирізу." />
-            )}
+              Тепер точка входу одна — режими 3D (Кути · Вирізи · Кромки ·
+              Сторони · Стики). Два входи в те саме налаштування — це не
+              зручність, а рознесені по різних вікнах стани, які рано чи пізно
+              розходяться. У цьому вікні лишаються тільки ГАБАРИТИ: розміри
+              сторін, товщина і висота встановлення — те, що не має 3D-режиму.
 
-            <SectionRow n={4} title="Мийки і проточки" active={section === 'sinks'} onClick={() => toggleSection('sinks')}
-              hint="Встановлення мийки, фрезерування проточок для води" />
-            {section === 'sinks' && (
-              panels?.millings
-                ? <div className="shrink-0 mb-2 rounded-sm border border-slate-200 bg-white overflow-hidden">
-                    {panels.millings}
-                    <div className="px-3 py-2 text-[11px] text-slate-400 border-t border-slate-100">
-                      Мийка поки керується у властивостях деталі — переносимо наступною хвилею.
-                    </div>
-                  </div>
-                : <SectionStub what="Встановлення мийки в виріб + Фрезерування площини (Проточки для води)." />
-            )}
-
-            <SectionRow n={5} title="Розетки, кнопки, інше" active={section === 'sockets'} onClick={() => toggleSection('sockets')}
-              hint="Отвори під розетки, вимикачі та інші врізки" />
-            {section === 'sockets' && (
-              <SectionStub what="Розетки й вимикачі з каменю, кнопки, інші врізки в площину." />
-            )}
+              Проп `panels` навмисно лишився в типі: редактор виробу далі його
+              передає, просто вікно більше нічого з нього не малює. Прибирати
+              його з обох боків — окрема прибирка, і вона не мала б їхати
+              разом із цією зміною.
+            */}
 
             {/* «Кількість виробів» звідси прибрано 04.09 на вимогу власника:
                 поле дублювало кількість із модалки створення виробу, стояло

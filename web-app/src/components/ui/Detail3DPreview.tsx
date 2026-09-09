@@ -1,6 +1,6 @@
 import  { Suspense, useMemo, useState, useEffect, useRef, createContext, useContext } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
-import { SafeEnvironment } from "../3d/SafeEnvironment";
+import { SceneLighting } from "../3d/SceneLighting";
 import {
   OrbitControls,
   Environment,
@@ -23,7 +23,8 @@ import { buildGrooveCutters } from '../../engines/surfaceGrooves';
 import { explodeDetails } from '../../engines/geometry';
 import { getSinkPartTransform } from '../../engines/sinkAssembly';
 import { sampleContourPoints } from '../../engines/shapeBuilder';
-import { attachmentPlacement, attachmentUpZ } from '../../engines/transform3d';
+import { attachmentPlacement, attachmentUpZ, outlineFromCurves } from '../../engines/transform3d';
+import { shrunkAttachmentDraft } from '../../engines/attachmentShrink';
 import { buildAssemblyMiterPlan } from '../../engines/miterAssembly';
 import { parseAdditionSlot } from '../../domain/ids';
 import { hasEdgeTreatment } from '../../domain/edgeTreatment';
@@ -1817,6 +1818,8 @@ function NestedAttachments({
         const { midX, midY, angle, posX, insetZ, inward } = attachmentPlacement(
           (curve as THREE.LineCurve).v1, (curve as THREE.LineCurve).v2, bounds,
           draft.width, draft.attachOffset ?? 0, draft.attachInset ?? 0,
+          /* Б-169: «вглиб» — по каменю, не по центру габариту. */
+          outlineFromCurves(curves as never),
         );
         const goesDown = parsed.kind === 'leg';
         const height = (draft.height || (parsed.kind === 'leg' ? 900 : parsed.kind === 'skirting' ? 50 : 600)) * s;
@@ -1975,6 +1978,9 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
 
   const { shape: mainShape, edgeMap: mainEdgeMap } = useDetailShape(detail || { kind: 'rect' } as any, mainPoints, mainBounds);
 
+  /* Б-169: контур головної деталі — щоб «вглиб» рахувалось по каменю. */
+  const mainOutline = useMemo(() => outlineFromCurves(mainShape.curves as never), [mainShape]);
+
   const mainLineSegments = useMemo(() => {
     return mainShape.curves
       .map((curve, index) => ({ curve, id: mainEdgeMap[index] }))
@@ -2010,8 +2016,27 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
   const isSink = detail.kind === 'sink_rect' || detail.kind === 'sink_slot';
 
   /** Доповнення верхнього рівня на ребрі pId — спільний відбір для мітри і для рендера. */
+  /*
+   * Б-170: розмір доповнення береться ЧЕРЕЗ спільну усадку, а не з драфта як
+   * є. Втоплена нога коротшає на товщину плити і сусідів — і саме цей розмір
+   * має малювати 3D, бо рівно він поїде в розкрій. Раніше 3D читало сирий
+   * драфт і показувало 1200×900 там, де в цех ішло 1160×880.
+   *
+   * Точка одна на всю сцену: далі з неї живиться і план стиків (miterPlan),
+   * і сам рендер — тому розійтись їм більше нема де.
+   */
   const attachmentsOn = (pId: string) => Object.entries(subDetails ?? {})
-    .map(([slot, draft]) => ({ slot, draft, parsed: parseAdditionSlot(slot) }))
+    .map(([slot, rawDraft]) => ({
+      slot,
+      draft: shrunkAttachmentDraft({
+        slot,
+        draft: rawDraft,
+        ownerDetail: detail,
+        subDetails: subDetails ?? {},
+        parse: parseAdditionSlot,
+      }),
+      parsed: parseAdditionSlot(slot),
+    }))
     .filter((entry) => {
       if (entry.parsed.sideId !== pId) return false;
       // Крок 4.2: слот з адресою власника (`wall_panel_B_leg_C`) —
@@ -2177,6 +2202,8 @@ function DetailAssemblyGroup({ detail, subDetails, activeDetailId, onCornerClick
               const { posX, insetZ, inward } = attachmentPlacement(
                 item.curve.v1, item.curve.v2, mainBounds,
                 draft.width, draft.attachOffset ?? 0, draft.attachInset ?? 0,
+                /* Б-169: «вглиб» — по каменю, не по центру габариту. */
+                mainOutline,
               );
               const childPos: [number, number, number] = miter
                 ? miter.childPos
@@ -2964,6 +2991,11 @@ export function Detail3DPreview({
         <Canvas
           camera={{ position: [2, 2, 2], fov: 45 }}
           onCreated={(state) => {
+            /* №166: тонмапінг Neutral замість ACES — один раз тут, а не пропом
+               `gl={{…}}`: проп React вписує назад при кожному перемальовуванні
+               і не дає риґу підсвітки зняти тонмапінг на піку. */
+            state.gl.toneMapping = THREE.NeutralToneMapping;
+            state.gl.toneMappingExposure = 0.9;
             attachContextLossRecovery(state.gl.domElement);
             // Автотести/скріншоти (Playwright): доступ до камери й контролера
             // прев'ю, щоб навести на кут без імітації миші. У продукті не заважає.
@@ -2991,9 +3023,10 @@ export function Detail3DPreview({
             attach="background"
             args={[mode === "dimensions" ? "#ffffff" : theme === "dark" ? "#0f172a" : "#f0f4f8"]}
           />
-          <ambientLight intensity={mode === "dimensions" ? 1.0 : 0.6} />
-          <directionalLight position={[10, 10, 5]} intensity={mode === "dimensions" ? 0.5 : 1.2} castShadow={mode !== "dimensions"} />
-          <SafeEnvironment />
+          {/* №166: те саме світло, що в сцені збірки (SceneLighting.tsx).
+              groundY тут не задаємо: деталь лежить у нулі, і приймач тіні на
+              тій самій висоті різав би її навпіл. Тінь — поки лише у збірці. */}
+          <SceneLighting preset="part" flat={mode === "dimensions"} />
 
           {mode !== "dimensions" && (
             <>

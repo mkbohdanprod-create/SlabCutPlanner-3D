@@ -118,7 +118,8 @@ export function EdgeProfilesPanel({
   };
 
   const onChipClick = (side: string) => clickEdgeSideLetter({
-    side, scope, locked: blockedEdgeSet.has(side) || Boolean(occupied[side]), profiles: edgeProfiles, apply: onChange,
+    /* №172: доповнення на стороні більше не блокує — блокує лише DXF. */
+    side, scope, locked: blockedEdgeSet.has(side), profiles: edgeProfiles, apply: onChange,
   });
 
   return (
@@ -162,9 +163,21 @@ export function EdgeProfilesPanel({
 
           const occupiedBy = occupied[side];
           const isSource = sourceSide === side;
-          const locked = blocked || Boolean(occupiedBy);
+          /*
+           * №172 (власник 09.09: «обмеження з кромки можна зняти… якщо є стик
+           * ноги і стільниці і ми хочемо поставити кромку, то просто
+           * змінюється примикання деталей»).
+           *
+           * Було: сторона з ногою/потовщенням БЛОКУВАЛАСЬ — мовляв, торець
+           * закритий, фрезерувати нема чого. Правило перевернуте: кромка —
+           * річ видима, і саме вона диктує примикання. Поставив кромку —
+           * доповнення переходить із вуса 45° на прямий стик і йде під плиту,
+           * торець лишається відкритим і обробленим (див. engines/
+           * attachmentShrink). Тому тут блокує лише прив'язка до DXF.
+           */
+          const locked = blocked;
           const chipTitle = locked
-            ? (occupiedBy ? `Торець закриває ${occupiedBy}` : 'На стороні вже є прив\'язаний елемент DXF')
+            ? 'На стороні вже є прив\'язаний елемент DXF'
             : isSource ? 'Взірець — клік знімає' : sourceSide ? `Скопіювати обробку зі сторони ${sideLabels?.[sourceSide] ?? sourceSide}` : 'Зробити взірцем: далі клік по інших літерах копіює обробку';
 
           return (
@@ -188,7 +201,7 @@ export function EdgeProfilesPanel({
                   className="bt-input flex-1 min-w-0"
                   style={{ padding: '4px 6px', fontSize: 12, width: 'auto' }}
                   disabled={locked}
-                  title={occupiedBy ? `Торець закриває ${occupiedBy} — форму тут не обрати` : blocked ? 'На стороні вже є прив\'язаний елемент DXF' : 'Лицьове ребро'}
+                  title={blocked ? 'На стороні вже є прив\'язаний елемент DXF' : 'Лицьове ребро'}
                   value={t.top?.profileId ?? ''}
                   onChange={(e) => {
                     if (e.target.value === CATALOG_OPTION_VALUE) {
@@ -212,8 +225,8 @@ export function EdgeProfilesPanel({
                   type="button"
                   className={`bt-btn-ghost ${isOpen ? 'is-open' : ''}`}
                   style={{ padding: 4, borderRadius: 6, ...(isOpen ? { background: '#dbeafe', borderColor: '#b9d5f5', color: '#0058ab' } : {}) }}
-                  disabled={Boolean(occupiedBy)}
-                  title={occupiedBy ? `Торець закриває ${occupiedBy}` : isOpen ? 'Сховати розширені налаштування' : 'Розширені: тильне ребро, довільна ділянка, ручне доопрацювання'}
+                  disabled={blocked}
+                  title={isOpen ? 'Сховати розширені налаштування' : 'Розширені: тильне ребро, довільна ділянка, ручне доопрацювання'}
                   onClick={() => setExpanded((prev) => ({ ...prev, [side]: !isOpen }))}
                 >
                   {isOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -223,29 +236,19 @@ export function EdgeProfilesPanel({
                 )}
               </div>
 
-              {/* Сторона закрита доповненням: чому вимкнено, і що робити з формою, яка тут лишилась */}
+              {/* На стороні стоїть доповнення — підказка, а не заборона (№172) */}
               {occupiedBy && (
                 <div className="flex flex-wrap items-center gap-1 mt-1 ml-8">
-                  <span className="bt-tag bt-tag-amber bt-tag-lc" title="Нога, потовщення чи підворот закриває торець — фрезерувати тут нема чого">зайнято: {occupiedBy}</span>
-                  {hasAny && (
-                    <>
-                      <span className="bt-tag bt-tag-red bt-tag-lc" title="Форма стояла до того, як сторону закрило доповнення">форма лишилась: {labelOf(t.top?.profileId ?? t.bottom?.profileId)}</span>
-                      <button
-                        type="button"
-                        className="bt-btn-ghost"
-                        style={{ padding: '1px 8px', fontSize: 11 }}
-                        title="Прибрати обробку з цієї сторони"
-                        onClick={() => { const next = { ...edgeProfiles }; delete next[side]; onChange(next); }}
-                      >
-                        прибрати
-                      </button>
-                    </>
-                  )}
+                  <span
+                    className="bt-tag bt-tag-amber bt-tag-lc"
+                    title="Кромка тут можлива: доповнення переходить із вуса 45° на прямий стик і стає під плиту, торець лишається відкритим"
+                  >
+                    {occupiedBy}{hasAny ? ' · примикає торцем' : ''}
+                  </span>
                 </div>
               )}
 
-              {/* Що сховано в розширених — видно і в згорнутому стані */}
-              {!isOpen && !occupiedBy && (bottomDiffers || partial || t.manualFinish) && (
+              {!isOpen && (bottomDiffers || partial || t.manualFinish) && (
                 <div className="flex flex-wrap gap-1 mt-1 ml-8">
                   {bottomDiffers && <span className="bt-tag bt-tag-sky bt-tag-lc">тильне: {labelOf(t.bottom?.profileId)}</span>}
                   {partial && <span className="bt-tag bt-tag-amber bt-tag-lc">довільна {actualSize} мм</span>}
@@ -253,7 +256,7 @@ export function EdgeProfilesPanel({
                 </div>
               )}
 
-              {isOpen && !occupiedBy && (
+              {isOpen && (
                 <div className="edge-side-more">
                   <div className="flex items-center gap-1.5">
                     <span className="bt-k" style={{ width: 96 }}>Тильне ребро</span>

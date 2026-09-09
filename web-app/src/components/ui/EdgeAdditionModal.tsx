@@ -22,6 +22,12 @@ export interface EdgeAdditionData {
   height: number;
   width: number;
   offset: number;
+  /**
+   * №172: «в глиб стільниці» — нарівні з ногою. Втоплена смуга не робить вус
+   * 45°, а йде під плиту й примикає торцем; розміри система рахує сама
+   * (engines/attachmentShrink). 0 — смуга стоїть на кромці, як було завжди.
+   */
+  inset: number;
 }
 
 const KIND_LABEL: Record<EdgeAdditionKind, string> = EDGE_KIND_LABEL;
@@ -50,6 +56,7 @@ export function EdgeAdditionModal({ kind, edgeId, sideLength, fullSideOnly, init
   const [height, setHeight] = useState(initialData?.height || KIND_DEFAULT_HEIGHT[kind]);
   const [width, setWidth] = useState(initialData?.width || (sideLength ? Math.round(sideLength) : 1100));
   const [offset, setOffset] = useState(initialData?.offset ?? 0);
+  const [inset, setInset] = useState(initialData?.inset ?? 0);
 
   return (
     <DraggableDialog
@@ -107,7 +114,26 @@ export function EdgeAdditionModal({ kind, edgeId, sideLength, fullSideOnly, init
                 <span className="text-xs text-slate-500">мм.</span>
               </div>
             </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-slate-700">В глиб стільниці</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  value={inset}
+                  onChange={(e) => setInset(Math.max(0, Number(e.target.value)))}
+                  className="w-full px-2 py-1.5 border border-slate-300 rounded-sm text-sm"
+                />
+                <span className="text-xs text-slate-500">мм.</span>
+              </div>
+            </div>
           </div>
+        )}
+        {!fullSideOnly && (
+          <p className="text-xs text-slate-500 leading-snug -mt-2">
+            0 — смуга стоїть на кромці й клеїться під 45°. Більше — йде під
+            стільницю і примикає торцем; розмір деталі система перерахує сама.
+          </p>
         )}
 
         <div className="flex justify-between gap-4 mt-2">
@@ -118,7 +144,7 @@ export function EdgeAdditionModal({ kind, edgeId, sideLength, fullSideOnly, init
             Скасувати
           </button>
           <button
-            onClick={() => onSave({ edgeId, height, width, offset })}
+            onClick={() => onSave({ edgeId, height, width, offset, inset })}
             className="w-full py-1.5 bg-[#eaf4fc] text-[#3b82f6] border border-[#3b82f6] rounded-sm font-medium hover:bg-blue-50 transition-colors"
           >
             Застосувати

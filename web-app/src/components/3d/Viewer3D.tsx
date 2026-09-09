@@ -1,7 +1,7 @@
 import React, { Suspense, useMemo, useState, useEffect,  useRef } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls,   Center,  TransformControls , useTexture, Edges, Line,  Html, Grid } from '@react-three/drei';
-import { SafeEnvironment } from './SafeEnvironment';
+import { SceneLighting } from './SceneLighting';
 import { Blocks, Group, Frame, Lightbulb, BookOpen, Clapperboard, RotateCcw, Smartphone, DraftingCompass, Loader2 as ArSpinner, Home } from 'lucide-react';
 import { exportForAr, arFileName } from '../../engines/arExport';
 import { collidingSceneProducts, defaultSceneLayout } from '../../engines/sceneLayout';
@@ -1875,15 +1875,27 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8]
         {/* ОДНЕ СЕРЕДОВИЩЕ НА ВСЮ ПРОГРАМУ (26.08, зауваження власника:
             «в одному середовищі 2 різні кіна»). Сцена збірки тепер живе в
             тих самих умовах, що 3D у редакторі деталі (Detail3DPreview):
-            світлий фон #f0f4f8, ambient 0.6 + directional 1.2, Environment
-            «city», нескінченна сітка замість сірої підлоги, осі 5. Жорсткі
-            чорні тіні прибрані разом із прапорцем shadows — у редакторі їх
-            немає, і виріб читається краще. Виняток — режим підсвітки:
-            підсвічений камінь дивляться на темному тлі. */}
+            світлий фон #f0f4f8, спільне світло `SceneLighting`, нескінченна
+            сітка замість сірої підлоги, осі 5. Виняток — режим підсвітки:
+            підсвічений камінь дивляться на темному тлі.
+            №166: тіні повернулись, але не ті жорсткі чорні, через які їх
+            свого часу вимкнули: приймач — прозора площина з м'якою тінню
+            (opacity 0.26, PCFSoft), а не сіра підлога. */}
         <Canvas
           camera={{ position: [0, 5, 8], fov: 50 }}
+          shadows
           onPointerMissed={() => { setSelectedId(null); useUIStore.getState().setSelectedProductId3d(null); }}
           onCreated={(state) => {
+            /*
+             * №166: тонмапінг Neutral замість ACES — ACES тисне світле і зводить
+             * колір каменю. Ставимо ОДИН раз тут, а не пропом `gl={{…}}`: проп
+             * React вписує назад при кожному перемальовуванні, і BacklightRig не
+             * може зняти тонмапінг на піку підсвітки (№164). Перевірено виміром
+             * 09.09: з пропом на піку в сцені лишався Neutral замість «без
+             * обробки», і риґ на це ніяк не впливав.
+             */
+            state.gl.toneMapping = THREE.NeutralToneMapping;
+            state.gl.toneMappingExposure = 0.9;
             attachContextLossRecovery(state.gl.domElement);
             // Дев-ручка камери Підбору — та сама угода, що __vs3dPreview у
             // редакторі: автотести ставлять камеру точно, без сліпих драгів.
@@ -1898,9 +1910,15 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8]
             onSwap={(next) => useUIStore.getState().setBacklightMode(next)}
           />
 
-          <ambientLight intensity={0.6} />
-          <directionalLight position={[10, 10, 5]} intensity={1.2} />
-          <SafeEnvironment />
+          {/* №166: одне світло на всю програму — див. SceneLighting.tsx.
+              ТІНЬ ПОКИ ВИМКНЕНА (groundY не задано), і це виміряний висновок,
+              а не забудькуватість: стільниця в сцені стоїть на висоті 900 мм
+              (bbox 0.90…0.92), підлога — нуль, сітка намальована на -0.5.
+              Проміжку нічим заповнити: тумб і ніг сцена не малює. Тінь від
+              спрямованого світла на такій відстані виходить різкою і читається
+              як окремий сірий прямокутник, а не як тінь. Вмикається одним
+              `groundY={0}`, щойно під виробом з'явиться на що її класти. */}
+          <SceneLighting preset="assembly" />
 
           {/* disableY: центруємо лише по X/Z. Інакше <Center> скидає висоту встановлення
               (elevation) і виріб завжди лягає в нуль. Для КІЛЬКОХ виробів

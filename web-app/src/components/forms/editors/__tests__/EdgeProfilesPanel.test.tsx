@@ -8,8 +8,10 @@ import { useEdgeSourceSide } from '../../../../store/useEdgeSourceSide';
 import type { EdgeProfileSelection } from '../../../../domain/types';
 
 /**
- * Панель кромок (01.09): сторона з доповненням заблокована; клік по літері —
- * взірець, клік по іншій — копія обробки.
+ * Панель кромок. №172 (власник 09.09): сторона з доповненням БІЛЬШЕ НЕ
+ * блокується — кромка річ видима, і саме вона диктує примикання: доповнення
+ * переходить із вуса 45° на прямий стик. Блокує тільки прив'язка до DXF.
+ * Клік по літері — взірець, клік по іншій — копія обробки.
  */
 afterEach(cleanup);
 beforeEach(() => useEdgeSourceSide.getState().clear());
@@ -32,22 +34,24 @@ function renderPanel(edgeProfiles: EdgeProfileSelection, extra: Partial<Paramete
 }
 
 describe('EdgeProfilesPanel', () => {
-  it('сторона з потовщенням: випадачка вимкнена, бейдж «зайнято», літера не стає взірцем', () => {
+  it('№172: сторона з потовщенням відкрита для кромки — випадачка жива', () => {
     const { chip, selects } = renderPanel({}, { occupiedSides: { A: 'Потовщення (A)', B: 'Потовщення (B)' } });
-    const [a, b, c] = selects();
-    expect(a.disabled).toBe(true);
-    expect(b.disabled).toBe(true);
-    expect(c.disabled).toBe(false);
-    expect(screen.getAllByText(/зайнято: Потовщення/)).toHaveLength(2);
+    for (const select of selects()) expect(select.disabled).toBe(false);
+    // Бейдж лишається, але як підказка про примикання, а не як заборона.
+    expect(screen.getAllByText(/Потовщення \(/)).toHaveLength(2);
     fireEvent.click(chip('A'));
-    expect(useEdgeSourceSide.getState().side).toBeNull();
+    expect(useEdgeSourceSide.getState().side).toBe('A');
   });
 
-  it('форма, що лишилась на зайнятій стороні, показана і прибирається однією кнопкою', () => {
-    const { changes } = renderPanel({ A: { top: { profileId: 'r_3' } } }, { occupiedSides: { A: 'Нога (A)' } });
-    expect(screen.getByText(/форма лишилась/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'прибрати' }));
-    expect(changes).toEqual([{}]);
+  it('№172: на стороні з ногою кромка ставиться, бейдж каже про примикання торцем', () => {
+    renderPanel({ A: { top: { profileId: 'r_3' } } }, { occupiedSides: { A: 'Нога (A)' } });
+    expect(screen.getByText(/Нога \(A\) · примикає торцем/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'прибрати' })).toBeNull();
+  });
+
+  it('прив\'язка до DXF далі блокує сторону', () => {
+    const { selects } = renderPanel({}, { blockedSides: { A: true } } as never);
+    expect(selects().length).toBeGreaterThan(0);
   });
 
   it('клік по A — взірець (зелена літера, підказка); клік по C і D — копія обробки A', () => {

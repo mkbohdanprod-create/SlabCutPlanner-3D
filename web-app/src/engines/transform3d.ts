@@ -12,6 +12,77 @@ import type { Point } from '../domain/types';
  * Система координат групи ребра: локальний +X — уздовж ребра (від v1 до v2),
  * локальний +Z — нормаль до ребра в площині деталі.
  */
+/**
+ * Контур деталі з її кривих — для визначення напрямку «вглиб» (Б-169).
+ * Дуги беремо трьома точками, щоб опуклість не зникала зовсім; для знаку
+ * нормалі цього більш ніж досить, а сама форма тут ні на що не впливає.
+ */
+export function outlineFromCurves(
+  curves?: ReadonlyArray<{ type?: string; getPoint: (t: number) => Point }> | null,
+): Point[] | undefined {
+  if (!curves || curves.length < 3) return undefined;
+  const pts: Point[] = [];
+  for (const curve of curves) {
+    if (!curve?.getPoint) return undefined;
+    pts.push(curve.getPoint(0));
+    if (curve.type && curve.type !== 'LineCurve') {
+      pts.push(curve.getPoint(0.33));
+      pts.push(curve.getPoint(0.66));
+    }
+  }
+  return pts.length >= 3 ? pts : undefined;
+}
+
+/** Чи лежить точка всередині замкнутого контуру (промінь управо). */
+function insideOutline(px: number, py: number, poly: ReadonlyArray<Point>) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi || 1e-12) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * Б-169 — КУДИ «ВГЛИБ» ВІД ЦЬОГО РЕБРА.
+ *
+ * З контуром: відходимо від середини ребра на волосину вздовж нормалі й
+ * питаємо, з якого боку камінь. Це працює на будь-якій формі.
+ *
+ * Без контуру — стара формула: вектор до центру габариту. Для прямокутника
+ * вона правильна, для Г-подібної деталі — ні, бо центр габариту лежить у
+ * виїмці. Лишена тільки як запасний шлях для викликів, що контуру не мають.
+ */
+function inwardSign(
+  v1: Point,
+  v2: Point,
+  midX: number,
+  midY: number,
+  nX: number,
+  nY: number,
+  outline?: ReadonlyArray<Point>,
+): 1 | -1 {
+  if (outline && outline.length >= 3) {
+    const mx = (v1.x + v2.x) / 2;
+    const my = (v1.y + v2.y) / 2;
+    const dx = v2.x - v1.x;
+    const dy = v2.y - v1.y;
+    const len = Math.hypot(dx, dy) || 1;
+    // Нормаль у нормалізованих координатах контуру — та сама, що nX/nY у сцені.
+    const px = -dy / len;
+    const py = dx / len;
+    const step = 1e-3;
+    const plus = insideOutline(mx + px * step, my + py * step, outline);
+    const minus = insideOutline(mx - px * step, my - py * step, outline);
+    if (plus !== minus) return plus ? 1 : -1;
+    // Обидві точки однакові (ребро в нулі, самоперетин) — падаємо на габарит.
+  }
+  return nX * -midX + nY * -midY >= 0 ? 1 : -1;
+}
+
 export function attachmentPlacement(
   v1: Point,
   v2: Point,
@@ -22,6 +93,18 @@ export function attachmentPlacement(
   attachmentOffset: number = 0,
   /** Зсув углиб батьківської деталі від ребра, мм */
   attachmentInset: number = 0,
+  /**
+   * Б-169 — КОНТУР ДЕТАЛІ в тих самих нормалізованих координатах (0..1).
+   *
+   * Потрібен рівно для одного: визначити, де в цієї деталі «вглиб». Без нього
+   * напрямок береться зі старої формули (вектор до центру ГАБАРИТУ), а вона
+   * бреше на Г-подібній деталі: центр габариту лежить у виїмці, поза каменем.
+   * Виміряно 09.09 на Г 2000×1600 з виїмкою 1200×1000 — сторона C діставала
+   * `inward = -1` замість `+1`, і панель зі зсувом їхала назовні.
+   *
+   * Не заданий — поведінка стара, щоб жоден виклик не змінився мовчки.
+   */
+  outline?: ReadonlyArray<Point>,
 ) {
   const w = bounds.maxX - bounds.minX || 1;
   const h = bounds.maxY - bounds.minY || 1;
@@ -52,7 +135,7 @@ export function attachmentPlacement(
    */
   const nX = -dy / edgeLength;
   const nY = dx / edgeLength;
-  const inward = nX * -midX + nY * -midY >= 0 ? 1 : -1;
+  const inward = inwardSign(v1, v2, midX, midY, nX, nY, outline);
   const insetZ = inward * attachmentInset * s;
 
   return { midX, midY, angle, edgeLength, posX, insetZ, attachWidth, scale: s, inward };
@@ -146,10 +229,12 @@ export function getEdgeTransform(
    * гранню на ребрі, тому зсув углиб дорівнює ЇЇ товщині, а не батьківській.
    */
   attachmentThickness?: number,
+  /** Б-169: контур деталі (нормалізований) — щоб «вглиб» рахувалось по каменю. */
+  outline?: ReadonlyArray<Point>,
 ) {
   const s = 0.001;
   const { midX, midY, angle, edgeLength, posX, insetZ, inward } = attachmentPlacement(
-    v1, v2, bounds, attachmentWidth, attachmentOffset, attachmentInset,
+    v1, v2, bounds, attachmentWidth, attachmentOffset, attachmentInset, outline,
   );
 
   const zSurface = (parentThickness * s) / 2;

@@ -4,7 +4,7 @@ import type { ProductElement } from '../../domain/types';
 import { Detail3DNode } from '../ui/Detail3DPreview';
 import { buildDetailShape, getDetailPointsAndBounds, sampleContourPoints } from '../../engines/shapeBuilder';
 import { parseAdditionSlot } from '../../domain/ids';
-import { getEdgeTransform } from '../../engines/transform3d';
+import { getEdgeTransform, outlineFromCurves } from '../../engines/transform3d';
 import { getSinkPartTransform } from '../../engines/sinkAssembly';
 import { sinkCenter } from '../../domain/productSink';
 import { pointInPolygonStrict } from '../../engines/geometryUtils';
@@ -242,6 +242,10 @@ export function ProductElement3DNode({
     return buildDetailShape(detail, points, bounds);
   }, [detail, points, bounds]);
   
+  /* Б-169: контур деталі — щоб «вглиб» рахувалось по каменю, а не по центру
+     габариту (на Г-подібній деталі центр габариту лежить у виїмці). */
+  const outline = useMemo(() => outlineFromCurves(curves as never), [curves]);
+
   const lineSegments = useMemo(() => {
     return (curves ?? [])
       .map((curve, index) => ({ curve, id: edgeMap?.[index] }))
@@ -640,6 +644,7 @@ export function ProductElement3DNode({
             addition.baseDefinition.attachGap ?? 0,
             /* №151: зсув углиб — від товщини САМОЇ панелі, не батька. */
             addition.baseDefinition.thickness || detail.thickness || 20,
+            outline,
           );
 
           const miter = miterPlan.bySlot.get(additionSlot);
@@ -754,6 +759,7 @@ export function ProductElement3DNode({
           addition.baseDefinition.attachGap ?? 0,
           /* №151: зсув углиб — від товщини САМОЇ панелі, не батька. */
           addition.baseDefinition.thickness || detail.thickness || 20,
+          outline,
         );
 
         const miter = miterPlan.bySlot.get(additionSlot);
