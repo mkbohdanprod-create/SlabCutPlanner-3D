@@ -1187,7 +1187,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     ),
     corners: (
       <>
-          <Accordion title="Обробка кутів (Радіуси)" mode="corners" activeMode={editMode} isOpen={openPanel === "Обробка кутів (Радіуси)"} onHeaderClick={() => panelHeaderClick("Обробка кутів (Радіуси)", "corners")}>
+          <Accordion title="Обробка кутів (Радіуси)" info="corners" mode="corners" activeMode={editMode} isOpen={openPanel === "Обробка кутів (Радіуси)"} onHeaderClick={() => panelHeaderClick("Обробка кутів (Радіуси)", "corners")}>
             <div className="p-4 flex flex-col gap-2">
               {detail.corners && Object.keys(detail.corners).length > 0 ? (
                 Object.entries(detail.corners).map(([cornerId, corner]) => (
@@ -1228,7 +1228,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     ),
     cutouts: (
       <>
-          <Accordion title="Вирізи (Обробка площин)" mode="planes" activeMode={editMode} isOpen={openPanel === "Вирізи (Обробка площин)"} onHeaderClick={() => panelHeaderClick("Вирізи (Обробка площин)", "planes")}>
+          <Accordion title="Вирізи (Обробка площин)" info="cutouts" mode="planes" activeMode={editMode} isOpen={openPanel === "Вирізи (Обробка площин)"} onHeaderClick={() => panelHeaderClick("Вирізи (Обробка площин)", "planes")}>
             <div className="p-4 flex flex-col gap-2">
               {/* №155: вибір типу і є створенням. Виріз стає 100×100 з відступом
                   100/100 від першого кута — видно в 3D одразу, далі правиться
@@ -1315,7 +1315,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
     ),
     millings: (
       <>
-          <Accordion title="Фрезерування площини (Проточки для води)" isOpen={openPanel === "Фрезерування площини (Проточки для води)"} onHeaderClick={() => panelHeaderClick("Фрезерування площини (Проточки для води)")}>
+          <Accordion title="Фрезерування площини (Проточки для води)" info="millings" isOpen={openPanel === "Фрезерування площини (Проточки для води)"} onHeaderClick={() => panelHeaderClick("Фрезерування площини (Проточки для води)")}>
             <SurfaceGroovesPanel
               groups={detail.surfaceGrooves}
               partWidthMm={realEdgeLengths(detail).A || detail.width || 1000}
@@ -2060,7 +2060,19 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           {!navCollapsed && (
            <>
           <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-700">Навігація</h2>
+            <span className="flex items-center gap-2">
+              <h2 className="text-sm font-bold text-slate-700">Навігація</h2>
+              {/* «i» — та сама механіка, що на акордеонах властивостей:
+                  відкриває бібліотеку інструкцій на розділі про дерево. */}
+              <span
+                role="button"
+                title="Як влаштоване дерево виробу — інструкція зі скрінами"
+                className="w-5 h-5 rounded-full border text-[11px] font-bold flex items-center justify-center transition-colors border-[#b9d5f5] bg-[#dbeafe] text-[#0058ab] hover:bg-[#0084ff] hover:text-white cursor-pointer"
+                onClick={() => useUIStore.getState().openHelp('tree')}
+              >
+                i
+              </span>
+            </span>
             {!session.mainDetail && (
               <button
                 className="text-xs font-bold text-[#0084ff] hover:bg-[#0084ff]/10 px-2 py-1 rounded-sm transition-colors"
@@ -2457,7 +2469,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
                   {/* Доповнення і кромки — ДВА окремі треї (10.08): кромка і
                       підворот на одній стороні сумісні, стара спільна таблиця
                       їх взаємовиключала. */}
-                  <Accordion title="Сторони (Бортики, Потовщення, Підвороти)" mode="sides" activeMode={editMode} isOpen={openPanel === "Сторони (Бортики, Потовщення, Підвороти)"} onHeaderClick={() => panelHeaderClick("Сторони (Бортики, Потовщення, Підвороти)", "sides")}>
+                  <Accordion title="Сторони (Бортики, Потовщення, Підвороти)" info="sides" mode="sides" activeMode={editMode} isOpen={openPanel === "Сторони (Бортики, Потовщення, Підвороти)"} onHeaderClick={() => panelHeaderClick("Сторони (Бортики, Потовщення, Підвороти)", "sides")}>
                     {/* Крок 4.1: трей однаковий і для стільниці, і для
                         доповнення — з розмірами на обох рівнях. Префікс
                         слота каже панелі, чиї саме доповнення показувати. */}
@@ -2573,7 +2585,7 @@ const handleDetailContextMenu = (id: string, x: number, y: number) => {
           {detailPanels.joints}
 
           {isMainActive && !isSinkDetail && !isMetalDetail && (
-          <Accordion title="Встановлення мийки в виріб" isOpen={openPanel === "Встановлення мийки в виріб"} onHeaderClick={() => panelHeaderClick("Встановлення мийки в виріб")}>
+          <Accordion title="Встановлення мийки в виріб" info="sink" isOpen={openPanel === "Встановлення мийки в виріб"} onHeaderClick={() => panelHeaderClick("Встановлення мийки в виріб")}>
             <div className="flex flex-col gap-3">
               {Object.values(detail.sinks ?? {}).map((sink) => {
                 const patchSink = (patch: Partial<ProductSinkDef>) => {

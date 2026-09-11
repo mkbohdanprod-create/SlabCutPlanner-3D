@@ -109,8 +109,11 @@ async function addHtmlDoc(pdf: jsPDF, el: HTMLElement) {
   }
 }
 
-/** Пакет для цеху одним файлом: набір креслень + тех карта + бланк цеху (html-документи за id елементів). */
-export async function exportPackagePdf(sheets: DrawingSheet[], project: Project, htmlDocIds: string[]) {
+/**
+ * Пакет для цеху як БАЙТИ PDF (№175) — для ZIP у МЕС: та сама збірка,
+ * що й exportPackagePdf, тільки без збереження файлу користувачу.
+ */
+export async function renderPackagePdfBytes(sheets: DrawingSheet[], htmlDocIds: string[]): Promise<Uint8Array> {
   const first = sheets[0];
   const pdf = first
     ? new jsPDF({ orientation: orientOf(first), unit: 'mm', format: formatOf(first), compress: true })
@@ -123,7 +126,21 @@ export async function exportPackagePdf(sheets: DrawingSheet[], project: Project,
     if (!addedAny) { pdf.deletePage(1); addedAny = true; }
     await addHtmlDoc(pdf, el);
   }
-  pdf.save(`Пакет_цех_${safeFilePart(project.orderNumber, 'без номера')}_${safeFilePart(project.customer, 'замовник')}.pdf`);
+  return new Uint8Array(pdf.output('arraybuffer'));
+}
+
+/** Пакет для цеху одним файлом: набір креслень + тех карта + бланк цеху (html-документи за id елементів). */
+export async function exportPackagePdf(sheets: DrawingSheet[], project: Project, htmlDocIds: string[]) {
+  const bytes = await renderPackagePdfBytes(sheets, htmlDocIds);
+  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `Пакет_цех_${safeFilePart(project.orderNumber, 'без номера')}_${safeFilePart(project.customer, 'замовник')}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function DrawingSetView({ project, parts, details, instructions }: DrawingSetViewProps) {

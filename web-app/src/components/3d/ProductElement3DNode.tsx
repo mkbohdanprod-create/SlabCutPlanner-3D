@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { ProductElement } from '../../domain/types';
 import { Detail3DNode } from '../ui/Detail3DPreview';
 import { buildDetailShape, getDetailPointsAndBounds, sampleContourPoints } from '../../engines/shapeBuilder';
-import { parseAdditionSlot } from '../../domain/ids';
+import { parseAdditionSlot, toSlot } from '../../domain/ids';
 import { getEdgeTransform, outlineFromCurves } from '../../engines/transform3d';
 import { getSinkPartTransform } from '../../engines/sinkAssembly';
 import { sinkCenter } from '../../domain/productSink';
@@ -484,6 +484,12 @@ export function ProductElement3DNode({
           return (
             <mesh
               key={p.id}
+              // №176 — ID заготовки в самій сцені: GLTFExporter кладе name у
+              // вузол GLB, а userData — в extras. Без цього експортована
+              // модель була анонімною, і МЕС не міг зіставити вузол з
+              // розкроєм («GLB не зберігає ID деталей», перевірка 10.09).
+              name={p.id}
+              userData={{ instanceId: p.id, partId: p.detailId, elementId: element.id }}
               geometry={geom}
               position={transform.pos}
               quaternion={transform.quat}
@@ -597,6 +603,9 @@ export function ProductElement3DNode({
           return (
             <mesh
               key={p.id}
+              // №176 — див. вище: ім'я вузла = instanceId заготовки.
+              name={p.id}
+              userData={{ instanceId: p.id, partId: p.detailId, elementId: element.id }}
               geometry={geom}
               castShadow
               receiveShadow
@@ -679,13 +688,19 @@ export function ProductElement3DNode({
         extraCutters={(extraCutters?.length || miterPlan.mainCutters.length)
           ? [...(extraCutters ?? []), ...miterPlan.mainCutters]
           : undefined}
-        isActive={activeDetailId === element.id}
+        // №180 — активність за СЛОТОМ. Редактор виробу тримає в сесії
+        // slot ('main', 'leg_B'…), а сюди приходив повний шлях елемента —
+        // порівняння ніколи не збігалось, тому подвійний клік по деталі
+        // (він працює лише на активній) не відкривав «Налаштування розмірів».
+        isActive={activeDetailId === element.id || activeDetailId === toSlot(element.id)}
         mode={mode}
         editMode={editMode}
         onCornerClick={onCornerClick}
         onEdgeClick={onEdgeClick}
         onJointClick={onJointClick}
-        onDetailDoubleClick={onDetailDoubleClick}
+        // Detail3DNode віддає 'main' замість id — редактор тоді відкривав
+        // головну деталь, хоч клікали по опорі чи панелі. Віддаємо id елемента.
+        onDetailDoubleClick={() => onDetailDoubleClick?.(element.id)}
         onDetailClick={onDetailClick}
         onDetailContextMenu={onDetailContextMenu}
         theme={theme}

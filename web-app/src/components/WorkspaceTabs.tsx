@@ -190,8 +190,10 @@ export function WorkspaceTabs({ view, onChangeView, isSplitModeActive, onToggleS
             <FileText className="w-4 h-4" /> {tabLabel('Послуги для виробництва')}
           </button>
         )}
-        {/* Приміщення (база) — 01.09: редактор кімнати, у розкрій не йде. В архітекторі його заміняє «План». */}
-        {!architectureMode && (
+        {/* Приміщення (база) — 01.09: редактор кімнати, у розкрій не йде. В архітекторі його заміняє «План».
+            11.09 (власник: «сховай під щиток»): вкладка ще сира для менеджерів —
+            видима лише в адмін-режимі, як «3D Прев'ю» і «Послуги для виробництва». */}
+        {!architectureMode && isAdminUnlocked && (
         <button
           onClick={() => {
             onChangeView('room');

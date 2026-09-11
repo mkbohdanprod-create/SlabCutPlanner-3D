@@ -2,7 +2,9 @@ import { Fragment, useMemo, useState } from 'react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { getAllProjectDetails } from '../../store/projectHelpers';
 import { computeEstimate, estimatePriceRequests, CATEGORY_LABELS, type EstimateLine } from '../../engines/estimate';
-import { FileText, Download, AlertTriangle, List, Layers, BookMarked, Loader2, RefreshCw } from 'lucide-react';
+import { FileText, Download, AlertTriangle, List, Layers, BookMarked, Loader2, RefreshCw, Factory, Archive } from 'lucide-react';
+import { apsOrderFromEstimate, sendOrderToAps, downloadApsJson, type ApsOrder } from '../../engines/apsExport';
+import { downloadMesPack } from '../../engines/mesPack';
 import { usePrices1c } from './usePrices1c';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useUIStore } from '../../store/useStore';
@@ -111,6 +113,52 @@ export function EstimatePanel() {
     URL.revokeObjectURL(url);
   };
 
+  // ── №173 · «У чергу МЕС» ─────────────────────────────────────────
+  //  Той самий кошторис їде в APS (C:\Works\MES) контрактом mes-aps-1:
+  //  прев'ю → імпорт. МЕС локальний, тому провал мережі — не помилка,
+  //  а привід віддати пакет файлом для ручного імпорту.
+  const [aps, setAps] = useState<{ state: 'idle' | 'busy' | 'done' | 'error'; message?: string; order?: ApsOrder }>({ state: 'idle' });
+
+  const handleSendToAps = async () => {
+    let order: ApsOrder;
+    try {
+      const materialType = project.quoteCalc?.materialType;
+      const desc = `${estimate.lines.length} позицій BOM${materialType ? ` · ${materialType}` : ''} · зі Студії`;
+      order = apsOrderFromEstimate(project.orderNumber ?? '', desc, estimate.lines);
+    } catch (error) {
+      setAps({ state: 'error', message: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    setAps({ state: 'busy', order });
+    const result = await sendOrderToAps(order);
+    setAps({ state: result.ok ? 'done' : 'error', message: result.message, order });
+  };
+
+  // ── №174 · «Зберегти для МЕС» ────────────────────────────────────
+  //  Повний пакет vs3d-pack-1 одним ZIP: проєкт, слеби з фото і
+  //  дефектами, розкрій, факти, кошторис. Файл кладеться руками в
+  //  C:\Works\MES\integration\inbox — так домовлено з МЕС (папка-
+  //  скринька, без авто-імпорту; API для ZIP ще немає).
+  const [pack, setPack] = useState<{ state: 'idle' | 'busy' | 'done' | 'error'; message?: string }>({ state: 'idle' });
+
+  const handleSaveMesPack = async () => {
+    setPack({ state: 'busy' });
+    try {
+      const warnings = await downloadMesPack({
+        project,
+        parts,
+        details: getAllProjectDetails(project),
+        estimateLines: estimate.lines,
+      });
+      setPack({
+        state: 'done',
+        message: `Пакет збережено. Поклади ZIP у C:\\Works\\MES\\integration\\inbox.${warnings.length ? ` Увага: ${warnings.join(' ')}` : ''}`,
+      });
+    } catch (error) {
+      setPack({ state: 'error', message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
   const renderRow = (line: EstimateLine, key: string) => {
     const isActive = highlightedServiceId === line.serviceId;
     return (
@@ -194,13 +242,69 @@ export function EstimatePanel() {
 
             <button
               onClick={handleExportJson}
-              className="flex items-center gap-2 px-4 py-2 bg-[#0084ff] text-white rounded-md text-sm font-bold hover:bg-[#006bce] transition-colors"
+              className="flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-md text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+              title="Внутрішній JSON кошторису — для розробки й звірки"
             >
               <Download className="w-4 h-4" />
-              Експорт для MES
+              JSON
+            </button>
+
+            <button
+              onClick={handleSendToAps}
+              disabled={aps.state === 'busy' || aps.state === 'done' || estimate.lines.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-md text-sm font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60"
+              title="Відправити замовлення в чергу МЕС (APS, контракт mes-aps-1)"
+            >
+              {aps.state === 'busy' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Factory className="w-4 h-4" />}
+              {aps.state === 'done' ? 'У черзі МЕС ✓' : 'У чергу МЕС'}
+            </button>
+
+            <button
+              onClick={handleSaveMesPack}
+              disabled={pack.state === 'busy'}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-md text-sm font-bold hover:bg-slate-800 transition-colors disabled:opacity-60"
+              title="Повний пакет vs3d-pack-1 (ZIP): проєкт, слеби з фото й дефектами, розкрій, факти, кошторис — для C:\Works\MES\integration\inbox"
+            >
+              {pack.state === 'busy' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
+              Зберегти для МЕС
             </button>
           </div>
         </div>
+
+        {pack.state === 'done' && pack.message && (
+          <div className="flex items-start gap-2 px-6 py-3 bg-slate-100 border-b border-slate-200 text-sm text-slate-700">
+            <Archive className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>{pack.message}</span>
+          </div>
+        )}
+        {pack.state === 'error' && pack.message && (
+          <div className="flex items-start gap-2 px-6 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-800">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>{pack.message}</span>
+          </div>
+        )}
+
+        {aps.state === 'done' && aps.message && (
+          <div className="flex items-start gap-2 px-6 py-3 bg-emerald-50 border-b border-emerald-200 text-sm text-emerald-800">
+            <Factory className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>{aps.message} Відкрий «Портфель замовлень» у МЕС — рядок уже там.</span>
+          </div>
+        )}
+        {aps.state === 'error' && aps.message && (
+          <div className="flex items-start gap-2 px-6 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-800">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span className="flex-1">{aps.message}</span>
+            {aps.order && (
+              <button
+                onClick={() => downloadApsJson(aps.order as ApsOrder)}
+                className="shrink-0 px-2.5 py-1 border border-amber-300 rounded text-xs font-semibold hover:bg-amber-100"
+                title="Зберегти пакет mes-aps-1 і імпортнути в МЕС вручну"
+              >
+                Зберегти пакет
+              </button>
+            )}
+          </div>
+        )}
 
         {!usingViyarCodes && estimate.lines.length > 0 && (
           <div className="flex items-start gap-2 px-6 py-3 bg-slate-50 border-b border-slate-200 text-sm text-slate-600">

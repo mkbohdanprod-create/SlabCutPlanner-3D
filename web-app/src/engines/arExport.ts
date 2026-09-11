@@ -161,13 +161,36 @@ function isSceneHelper(node: THREE.Object3D): boolean {
 /** Страхувальна межа розміру одного меша, метри */
 const MAX_MESH_SIZE = 50;
 
-function prepare(source: THREE.Object3D, sign?: { caption: string; subline: string }): { root: THREE.Group; sizeMm: ArExportResult['sizeMm'] } {
+/**
+ * №179 — керування складом експорту для пакета МЕС.
+ *  · `filter` — брати тільки ці меші (GLB окремого цехового вузла);
+ *  · `groupBy` — розкласти меші по групах-вузлах (`name` = unitId,
+ *    `extras.unitId`), щоб зібраний виріб мав дерево без дублювання;
+ *  · `rootName`/`rootExtras` — підпис кореня (GLB одного вузла).
+ * Без опцій поведінка та сама, що для AR/SketchUp.
+ */
+export interface ArExportOptions {
+  filter?: (mesh: THREE.Mesh) => boolean;
+  groupBy?: (mesh: THREE.Mesh) => string | null;
+  rootName?: string;
+  rootExtras?: Record<string, unknown>;
+}
+
+function prepare(
+  source: THREE.Object3D,
+  sign?: { caption: string; subline: string },
+  options: ArExportOptions = {},
+): { root: THREE.Group; sizeMm: ArExportResult['sizeMm'] } {
   source.updateMatrixWorld(true);
   const root = new THREE.Group();
+  if (options.rootName) root.name = options.rootName;
+  if (options.rootExtras) root.userData = { ...options.rootExtras };
+  const groups = new Map<string, THREE.Group>();
 
   source.traverse((node) => {
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh || !mesh.geometry) return;
+    if (options.filter && !options.filter(mesh)) return;
     // Допоміжні об'єкти сцени (стрілки переміщення, підсвітка вибору)
     // у виріб не входять — клієнт має побачити камінь, а не наш інтерфейс.
     if (!mesh.visible || isSceneHelper(mesh)) return;
@@ -207,7 +230,32 @@ function prepare(source: THREE.Object3D, sign?: { caption: string; subline: stri
         return material;
       });
 
-    root.add(new THREE.Mesh(geometry, materials.length === 1 ? materials[0] : materials));
+    const exported = new THREE.Mesh(geometry, materials.length === 1 ? materials[0] : materials);
+    // №176 — ІДЕНТИФІКАЦІЯ ЗАГОТОВКИ В GLB.
+    //
+    // Тут будувався НОВИЙ меш, а `name` і `userData` вихідного лишались
+    // позаду — тому кожен вузол експортованої моделі виходив безіменним,
+    // і МЕС не міг зіставити деталь у 3D з тією самою деталлю в розкрої
+    // (перевірка пакета 10.09: «GLB не зберігає ID деталей»).
+    //
+    // GLTFExporter кладе `name` у вузол, а `userData` — в `extras`.
+    // Ім'я = instanceId заготовки, extras = {instanceId, partId, elementId}.
+    if (mesh.name) exported.name = mesh.name;
+    if (mesh.userData && Object.keys(mesh.userData).length) exported.userData = { ...mesh.userData };
+    const unitId = options.groupBy ? options.groupBy(mesh) : null;
+    if (unitId) {
+      let group = groups.get(unitId);
+      if (!group) {
+        group = new THREE.Group();
+        group.name = unitId;
+        group.userData = { unitId };
+        groups.set(unitId, group);
+        root.add(group);
+      }
+      group.add(exported);
+    } else {
+      root.add(exported);
+    }
   });
 
   // Виріб на підлогу і в центр: у сцені він стоїть там, куди його поклав
@@ -215,8 +263,9 @@ function prepare(source: THREE.Object3D, sign?: { caption: string; subline: stri
   const box = new THREE.Box3().setFromObject(root);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
-  root.children.forEach((child) => {
-    (child as THREE.Mesh).geometry.translate(-center.x, -box.min.y, -center.z);
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.isMesh && mesh.geometry) mesh.geometry.translate(-center.x, -box.min.y, -center.z);
   });
 
   // Шильдик ставимо ПІСЛЯ центрування виробу — щоб він ліг перед ним на
@@ -244,8 +293,9 @@ function prepare(source: THREE.Object3D, sign?: { caption: string; subline: stri
 export async function exportForAr(
   source: THREE.Object3D,
   sign?: { caption: string; subline: string },
+  options?: ArExportOptions,
 ): Promise<ArExportResult> {
-  const { root, sizeMm } = prepare(source, sign);
+  const { root, sizeMm } = prepare(source, sign, options);
   if (!root.children.length) throw new Error('У сцені немає жодної деталі для експорту');
 
   const scene = new THREE.Scene();

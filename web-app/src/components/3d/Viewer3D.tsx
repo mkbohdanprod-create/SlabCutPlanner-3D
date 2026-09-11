@@ -4,6 +4,7 @@ import { OrbitControls,   Center,  TransformControls , useTexture, Edges, Line, 
 import { SceneLighting } from './SceneLighting';
 import { Blocks, Group, Frame, Lightbulb, BookOpen, Clapperboard, RotateCcw, Smartphone, DraftingCompass, Loader2 as ArSpinner, Home } from 'lucide-react';
 import { exportForAr, arFileName } from '../../engines/arExport';
+import { registerArScene, unregisterArScene } from '../../engines/arSceneRegistry';
 import { collidingSceneProducts, defaultSceneLayout } from '../../engines/sceneLayout';
 import type { Placement, DetailPart, SlabInstance, Detail } from '../../domain/types';
 import * as THREE from 'three';
@@ -1373,8 +1374,10 @@ export interface ProductSnapshots {
   snapshots: string[];
 }
 
-function CaptureController({ onCaptureReady, contentRef, preset = 'default', products = [] }: {
+function CaptureController({ onCaptureReady, onSceneReady, contentRef, preset = 'default', products = [] }: {
   onCaptureReady?: (snaps: string[], perProduct?: ProductSnapshots[]) => void,
+  /** №179 — сцена зібрана (усі вироби змонтовані, текстури залиті): віддати її для GLB у пакет МЕС. */
+  onSceneReady?: (content: THREE.Object3D) => void,
   contentRef: React.RefObject<THREE.Group | null>,
   /** Вироби проєкту — для посторінкової візуалізації (по одному бланку на виріб). */
   products?: Array<{ id: string; name: string }>,
@@ -1448,6 +1451,10 @@ function CaptureController({ onCaptureReady, contentRef, preset = 'default', pro
       // Два кадри очікування: перший рендер після монтажу + залиття текстур.
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       if (!mounted) return;
+
+      // №179 — той самий момент «сцена готова», яким користуються знімки
+      // для PDF; пакет МЕС бере звідси зібраний виріб для product.glb.
+      if (onSceneReady && contentRef.current) onSceneReady(contentRef.current);
 
       const restore: Array<() => void> = [];
       try {
@@ -1610,7 +1617,7 @@ function CaptureController({ onCaptureReady, contentRef, preset = 'default', pro
  * режимом (шапка) або «Сплітом», де панель удвічі вужча. Кнопки ті самі,
  * повна назва — у підказці; та сама мова, що на дошці 2D розкрою.
  */
-export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8] rounded-lg overflow-hidden relative", onCaptureReady, isCaptureMode, hideToolbar = false, capturePreset = 'default', compact = false }: { className?: string, onCaptureReady?: (snaps: string[], perProduct?: ProductSnapshots[]) => void, isCaptureMode?: boolean, hideToolbar?: boolean, capturePreset?: 'default' | 'showcase', compact?: boolean } = {}) {
+export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8] rounded-lg overflow-hidden relative", onCaptureReady, onSceneReady, isCaptureMode, hideToolbar = false, capturePreset = 'default', compact = false }: { className?: string, onCaptureReady?: (snaps: string[], perProduct?: ProductSnapshots[]) => void, onSceneReady?: (content: THREE.Object3D) => void, isCaptureMode?: boolean, hideToolbar?: boolean, capturePreset?: 'default' | 'showcase', compact?: boolean } = {}) {
   const project = useProjectStore((state) => state.project);
   // ПРИМІЩЕННЯ (01.09): опційний шар бази. Коли він увімкнений, один
   // виріб більше не центрується автоматично — рамку задає кімната.
@@ -1621,6 +1628,13 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8]
   const selectedId = useUIStore(s => s.selectedId3d);
   const setSelectedId = useUIStore(s => s.setSelectedId3d);
   const contentRef = React.useRef<THREE.Group | null>(null);
+  // №177 — поки 3D відкрите, збирач пакета для МЕС може взяти цю сцену
+  // (кнопка «Зберегти для МЕС» живе у вкладці «Документи», не тут).
+  useEffect(() => {
+    const own = contentRef.current;
+    registerArScene(own, project.orderNumber || '');
+    return () => unregisterArScene(own);
+  });
   const [isDragging, setIsDragging] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showAnimationPrototype, setShowAnimationPrototype] = useState(false);
@@ -1982,6 +1996,7 @@ export function Viewer3D({ className = "w-full h-full min-h-[500px] bg-[#f0f4f8]
           {isCaptureMode && (
             <CaptureController
               onCaptureReady={onCaptureReady}
+              onSceneReady={onSceneReady}
               contentRef={contentRef}
               preset={capturePreset}
               products={(project.products ?? []).map((item) => ({ id: item.id, name: item.name }))}

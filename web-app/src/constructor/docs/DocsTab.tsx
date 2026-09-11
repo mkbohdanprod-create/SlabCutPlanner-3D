@@ -10,8 +10,8 @@
  * аркуш фанери (якщо є підклад), аркуш металу (МК-1 — окремо), тех карта
  * по ділянках (ВЦ-1), бланк цеху (МЕС-1), JSON для MES.
  */
-import React, { useMemo, useState } from 'react';
-import { Printer, Download, Copy, Layers, FlaskConical, FileDown } from 'lucide-react';
+import React, { Suspense, useMemo, useRef, useState } from 'react';
+import { Printer, Download, Copy, Layers, FlaskConical, FileDown, Archive as ArchiveIcon } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useConstructorStore } from '../store';
@@ -20,7 +20,15 @@ import { getAllProjectDetails } from '../../store/projectHelpers';
 import { buildTechCard } from './techCard';
 import { buildMesJson } from './mesJson';
 import { AssemblySheet } from './AssemblySheet';
-import { DrawingSetView, exportPackagePdf } from './DrawingSetView';
+import { DrawingSetView, exportPackagePdf, renderPackagePdfBytes } from './DrawingSetView';
+import { downloadMesPack, type MesPackExtraFile } from '../../engines/mesPack';
+import { getArScene } from '../../engines/arSceneRegistry';
+import { exportForAr } from '../../engines/arExport';
+import { buildPartsGlb } from '../../engines/partsGlb';
+import { buildAssemblyPlan } from '../../engines/assemblyPlan';
+import { buildRenderContract, glbNodeIndex } from '../../engines/renderContract';
+import { Viewer3D } from '../../components/3d/Viewer3DLazy';
+import type * as THREE from 'three';
 import { composeFullDrawingSet } from '../drawing';
 import { buildSampleKitchenProduct, buildSampleUProduct, SAMPLE_PROJECT_HEADER, SAMPLE_PRODUCT_NAME, SAMPLE_U_PRODUCT_NAME } from '../drawing/sampleOrder';
 import { needsSubstrate, buildPlywoodLayout } from '../plywood/plywoodRules';
@@ -144,8 +152,174 @@ export function DocsTab() {
     } finally { setPkgBusy(false); }
   };
 
+  // ── №175 · «Зберегти для МЕС» звідси, з документами ──────────────
+  //  Той самий ZIP vs3d-pack-1, що й у «Послугах» (№174), плюс docs/:
+  //  набір креслень + тех карта по ділянках + бланк цеху одним PDF і
+  //  чернетка JSON конструктора (ТЗ §7.2). Кладеться руками в
+  //  C:\Works\MES\integration\inbox — домовленість із МЕС 10.09.2026.
+  const [mesPack, setMesPack] = useState<{ state: 'idle' | 'busy' | 'done' | 'error'; message?: string }>({ state: 'idle' });
+  // №179 — 3D за кадром для product.glb. Прихований <Viewer3D isCaptureMode>
+  // (той самий, що знімає кадри для PDF) віддає зібрану сцену через
+  // onSceneReady; promise чекає її з межею 30 с.
+  const [capturing3d, setCapturing3d] = useState(false);
+  const sceneResolver = useRef<((scene: THREE.Object3D | null) => void) | null>(null);
+  const acquireScene = (): Promise<THREE.Object3D | null> => {
+    const live = getArScene(project.orderNumber || '');
+    if (live) return Promise.resolve(live);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (scene: THREE.Object3D | null) => { if (!settled) { settled = true; resolve(scene); } };
+      sceneResolver.current = finish;
+      setCapturing3d(true);
+      setTimeout(() => finish(null), 30000);
+    });
+  };
+  const saveMesPack = async () => {
+    setMesPack({ state: 'busy' });
+    try {
+      const encoder = new TextEncoder();
+      const extraFiles: MesPackExtraFile[] = [
+        {
+          path: 'mes-draft.json',
+          data: encoder.encode(JSON.stringify(mes, null, 2)),
+          purpose: 'чернетка контракту МЕС від конструктора (ТЗ §7.2): маршрут, петлі, рішення',
+        },
+      ];
+      // Документи — ТРЬОМА окремими файлами: МЕС показує потрібний
+      // аркуш на конкретній операції, а не гортає зведений PDF. Зведений
+      // теж лишається — його зручно друкувати цілком.
+      const { sheets } = stone.length ? composeFullDrawingSet({ project, parts: stone, details, instructions: instrList }) : { sheets: [] };
+      const docSpecs: Array<{
+        path: string;
+        sheets: typeof sheets;
+        htmlIds: string[];
+        purpose: string;
+        document?: MesPackExtraFile['document'];
+      }> = [
+        { path: 'docs/drawings.pdf', sheets, htmlIds: [], purpose: 'набір креслень (A3)', document: { id: 'doc-drawings', kind: 'drawing' } },
+        { path: 'docs/tech-card.pdf', sheets: [], htmlIds: ['ctor-doc-techcard'], purpose: 'тех карта по ділянках (ВЦ-1)', document: { id: 'doc-tech', kind: 'technology' } },
+        { path: 'docs/workshop-form.pdf', sheets: [], htmlIds: ['ctor-doc-shopsheet'], purpose: 'бланк цеху (МЕС-1)', document: { id: 'doc-shop', kind: 'workshop_form' } },
+        { path: 'docs/full-package.pdf', sheets, htmlIds: ['ctor-doc-techcard', 'ctor-doc-shopsheet'], purpose: 'зведений пакет: креслення + тех карта + бланк одним файлом', document: { id: 'doc-package', kind: 'package' } },
+      ];
+      for (const spec of docSpecs) {
+        if (!spec.sheets.length && !spec.htmlIds.some((id) => document.getElementById(id))) continue;
+        const bytes = await renderPackagePdfBytes(spec.sheets, spec.htmlIds);
+        if (!bytes.length) continue;
+        extraFiles.push({ path: spec.path, data: bytes, purpose: spec.purpose, document: spec.document });
+      }
+
+      // ── Модель: зібраний виріб ЗАВЖДИ (ТЗ Брунеллескі §1, §4 шлях A).
+      //  Якщо «3D Підбір» відкритий — беремо живу сцену. Якщо ні —
+      //  піднімаємо 3D за кадром тим самим прийомом, яким «Прорахунок»
+      //  робить знімки для PDF (<Viewer3D isCaptureMode>), і чекаємо
+      //  ФАКТУ готовності сцени, не часу. Жодної нової математики збірки:
+      //  це та сама сцена, що на екрані.
+      const plan = buildAssemblyPlan(parts, project.placements, details);
+      const unitOfPart = new Map<string, string>();
+      plan.joins.forEach((join) => join.output.partIds.forEach((partId) => unitOfPart.set(partId, join.output.id)));
+      const instanceOf = (mesh: THREE.Mesh) => (mesh.userData?.instanceId as string | undefined) ?? mesh.name;
+
+      let modelNote = '';
+      let renderContract: ReturnType<typeof buildRenderContract> | null = null;
+      const scene = await acquireScene();
+      if (scene) {
+        try {
+          const ar = await exportForAr(scene, undefined, {
+            groupBy: (mesh) => unitOfPart.get(instanceOf(mesh)) ?? null,
+          });
+          const productBytes = new Uint8Array(await ar.glb.arrayBuffer());
+          extraFiles.push({
+            path: 'models/product.glb',
+            data: productBytes,
+            purpose: 'зібраний виріб у фінальному положенні, GLB у метрах, Y вгору; групи = вузли склейок (name/extras.unitId), меші = заготовки (name/extras.instanceId); пози ЗАПЕЧЕНІ в геометрію',
+            modelRole: 'assembled_product',
+            modelId: 'product-model',
+          });
+          modelNote = 'модель — зібраний виріб';
+
+          // Окремі GLB цехових вузлів — з тієї самої сцени, лише фільтр
+          // по заготовках вузла. Геометрія та сама, центрується сама по собі.
+          for (const join of plan.joins) {
+            const members = new Set(join.output.partIds);
+            try {
+              const unit = await exportForAr(scene, undefined, {
+                filter: (mesh) => members.has(instanceOf(mesh)),
+                rootName: join.output.id,
+                rootExtras: { unitId: join.output.id, joinId: join.id },
+              });
+              const safe = join.output.id.replace(/[^A-Za-z0-9_.-]+/g, '_');
+              extraFiles.push({
+                path: `models/units/${safe}.glb`,
+                data: new Uint8Array(await unit.glb.arrayBuffer()),
+                purpose: `цеховий вузол «${join.output.name}» після склейки ${join.id}; корінь name/extras.unitId, меші = заготовки вузла`,
+                modelRole: 'shop_assembly',
+                modelId: `unit-model:${join.output.id}`,
+                unitId: join.output.id,
+              });
+            } catch { /* вузол без геометрії в сцені — пропускаємо, у контракті буде видно */ }
+          }
+
+          renderContract = buildRenderContract({
+            orderId: project.orderNumber || '',
+            cadRevision: project.versions?.length ?? 1,
+            productFile: 'models/product.glb',
+            productNodes: glbNodeIndex(productBytes),
+            sizeMm: ar.sizeMm,
+            plan,
+            unitFiles: extraFiles.filter((file) => file.unitId).map((file) => ({ unitId: file.unitId!, file: file.path })),
+          });
+        } catch (error) {
+          modelNote = `зібраний виріб не експортувався: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      } else {
+        modelNote = 'зібраний виріб не зібрався за кадром (3D не піднялось за 30 с) — у пакеті лише заготовки';
+      }
+      setCapturing3d(false);
+
+      // Плоскі заготовки їдуть ЗАВЖДИ і окремим файлом — МЕС просив мати
+      // обидві моделі, а не вибирати одну. Ролі різні, сплутати не можна.
+      const flat = await buildPartsGlb(parts);
+      if (flat) {
+        extraFiles.push({
+          path: 'models/parts.glb',
+          data: flat.bytes,
+          purpose: `заготовки плоско, ${flat.nodes} вузлів; name=instanceId, extras={instanceId,partId}; geometryState=parts-flat (НЕ зібраний виріб)`,
+          modelRole: 'flat_parts',
+          modelId: 'parts-model',
+        });
+      }
+      if (renderContract) {
+        extraFiles.push({
+          path: 'render-contract.json',
+          data: encoder.encode(JSON.stringify(renderContract, null, 1)),
+          purpose: 'карта 3D: осі, одиниці, вузли GLB ↔ instanceId/unitId, файли вузлів; пози запечені — MES нічого не трансформує',
+        });
+      }
+      const warnings = await downloadMesPack({
+        project,
+        parts,
+        details,
+        estimateLines: estimate.lines,
+        extraFiles,
+      });
+      setMesPack({
+        state: 'done',
+        message: `Пакет збережено${modelNote ? ` · ${modelNote}` : ''} — поклади ZIP у C:\\Works\\MES\\integration\\inbox.${warnings.length ? ` Увага: ${warnings.join(' ')}` : ''}`,
+      });
+    } catch (error) {
+      setMesPack({ state: 'error', message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
   return (
     <div className="flex h-full min-h-0">
+      {capturing3d && (
+        <div className="fixed top-0 left-0 w-[1200px] h-[800px] z-[-10] pointer-events-none" style={{ opacity: 0.01 }} aria-hidden>
+          <Suspense fallback={null}>
+            <Viewer3D isCaptureMode onCaptureReady={() => undefined} onSceneReady={(content) => sceneResolver.current?.(content)} />
+          </Suspense>
+        </div>
+      )}
       <aside className="w-[280px] shrink-0 border-r border-slate-200 bg-[#f7f9fb] p-3 overflow-y-auto custom-scrollbar flex flex-col gap-3">
         <Panel title="Пакет для цеху">
           <ul className="m-0 p-0 list-none space-y-1">
@@ -167,6 +341,17 @@ export function DocsTab() {
             <button type="button" className={`${BTN_BLUE} justify-center`} onClick={() => void packagePdf()} disabled={pkgBusy} title="Один PDF: набір креслень (A3) + тех карта і бланк цеху (A4)"><FileDown className="w-4 h-4" /> {pkgBusy ? 'Збираю пакет…' : 'PDF пакета'}</button>
             <button type="button" className={`${BTN_IDLE} justify-center`} onClick={downloadJson}><Download className="w-4 h-4" /> JSON для MES (файл)</button>
             <button type="button" className={`${BTN_IDLE} justify-center`} onClick={copyJson}><Copy className="w-4 h-4" /> Копіювати JSON</button>
+            <button type="button" className="flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px] font-bold justify-center bg-slate-700 text-white hover:bg-slate-800 transition-colors disabled:opacity-60"
+              onClick={() => void saveMesPack()} disabled={mesPack.state === 'busy'}
+              title="ZIP vs3d-pack-1: дані замовлення, слеби з дефектами, розкрій, факти + креслення, тех карта, бланк цеху, чернетка JSON — для C:\Works\MES\integration\inbox">
+              <ArchiveIcon className="w-4 h-4" /> {mesPack.state === 'busy' ? 'Збираю ZIP…' : 'Зберегти для МЕС (ZIP)'}
+            </button>
+            {mesPack.state === 'done' && mesPack.message && (
+              <p className="m-0 text-[11.5px] text-emerald-700">{mesPack.message}</p>
+            )}
+            {mesPack.state === 'error' && mesPack.message && (
+              <p className="m-0 text-[11.5px] text-amber-700">{mesPack.message}</p>
+            )}
           </div>
         </Panel>
         <Panel title="Тест">
